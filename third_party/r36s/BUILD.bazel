@@ -1,0 +1,6 @@
+exports_files([
+    "GizOS-LICENSE",
+    "repositories.bzl",
+    "rk3326_trust.patch",
+    "trust.sha256",
+])

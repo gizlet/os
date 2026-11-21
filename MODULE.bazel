@@ -1,0 +1,31 @@
+module(name = "gizlet_os")
+
+bazel_dep(name = "gizos", version = "0.0.0")
+bazel_dep(name = "hermetic_cc_toolchain", version = "4.2.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_python", version = "2.2.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+
+r36s_sources = use_repo_rule("//third_party/r36s:repositories.bzl", "r36s_sources")
+
+r36s_sources(name = "r36s_sources")
+
+git_override(
+    module_name = "gizos",
+    commit = "0ac3bfdc2bafa78bfc89965931b5ce22faeff795",
+    remote = "https://github.com/GizClaw/gizos.git",
+)
+
+rockchip = use_extension(
+    "@gizos//tools/bazel/native/rockchip:repositories.bzl",
+    "rockchip_repositories",
+)
+use_repo(rockchip, "gizos_rk3326_legacy_rkbin")
+
+# Select the static AArch64 musl toolchain for the installed Booter.
+zig_toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
+use_repo(zig_toolchains, "zig_sdk")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.11")

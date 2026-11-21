@@ -1,0 +1,2 @@
+# Preserve the upstream license text byte for byte.
+third_party/licenses/Linux-syscall-note whitespace=-blank-at-eof

@@ -1,0 +1,13 @@
+#!/bin/sh
+# The primary console owns one configured application. Its exit returns here.
+export HOME=/home PATH=/sbin:/bin:/usr/sbin:/usr/bin
+if [ -f /run/gizlet-data.ready ]; then
+    /sbin/gizlet-booter
+    printf 'Gizlet OS: boot entry finished with status %d\n' "$?"
+else
+    echo 'Gizlet OS: data mounts unavailable'
+fi
+stty sane || :
+printf 'Gizlet OS local recovery. Type exit to retry boot.ini.\n'
+export PS1='recovery# '
+exec /bin/sh -i
