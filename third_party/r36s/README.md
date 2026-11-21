@@ -1,6 +1,6 @@
 # R36S sources and distribution
 
-This OS inherits the reviewed RK3326 legacy boot chain from Gizlet commit `8f51ad8cafcc576fd8a789e3b8e75fb35467b046` and the earlier GizOS board work. GizOS commit `a587fa187b752d7dd67f13d0a04ae24819e3c01f` supplies the public Rockchip Bazel rules and optional rkbin profile. That pin is the source of GizOS PR #895. The module and board manifests record the complete source choices and hashes. [Source manifest](repositories.bzl) · [Modules](../../MODULE.bazel) · [Reviewed board code](https://github.com/gizlet/gizlet/tree/8f51ad8cafcc576fd8a789e3b8e75fb35467b046) · [GizOS source](https://github.com/GizClaw/gizos/tree/a587fa187b752d7dd67f13d0a04ae24819e3c01f)
+This OS inherits the reviewed RK3326 legacy boot chain from Gizlet commit `8f51ad8cafcc576fd8a789e3b8e75fb35467b046` and the earlier GizOS board work. GizOS supplies the public Rockchip Bazel rules and optional rkbin profile at mainline commit `0ac3bfdc2bafa78bfc89965931b5ce22faeff795`, the merge of [GizOS PR #895](https://github.com/GizClaw/gizos/pull/895). The module and board manifests record the complete source choices and hashes. [Source manifest](repositories.bzl) · [Modules](../../MODULE.bazel) · [Reviewed board code](https://github.com/gizlet/gizlet/tree/8f51ad8cafcc576fd8a789e3b8e75fb35467b046) · [GizOS source](https://github.com/GizClaw/gizos/tree/0ac3bfdc2bafa78bfc89965931b5ce22faeff795)
 
 | Input | Fixed source and installed notice |
 | --- | --- |
@@ -11,7 +11,7 @@ This OS inherits the reviewed RK3326 legacy boot chain from Gizlet commit `8f51a
 | BusyBox 1.37.0 | Original BusyBox archive and the board's complete config. The card includes `/usr/share/licenses/BusyBox`. The static build also uses the builder's AArch64 glibc. |
 | Booter | This repository's Booter is built with Zig's AArch64 Linux musl toolchain. The card includes musl and Zig notices, the glibc LGPL text and the inherited GizOS Apache-2.0 notice. |
 
-The board DTS retains its SPDX identifier. The complete 4 MiB BL31 trust output must match the checked-in reference digest. [Kernel patch set in fork](https://github.com/gizlet/rocknix/tree/fec842b58559ee973a0100abd726370e4a032b77/projects/Rockchip/patches/linux/RK3326) · [U-Boot selection in fork](https://github.com/gizlet/rocknix/tree/cefc14339a4ae18c02bb69888f27835e50664b60/projects/ROCKNIX/devices/RK3326/packages/u-boot-legacy) · [rkbin manifest](https://github.com/GizClaw/gizos/blob/a587fa187b752d7dd67f13d0a04ae24819e3c01f/tools/bazel/native/versions/rk3326_legacy_rkbin.json) · [trust SHA-256](trust.sha256)
+The board DTS retains its SPDX identifier. The complete 4 MiB BL31 trust output must match the checked-in reference digest. [Kernel patch set in fork](https://github.com/gizlet/rocknix/tree/fec842b58559ee973a0100abd726370e4a032b77/projects/Rockchip/patches/linux/RK3326) · [U-Boot selection in fork](https://github.com/gizlet/rocknix/tree/cefc14339a4ae18c02bb69888f27835e50664b60/projects/ROCKNIX/devices/RK3326/packages/u-boot-legacy) · [rkbin manifest](https://github.com/GizClaw/gizos/blob/0ac3bfdc2bafa78bfc89965931b5ce22faeff795/tools/bazel/native/versions/rk3326_legacy_rkbin.json) · [trust SHA-256](trust.sha256)
 
 ## Corresponding source
 

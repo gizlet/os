@@ -13,7 +13,7 @@ r36s_sources(name = "r36s_sources")
 
 git_override(
     module_name = "gizos",
-    commit = "a587fa187b752d7dd67f13d0a04ae24819e3c01f",
+    commit = "0ac3bfdc2bafa78bfc89965931b5ce22faeff795",
     remote = "https://github.com/GizClaw/gizos.git",
 )
 
