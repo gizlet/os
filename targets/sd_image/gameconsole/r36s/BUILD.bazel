@@ -1,0 +1,159 @@
+load("@gizos//tools/bazel/native/rockchip:defs.bzl", "busybox_squashfs", "rockchip_legacy_uboot", "rockchip_linux_kernel", "rockchip_sd_image")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+_BOARD = "//boards/gameconsole/r36s/rk3326:"
+
+_SOURCE = "@r36s_sources//:"
+
+_RKBIN = "@gizos_rk3326_legacy_rkbin//:"
+
+_EPOCH = 1704067200
+
+_PANEL0 = [_BOARD + "r36s_panel0"]
+
+rockchip_linux_kernel(
+    name = "kernel",
+    archive = _SOURCE + "linux.tar.xz",
+    build_user = "gizlet",
+    config = _BOARD + "kernel.config",
+    dtb = "parts/r36s.dtb",
+    dtb_target = "rockchip/gizlet-r36s-panel0.dtb",
+    dts_files = {_BOARD + "gizlet-r36s-panel0.dts": "rockchip/gizlet-r36s-panel0.dts"},
+    image = "parts/Image",
+    patches = [
+        _SOURCE + "gpio.patch",
+        _SOURCE + "polldev.patch",
+        _SOURCE + "dts.patch",
+        _SOURCE + "panel.patch",
+        _SOURCE + "joypad.patch",
+    ],
+    source_date_epoch = _EPOCH,
+    target_compatible_with = _PANEL0,
+)
+
+rockchip_legacy_uboot(
+    name = "bootloader",
+    archive = _SOURCE + "uboot.tar.gz",
+    bl31 = _RKBIN + "bl31.elf",
+    boot_command = _BOARD + "boot.cmd",
+    build_user = "gizlet",
+    ddr = _RKBIN + "ddr.bin",
+    defconfig = _SOURCE + "rocknix_rk3326_defconfig",
+    idbloader = "parts/idbloader.img",
+    load_address = "0x00200000",
+    miniloader = _RKBIN + "miniloader.bin",
+    mkimage_soc = "px30",
+    patches = [
+        _SOURCE + "uboot.patch",
+        "//third_party/r36s:rk3326_trust.patch",
+    ],
+    script = "parts/boot.scr",
+    script_name = "Gizlet R36S Panel 0",
+    source_date_epoch = _EPOCH,
+    target_compatible_with = _PANEL0,
+    trust = "parts/trust.img",
+    trust_checksum = "//third_party/r36s:trust.sha256",
+    trust_ini = _BOARD + "trust.ini",
+    uboot = "parts/uboot.img",
+)
+
+busybox_squashfs(
+    name = "rootfs",
+    out = "parts/rootfs.sqfs",
+    archive = _SOURCE + "busybox.tar.bz2",
+    config = _BOARD + "busybox.config",
+    directories = [
+        "dev",
+        "etc",
+        "proc",
+        "sys",
+        "run",
+        "tmp",
+        "home",
+        "opt/gizlet",
+        "sbin",
+        "usr/share/licenses",
+    ],
+    executables = {
+        _BOARD + "rcS": "etc/rcS",
+        "//boot:boot-session": "sbin/boot-session",
+        "//boot:booter": "sbin/gizlet-booter",
+    },
+    files = {
+        _BOARD + "inittab": "etc/inittab",
+        _RKBIN + "LICENSE": "usr/share/licenses/rockchip-rkbin",
+        "//third_party/r36s:GizOS-LICENSE": "usr/share/licenses/GizOS",
+        "//third_party/licenses:Linux-COPYING": "usr/share/licenses/linux/COPYING",
+        "//third_party/licenses:Linux-GPL-2.0": "usr/share/licenses/linux/LICENSES/preferred/GPL-2.0",
+        "//third_party/licenses:Linux-syscall-note": "usr/share/licenses/linux/LICENSES/exceptions/Linux-syscall-note",
+        "//third_party/licenses:U-Boot-README": "usr/share/licenses/u-boot/README",
+        "//third_party/licenses:U-Boot-GPL-2.0": "usr/share/licenses/u-boot/gpl-2.0.txt",
+        "//third_party/licenses:glibc-LGPL-2.1": "usr/share/licenses/glibc-LGPL-2.1",
+        "//third_party/licenses:musl-COPYRIGHT": "usr/share/licenses/musl-COPYRIGHT",
+        "//third_party/licenses:Zig-MIT": "usr/share/licenses/Zig-MIT",
+    },
+    source_date_epoch = _EPOCH,
+    source_files = {"LICENSE": "usr/share/licenses/BusyBox"},
+    target_compatible_with = _PANEL0,
+)
+
+rockchip_sd_image(
+    name = "gizlet-os-r36s-panel0",
+    out = "gizlet-os-r36s-panel0.img",
+    inputs = {
+        ":parts/idbloader.img": "idbloader.img",
+        ":parts/uboot.img": "uboot.img",
+        ":parts/trust.img": "trust.img",
+        ":parts/boot.scr": "boot.scr",
+        ":parts/Image": "Image",
+        ":parts/r36s.dtb": "r36s.dtb",
+        ":parts/rootfs.sqfs": "rootfs.sqfs",
+    },
+    layout = _BOARD + "sdcard.cfg",
+    layout_image = "sdcard.img",
+    source_date_epoch = _EPOCH,
+    target_compatible_with = _PANEL0,
+)
+
+sh_test(
+    name = "image_test",
+    srcs = ["image_test.sh"],
+    args = [
+        "$(rootpath :gizlet-os-r36s-panel0)",
+        "$(rootpath :boot_chain_test.py)",
+        "$(rootpath @gizos_rk3326_legacy_rkbin//:bl31.elf)",
+        "$(rootpath //third_party/r36s:trust.sha256)",
+        "$(rootpath //boards/gameconsole/r36s/rk3326:boot.cmd)",
+        "$(rootpath //boot:booter)",
+    ],
+    data = [
+        ":boot_chain_test.py",
+        ":gizlet-os-r36s-panel0",
+        _BOARD + "boot.cmd",
+        "//boot:booter",
+        "//third_party/r36s:trust.sha256",
+        _RKBIN + "bl31.elf",
+    ],
+    exec_compatible_with = ["@platforms//os:linux"],
+    tags = ["manual"],
+    target_compatible_with = [_BOARD + "r36s_panel0"],
+)
+
+sh_test(
+    name = "boot_test",
+    size = "medium",
+    srcs = ["boot_test.sh"],
+    args = [
+        "$(rootpath :boot_test.py)",
+        "$(rootpath :gizlet-os-r36s-panel0)",
+    ],
+    data = [
+        ":boot_test.py",
+        ":gizlet-os-r36s-panel0",
+    ],
+    exec_compatible_with = ["@platforms//os:linux"],
+    tags = ["manual"],
+    target_compatible_with = [_BOARD + "r36s_panel0"],
+)

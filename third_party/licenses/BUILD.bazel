@@ -1,0 +1,10 @@
+exports_files([
+    "Linux-COPYING",
+    "Linux-GPL-2.0",
+    "Linux-syscall-note",
+    "U-Boot-GPL-2.0",
+    "U-Boot-README",
+    "Zig-MIT",
+    "glibc-LGPL-2.1",
+    "musl-COPYRIGHT",
+])
