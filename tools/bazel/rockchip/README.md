@@ -1,6 +1,6 @@
 # Rockchip image rules
 
-These four rules build the R36S card from labels supplied by the board target. They are derived from GizOS commit `0ac3bfdc2bafa78bfc89965931b5ce22faeff795` under Apache-2.0 and are maintained in this repository. [License](LICENSE) applies to these build files and the test toolchain in `tools/bazel/platforms`; nothing from them is installed on the card. Board targets load them from `//tools/bazel/rockchip:defs.bzl`. [Declarations](defs.bzl) · [Native stages](runner.py) · [R36S target](../../../targets/sd_image/gameconsole/r36s/BUILD.bazel)
+These rules build and check the R36S card from labels supplied by the board target. They are derived from GizOS commit `0ac3bfdc2bafa78bfc89965931b5ce22faeff795` under Apache-2.0 and are maintained in this repository. [License](LICENSE) applies to these build files and the test toolchain in `tools/bazel/platforms`; nothing from them is installed on the card. Board targets load them from `//tools/bazel/rockchip:defs.bzl`. [Declarations](defs.bzl) · [Native stages](runner.py) · [R36S target](../../../targets/sd_image/gameconsole/r36s/BUILD.bazel)
 
 | Rule | Inputs | Outputs |
 | --- | --- | --- |
@@ -11,9 +11,9 @@ These four rules build the R36S card from labels supplied by the board target. T
 
 Every rule takes `source_date_epoch`. Patches apply with GNU `patch -p1 --fuzz=0` in list order. Kernel and BusyBox builds fail when a requested `CONFIG_…=…` setting does not survive configuration. Destination paths must be unique and stay inside their staging tree.
 
-The actions run `/usr/bin/python3` outside the sandbox on Linux and use the host's build tools listed in the [top-level README](../../../README.md#build-and-test). Because those tools are not Bazel inputs, the workspace status command must print a fresh `STABLE_ROCKCHIP_BUILD_ID` UUID per invocation. The `--config=r36s` profile uses [build_status.sh](../../r36s/build_status.sh) for this.
+Each stage runs [runner.py](runner.py) in the libkrun build VM on its read-only Debian root. Inputs are staged into the guest, and the source trees and build directories live on the guest's case-sensitive tmpfs. All tools are Bazel inputs, so the stages cache and rebuild like ordinary actions. [Build VM](../krun/README.md)
 
-Run the runner's unit test in the default host configuration:
+`rockchip_card_test` checks a finished card in the same VM: MBR, card size, IDB digest, both U-Boot and BL31 copies, the boot script and the board's device tree expectations. Boards describe their card in a `.bzl` dict. [Card test](card_test.py) · [R36S facts](../../../boards/gameconsole/r36s/rk3326/card.bzl)
 
 ```sh
 bazel test //tools/bazel/rockchip:runner_test

@@ -4,17 +4,16 @@ Gizlet OS builds the Linux base system and TF1 system card for the genuine RK332
 
 ## Build and test
 
-Use Bazel 9.2.0 on a case-sensitive Linux filesystem. On Ubuntu 24.04 ARM64 the build and verification tools can be installed with the command below. On an amd64 builder also install `gcc-aarch64-linux-gnu` and `libc6-dev-arm64-cross`.
+Install Bazel 9.3.3 on an Apple silicon Mac. No other build tools are needed. libkrun also supports AArch64 Linux hosts with `/dev/kvm`; that path is not yet exercised here. Bazel builds a libkrun microVM and its Debian bookworm root from pinned sources, and every native stage and image test runs inside it. [Build VM](tools/bazel/krun/README.md)
 
 ```sh
-sudo apt-get install build-essential bc bison flex libssl-dev libelf-dev pkg-config xz-utils bzip2 patch \
-    device-tree-compiler genimage dosfstools mtools squashfs-tools e2fsprogs faketime fdisk u-boot-tools python3 qemu-system-arm
 bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-panel0
-bazel test --config=r36s --test_output=all //targets/sd_image/gameconsole/r36s:image_test //targets/sd_image/gameconsole/r36s:boot_test
+bazel test --config=r36s --test_output=errors //targets/sd_image/gameconsole/r36s:image_test //targets/sd_image/gameconsole/r36s:rootfs_test //targets/sd_image/gameconsole/r36s:boot_test
+bazel test //tools/bazel/rockchip:runner_test
 ```
 
-The unprivileged build writes `bazel-bin/targets/sd_image/gameconsole/r36s/gizlet-os-r36s-panel0.img`. The artifact test reads back the boot stages, both BL31 copies, partition table, filesystems and Booter. The QEMU test starts the kernel extracted from the image on a Cortex-A35 `virt` machine. It boots a private writable copy twice, installs a test executable through the guest console, checks its output and verifies a user file across reboot. It also exercises recovery from invalid entries and isolation from a second data disk. The delivered data partition starts with empty `gizlet/` and `home/` directories.
+The build writes `bazel-bin/targets/sd_image/gameconsole/r36s/gizlet-os-r36s-panel0.img`. The card test reads back the boot stages, both BL31 copies, the partition table and the device tree. The rootfs test checks the root and data filesystems, the license notices and the installed Booter. The QEMU test starts the kernel extracted from the image on a Cortex-A35 `virt` machine. It boots a private writable copy twice, installs a test executable through the guest console, checks its output and verifies a user file across reboot. It also exercises recovery from invalid entries and isolation from a second data disk. The delivered data partition starts with empty `gizlet/` and `home/` directories.
 
-The Rockchip build rules live in this repository and need no external Bazel module beyond the toolchain rules. Kernel board patches come from SHA-pinned files in the `gizlet/rocknix` fork. [Build rules](tools/bazel/rockchip/README.md) · [Source manifest](third_party/r36s/repositories.bzl)
+`third_party/` pins each upstream once: Linux, Hardkernel U-Boot, BusyBox, Rockchip rkbin and the `gizlet/rocknix` fork that serves the kernel and U-Boot patches. A board package under `boards/` selects its archives, ordered patch lists, firmware, configuration and test expectations. A target package under `targets/` only composes the card from those labels and the rules in `tools/bazel/`. [Image rules](tools/bazel/rockchip/README.md) · [R36S board](boards/gameconsole/r36s/rk3326/BUILD.bazel) · [R36S target](targets/sd_image/gameconsole/r36s/BUILD.bazel)
 
-The board guide covers the storage contract, local recovery and application setup. Keep the original TF1 and back up an existing data partition before writing a full image. A whole-card write replaces all three partitions. Qualification of DDR, TF1, Panel 0, UART and physical controls requires a matching handheld. [R36S guide](boards/gameconsole/r36s/rk3326/README.md) · [Sources and licensing](third_party/r36s/README.md)
+The board guide covers the storage contract, local recovery and application setup. Keep the original TF1 and back up an existing data partition before writing a full image. A whole-card write replaces all three partitions. Qualification of DDR, TF1, Panel 0, UART and physical controls requires a matching handheld. [R36S guide](boards/gameconsole/r36s/rk3326/README.md) · [Sources and licensing](third_party/README.md)
