@@ -1,0 +1,12 @@
+[package]
+name = "krun-vm"
+version = "0.1.0"
+edition = "2024"
+description = "Runs one command in a libkrun microVM for Bazel actions"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+krun = { path = "../src/libkrun", package = "libkrun", features = ["blk"] }
+krun-init-blob = { path = "../init/init-blob" }
+libc = ">=0.2.39"

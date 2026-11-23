@@ -1,13 +1,14 @@
-"""Local Linux build rules for ARM64 Rockchip images. See README.md for the host contract.
+"""Build rules for ARM64 Rockchip images. Each stage runs in the libkrun build VM. See README.md.
 
 Derived from GizOS tools/bazel/native/rockchip at 0ac3bfdc2bafa78bfc89965931b5ce22faeff795 (Apache-2.0, see LICENSE).
 """
 
-_EXEC_GROUP = "native_linux"
-_GROUPS = {_EXEC_GROUP: exec_group(exec_compatible_with = ["@platforms//os:linux"])}
-_NATIVE = {
+load("//tools/bazel/krun:defs.bzl", "KRUN_ATTRS", "krun_action")
+
+_NATIVE = KRUN_ATTRS | {
     "source_date_epoch": attr.int(mandatory = True, doc = "Fixed Unix timestamp for the image tools."),
     "_runner": attr.label(default = Label(":runner.py"), allow_single_file = True),
+    "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
 }
 _SOURCE = {
     "archive": attr.label(mandatory = True, allow_single_file = True, doc = "Pinned source tarball with one leading directory."),
@@ -18,26 +19,42 @@ _KBUILD = {
     "build_user": attr.string(default = "builder"),
 }
 
+# Guest resources per stage: (vCPUs, MiB). The tmpfs holding the source tree
+# and build directory uses most of the guest memory.
+_RESOURCES = {
+    "Kernel": (8, 8192),
+    "LegacyUBoot": (4, 4096),
+    "BusyBoxSquashfs": (4, 2048),
+    "SDImage": (2, 2048),
+}
+
 def _stage(ctx, stage, inputs, outputs, params):
+    """Runs one runner stage in the build VM.
+
+    Inputs appear under /in at their execroot paths, which is the runner's
+    working directory. Outputs are written under /out at their package paths.
+    """
     if ctx.attr.source_date_epoch < 0:
         fail("source_date_epoch must be nonnegative")
-    args = ctx.actions.args()
-    params["outputs"] = [output.path for output in outputs]
-    args.add_all(["-I", ctx.file._runner.path, stage, ctx.info_file.path, json.encode(params)])
-    ctx.actions.run(
-        executable = "/usr/bin/python3",
-        arguments = [args],
-        inputs = [ctx.file._runner, ctx.info_file] + inputs,
+    out_root = ctx.bin_dir.path + "/" + ctx.label.package + "/"
+    params["outputs"] = ["/out/" + output.path.removeprefix(out_root) for output in outputs]
+    cpus, mem = _RESOURCES[stage]
+    krun_action(
+        ctx,
+        root_disk = ctx.file._rootfs,
+        inputs = {f: f.path for f in [ctx.file._runner] + inputs},
         outputs = outputs,
-        mnemonic = "Rockchip" + stage,
+        command = ["/bin/sh", "-c", 'cd /in && exec python3 -I "$@"', "runner", ctx.file._runner.path, stage, json.encode(params)],
         env = {
+            "HOME": "/tmp",
             "LC_ALL": "C",
-            "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
             "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch),
             "TZ": "UTC",
         },
-        exec_group = _EXEC_GROUP,
-        execution_requirements = {"no-remote": "1", "no-sandbox": "1"},
+        cpus = cpus,
+        mem = mem,
+        mnemonic = "Rockchip" + stage,
+        progress_message = "Rockchip %s stage for %%{label}" % stage,
     )
     return [DefaultInfo(files = depset(outputs))]
 
@@ -71,7 +88,6 @@ def _kernel(ctx):
 rockchip_linux_kernel = rule(
     implementation = _kernel,
     doc = "Build an ARM64 Linux Image and a selected Kbuild DTB from a source archive.",
-    exec_groups = _GROUPS,
     attrs = _NATIVE | _SOURCE | _KBUILD | {
         "config": attr.label(mandatory = True, allow_single_file = True, doc = "Base .config for olddefconfig."),
         "dts_files": attr.label_keyed_string_dict(allow_files = True, doc = "Optional source labels mapped to paths under arch/arm64/boot/dts/."),
@@ -103,7 +119,6 @@ def _uboot(ctx):
 rockchip_legacy_uboot = rule(
     implementation = _uboot,
     doc = "Build the Hardkernel-style AArch64 U-Boot, rksd DDR/miniloader, BL3X trust and legacy boot script.",
-    exec_groups = _GROUPS,
     attrs = _NATIVE | _SOURCE | _KBUILD | {
         "defconfig": attr.label(mandatory = True, allow_single_file = True),
         "ddr": attr.label(mandatory = True, allow_single_file = True),
@@ -136,7 +151,6 @@ def _rootfs(ctx):
 busybox_squashfs = rule(
     implementation = _rootfs,
     doc = "Build a static AArch64 BusyBox root filesystem with caller-supplied files and directories.",
-    exec_groups = _GROUPS,
     attrs = _NATIVE | _SOURCE | {
         "config": attr.label(mandatory = True, allow_single_file = True, doc = "BusyBox options over allnoconfig, including CONFIG_STATIC=y."),
         "files": attr.label_keyed_string_dict(allow_files = True, doc = "Data labels mapped to root-relative destinations, mode 0644."),
@@ -158,7 +172,6 @@ def _disk(ctx):
 rockchip_sd_image = rule(
     implementation = _disk,
     doc = "Assemble a raw card file using an explicit genimage layout and named input payloads.",
-    exec_groups = _GROUPS,
     attrs = _NATIVE | {
         "layout": attr.label(mandatory = True, allow_single_file = True),
         "inputs": attr.label_keyed_string_dict(allow_files = True, doc = "Single-file labels mapped to paths in genimage's input directory."),

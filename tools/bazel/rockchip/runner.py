@@ -1,4 +1,4 @@
-"""Native ARM64 Linux, legacy U-Boot, BusyBox and genimage stages.
+"""ARM64 Linux, legacy U-Boot, BusyBox and genimage stages, run inside the build VM.
 
 Derived from GizOS tools/bazel/native/rockchip at 0ac3bfdc2bafa78bfc89965931b5ce22faeff795 (Apache-2.0, see LICENSE).
 """
@@ -177,21 +177,15 @@ def sd_image(stage, params):
     return [child(output, params["layout_image"])]
 
 
-def check_invocation(status):
-    pattern = r"^STABLE_ROCKCHIP_BUILD_ID [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$"
-    if not re.search(pattern, status, flags=re.MULTILINE):
-        raise ValueError("Consumer workspace_status_command must emit a fresh STABLE_ROCKCHIP_BUILD_ID UUID per build")
-
-
 def main():
-    stage_name, status_path, payload = sys.argv[1:]
-    check_invocation(Path(status_path).read_text())
+    stage_name, payload = sys.argv[1:]
     params = json.loads(payload)
-    outputs = [Path(name).absolute() for name in params["outputs"]]
+    outputs = [Path(name) for name in params["outputs"]]
     for output in outputs:
         output.parent.mkdir(parents=True, exist_ok=True)
     functions = {"Kernel": linux_kernel, "LegacyUBoot": legacy_uboot, "BusyBoxSquashfs": busybox_rootfs, "SDImage": sd_image}
-    with tempfile.TemporaryDirectory(prefix=".rockchip-", dir=outputs[0].parent) as scratch:
+    # Build on the guest's case-sensitive tmpfs. The current directory holds the inputs.
+    with tempfile.TemporaryDirectory(prefix="rockchip-", dir="/tmp") as scratch:
         os.umask(0o022)
         stage = Stage(Path.cwd(), Path(scratch), os.environ.copy())
         results = functions[stage_name](stage, params)
@@ -199,7 +193,7 @@ def main():
             if not result.is_file():
                 raise ValueError(f"Missing native output: {result.name}")
         for result, output in zip(results, outputs, strict=True):
-            result.replace(output)
+            shutil.copyfile(result, output)
 
 
 if __name__ == "__main__":

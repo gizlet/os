@@ -1,4 +1,4 @@
-"""Check native input assembly and fail-closed status/config validation."""
+"""Check native input assembly and fail-closed config validation."""
 
 import importlib.util
 import io
@@ -17,12 +17,6 @@ _spec.loader.exec_module(runner)
 
 
 class NativeInputsTest(unittest.TestCase):
-    def test_invocation(self):
-        runner.check_invocation("OTHER_STATUS 1\nSTABLE_ROCKCHIP_BUILD_ID d549d330-bc48-454e-8a92-5aabdb1ec872\n")
-        for invalid in ("", "STABLE_ROCKCHIP_BUILD_ID fixed", "STABLE_ROCKCHIP_BUILD_ID d549d330"):
-            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "workspace_status_command"):
-                runner.check_invocation(invalid)
-
     def test_relative_install_paths_and_modes(self):
         with tempfile.TemporaryDirectory() as scratch:
             work = Path(scratch)

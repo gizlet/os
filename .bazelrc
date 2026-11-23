@@ -3,4 +3,3 @@ build:r36s --platforms=//boards/gameconsole/r36s/rk3326:panel0
 build:r36s --extra_toolchains=@zig_sdk//toolchain:linux_arm64_musl
 build:r36s --features=fully_static_link
 build:r36s --extra_toolchains=//tools/bazel/platforms:linux_arm64_test_toolchain,//tools/bazel/platforms:linux_x86_64_test_toolchain
-build:r36s --workspace_status_command=tools/r36s/build_status.sh

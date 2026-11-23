@@ -27,12 +27,3 @@ toolchain(
     toolchain = ":host_test_toolchain_info",
     toolchain_type = "@bazel_tools//tools/test:default_test_toolchain_type",
 )
-
-# Guest executables for the build VM: static AArch64 Linux musl.
-platform(
-    name = "linux_aarch64",
-    constraint_values = [
-        "@platforms//cpu:aarch64",
-        "@platforms//os:linux",
-    ],
-)

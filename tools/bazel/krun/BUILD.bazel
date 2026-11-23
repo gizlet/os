@@ -1,65 +1,33 @@
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
-load(":defs.bzl", "cargo_staticlib", "hypervisor_binary", "linux_aarch64_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load(":defs.bzl", "cargo_binary", "hypervisor_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-# libkrun's guest init, injected into every VM's root as /init.krun.
-cc_binary(
-    name = "init_elf",
-    srcs = ["@libkrun//:init_sources"],
-    copts = [
-        "-O2",
-        "-Wall",
-        "-w",
-    ],
-    linkopts = ["-static"],
-    tags = ["manual"],
-    target_compatible_with = ["@platforms//os:linux"],
-    visibility = ["//visibility:private"],
-)
-
-linux_aarch64_binary(
-    name = "init",
-    binary = ":init_elf",
-    visibility = ["//visibility:private"],
-)
-
-cargo_staticlib(
-    name = "libkrun_staticlib",
-    env_files = {":init": "KRUN_INIT_BINARY_PATH"},
-    crate_features = ["blk"],
-    lib = "libkrun.a",
-    manifest = "@libkrun//:Cargo.toml",
-    package = "libkrun",
+# libkrun's guest init, a static AArch64 Linux musl program. libkrun embeds
+# it and exposes it in each VM's root as /init.krun. The shared Cargo config
+# patches git crates this project does not use, which Cargo records in its lock.
+cargo_binary(
+    name = "krun-init",
     srcs = ["@libkrun//:workspace"],
+    bin = "krun-init",
+    locked = False,
+    manifest = "@libkrun//:init/init-binary/Cargo.toml",
+    target = "aarch64-unknown-linux-musl",
+    target_std = "@rust_std_aarch64_unknown_linux_musl//:rust_std",
     visibility = ["//visibility:private"],
 )
 
-cc_import(
-    name = "libkrun_import",
-    static_library = ":libkrun_staticlib",
+# libkrun 2.0 and the launcher, linked into one host executable. The added
+# workspace member and the patched git crates update Cargo.lock in the action.
+cargo_binary(
+    name = "launcher",
+    srcs = ["@libkrun//:workspace"],
+    bin = "krun-vm",
+    env_files = {":krun-init": "KRUN_INIT_BINARY_PATH"},
+    locked = False,
+    manifest = "@libkrun//:Cargo.toml",
+    package = "krun-vm",
     visibility = ["//visibility:private"],
-)
-
-cc_library(
-    name = "libkrun",
-    linkopts = select({
-        "@platforms//os:macos": [
-            "-framework",
-            "Hypervisor",
-            "-liconv",
-        ],
-        "//conditions:default": [
-            "-ldl",
-            "-lpthread",
-            "-lm",
-        ],
-    }),
-    visibility = ["//visibility:private"],
-    deps = [
-        ":libkrun_import",
-        "@libkrun//:headers",
-    ],
 )
 
 # The guest kernel, loaded by libkrun at VM start.
@@ -75,14 +43,6 @@ cc_binary(
         "//conditions:default": ["-Wl,-soname,libkrunfw.so.5"],
     }),
     linkshared = True,
-)
-
-cc_binary(
-    name = "launcher",
-    srcs = ["launcher.c"],
-    copts = ["-std=c11"],
-    visibility = ["//visibility:private"],
-    deps = [":libkrun"],
 )
 
 hypervisor_binary(

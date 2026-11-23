@@ -18,7 +18,7 @@ register_toolchains("@rust_toolchains//:all")
 
 # libkrun and its guest kernel run the native image stages in a microVM.
 krun = use_extension("//tools/bazel/krun:repositories.bzl", "krun_repositories")
-use_repo(krun, "libkrun", "libkrunfw")
+use_repo(krun, "libkrun", "libkrunfw", "rust_std_aarch64_unknown_linux_musl")
 
 # Debian bookworm arm64 tools for the build VM, pinned by snapshot and SHA-256.
 debian = use_extension("//tools/bazel/debian:repositories.bzl", "debian")

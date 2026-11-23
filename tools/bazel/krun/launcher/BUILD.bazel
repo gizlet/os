@@ -1,0 +1,9 @@
+# Sources of the krun-vm launcher. The libkrun repository rule adds them to
+# the libkrun workspace, where //tools/bazel/krun builds them with Cargo.
+exports_files(
+    [
+        "Cargo.toml",
+        "main.rs",
+    ],
+    visibility = ["//tools/bazel/krun:__pkg__"],
+)
