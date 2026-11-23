@@ -2,6 +2,8 @@
 
 Gizlet OS builds the Linux base system and TF1 system card for the genuine RK3326 R36S-V12 (2023-08-18) with original 640×480 Panel 0. BusyBox init mounts a read-only Linux root, gives installed software `/opt/gizlet` and user files `/home`, and starts the executable named in `boot.ini`. A fresh card opens a local recovery shell for installation.
 
+For R36S V30 / Panel 4, the file-based RAM trial uses an existing TF1 BOOT partition. It provides the card's stock-kernel path and a source-built Linux 6.12 option with a matching DSI profile. [V30 / Panel 4 boot guide](boards/gameconsole/r36s/v30_panel4/README.md)
+
 ## Build and test
 
 Use Bazel 9.2.0 on a case-sensitive Linux filesystem. On Ubuntu 24.04 ARM64 the build and verification tools can be installed with the command below. On an amd64 builder also install `gcc-aarch64-linux-gnu` and `libc6-dev-arm64-cross`.

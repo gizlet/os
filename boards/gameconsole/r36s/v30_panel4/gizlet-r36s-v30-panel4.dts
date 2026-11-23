@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+#include "rk3326-gameconsole-r3xs.dtsi"
+
+/ {
+	model = "Game Console R36S V30 (Panel 4), Gizlet RAM trial";
+	compatible = "gameconsole,r36s-v30", "rockchip,rk3326";
+};
+
+&internal_display {
+	compatible = "gameconsole,r36s-v30-panel4";
+	/delete-property/ iovcc-supply;
+	/* RK817 LDO8 (2.8 V), GPIO3_C0 active low and PWM1 match the V30 DTB. */
+	vdd-supply = <&vcc_lcd>;
+};
+
+&backlight {
+	pwms = <&pwm1 0 62745 0>;
+	default-brightness-level = <51>;
+};
+
+/* Stock V30 keeps LDO9 on. This RAM trial leaves the wireless rail powered. */
+&rk817 {
+	regulators {
+		LDO_REG9 {
+			regulator-name = "vcc_wifi";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-always-on;
+		};
+	};
+};

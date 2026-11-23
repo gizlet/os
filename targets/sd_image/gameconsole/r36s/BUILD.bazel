@@ -96,7 +96,11 @@ busybox_squashfs(
     },
     source_date_epoch = _EPOCH,
     source_files = {"LICENSE": "usr/share/licenses/BusyBox"},
-    target_compatible_with = _PANEL0,
+    target_compatible_with = select({
+        _BOARD + "r36s_panel0": [],
+        "//boards/gameconsole/r36s/v30_panel4:r36s_v30_panel4": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
 )
 
 rockchip_sd_image(

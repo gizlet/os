@@ -1,0 +1,84 @@
+load("@gizos//tools/bazel/native/rockchip:defs.bzl", "rockchip_linux_kernel")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+_BOARD = "//boards/gameconsole/r36s/v30_panel4:"
+
+_PANEL4 = [_BOARD + "r36s_v30_panel4"]
+
+rockchip_linux_kernel(
+    name = "kernel",
+    archive = "@r36s_sources//:linux.tar.xz",
+    build_user = "gizlet",
+    config = _BOARD + "kernel.config",
+    dtb = "gizlet-test/board.dtb",
+    dtb_target = "rockchip/gizlet-r36s-v30-panel4.dtb",
+    dts_files = {_BOARD + "gizlet-r36s-v30-panel4.dts": "rockchip/gizlet-r36s-v30-panel4.dts"},
+    image = "gizlet-test/Image",
+    patches = [
+        "@r36s_sources//:dts.patch",
+        "@r36s_sources//:panel.patch",
+        _BOARD + "nv3051d-v30.patch",
+    ],
+    source_date_epoch = 1704067200,
+    target_compatible_with = _PANEL4,
+)
+
+genrule(
+    name = "ramdisk",
+    srcs = [
+        _BOARD + "ram_files",
+        "//targets/sd_image/gameconsole/r36s:parts/rootfs.sqfs",
+    ],
+    outs = ["gizlet-test/uInitrd"],
+    cmd = "python3 $(location //tools/r36s:trial_ramdisk.py) " +
+          "$(location //targets/sd_image/gameconsole/r36s:parts/rootfs.sqfs) " +
+          "boards/gameconsole/r36s/v30_panel4 $@",
+    exec_compatible_with = ["@platforms//os:linux"],
+    target_compatible_with = _PANEL4,
+    tools = ["//tools/r36s:trial_ramdisk.py"],
+)
+
+# The original and source-built trials load different Image/DTB pairs.
+filegroup(
+    name = "stock_trial",
+    srcs = [
+        ":ramdisk",
+        _BOARD + "boot.ini",
+    ],
+    target_compatible_with = _PANEL4,
+)
+
+filegroup(
+    name = "mainline_trial",
+    srcs = [
+        ":kernel",
+        ":ramdisk",
+        _BOARD + "boot-mainline.ini",
+    ],
+    target_compatible_with = _PANEL4,
+)
+
+sh_test(
+    name = "boot_test",
+    size = "medium",
+    srcs = ["boot_test.sh"],
+    args = [
+        "$(rootpath :check_panel.py)",
+        "$(rootpath //tools/r36s:trial_boot_test.py)",
+        "$(rootpath :gizlet-test/Image)",
+        "$(rootpath :gizlet-test/board.dtb)",
+        "$(rootpath :gizlet-test/uInitrd)",
+    ],
+    data = [
+        ":check_panel.py",
+        ":gizlet-test/Image",
+        ":gizlet-test/board.dtb",
+        ":gizlet-test/uInitrd",
+        "//tools/r36s:trial_boot_test.py",
+    ],
+    exec_compatible_with = ["@platforms//os:linux"],
+    tags = ["manual"],
+    target_compatible_with = _PANEL4,
+)

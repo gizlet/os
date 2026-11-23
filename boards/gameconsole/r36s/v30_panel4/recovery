@@ -1,0 +1,4 @@
+#!/bin/sh
+export PS1='gizlet-trial# '
+printf '\nGizlet OS RAM console. Boot log: /run/boot.log. Kernel log: dmesg.\n'
+exec /bin/sh -i
