@@ -34,6 +34,10 @@ _ROCKNIX_LINUX = "@rocknix//:projects/Rockchip/patches/linux/RK3326/"
 
 _ROCKNIX_MAINLINE = "@rocknix//:packages/kernel/linux/patches/mainline/"
 
+_ROCKNIX_PANFROST = "@rocknix//:packages/kernel/linux/patches/panfrost/"
+
+_ROCKNIX_ROCKCHIP = "@rocknix//:projects/Rockchip/patches/linux/mainline/"
+
 _ROCKNIX_UBOOT = "@rocknix//:projects/ROCKNIX/devices/RK3326/packages/u-boot-legacy/"
 
 alias(
@@ -41,15 +45,33 @@ alias(
     actual = "@linux//:linux-6.12.17.tar.xz",
 )
 
-# Applied in this order with zero fuzz.
+# The RK3326 kernel patch set of ROCKNIX, in the order its build applies it
+# (PKG_PATCH_DIRS "mainline RK3326 default panfrost": package patches first,
+# then project patches; files sorted within each directory). The kernel target applies it with fuzz 2, as ROCKNIX does.
 filegroup(
     name = "kernel_patches",
     srcs = [
         _ROCKNIX_MAINLINE + "0001-gpiolib-of-revert-api-changes-needed-for-joypad-driv.patch",
         _ROCKNIX_MAINLINE + "0002-input-add-input-polldev-driver.patch",
+        _ROCKNIX_MAINLINE + "0003-pwm-add-pwm_set_period.patch",
+        _ROCKNIX_MAINLINE + "0004-input-adc-keys-redirect-keycode-316-to-rocknix-joypa.patch",
+        _ROCKNIX_MAINLINE + "0005-Bluetooth-btrtl-Add-the-support-for-RTL8733BU.patch",
+        _ROCKNIX_MAINLINE + "0006-stable-rocknix-joypad-dtsi.patch",
+        _ROCKNIX_PANFROST + "0005-drm-panfrost-Add-SYSTEM_TIMESTAMP-and-SYSTEM_TIMESTA.patch",
+        _ROCKNIX_PANFROST + "0006-drm-panfrost-Add-cycle-counter-job-requirement.patch",
+        _ROCKNIX_ROCKCHIP + "0005-rk817-stop-updating-info-in-suspend.patch",
+        _ROCKNIX_ROCKCHIP + "0006-rk817-update-battery-capacity-calibration.patch",
         _ROCKNIX_LINUX + "000-rk3326-dts.patch",
         _ROCKNIX_LINUX + "001-panel-updates.patch",
+        _ROCKNIX_LINUX + "003-dmc-driver.patch",
         _ROCKNIX_LINUX + "004-input-drivers.patch",
+        _ROCKNIX_LINUX + "005-unigue-gpio-guid.patch",
+        _ROCKNIX_LINUX + "006-powkiddy-rgb10x.patch",
+        _ROCKNIX_LINUX + "007-ogs-panel-timings.patch",
+        _ROCKNIX_LINUX + "020-elida-refresh-rates.patch",
+        _ROCKNIX_LINUX + "021-magicx-xu-mini-m.patch",
+        _ROCKNIX_LINUX + "022-usb-role-switch.patch",
+        _ROCKNIX_LINUX + "023-gameconsole-r36max.patch",
     ],
 )
 

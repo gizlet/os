@@ -9,7 +9,7 @@ These rules build and check the R36S card from labels supplied by the board targ
 | `busybox_squashfs` | Single-root BusyBox archive, `config` over `allnoconfig` with `CONFIG_STATIC=y`, optional patches, directories, data files (0644), executables (0755) and files from the unpacked source | `out`, a root-owned SquashFS with fixed times |
 | `rockchip_sd_image` | genimage `layout`, `layout_image` entry name and a label-to-input-path map | `out`, the raw card image |
 
-Every rule takes `source_date_epoch`. Patches apply with GNU `patch -p1 --fuzz=0` in list order. Kernel and BusyBox builds fail when a requested `CONFIG_…=…` setting does not survive configuration. Destination paths must be unique and stay inside their staging tree.
+Every rule takes `source_date_epoch`. Patches apply with GNU `patch -p1` in list order, with zero fuzz unless the target sets `patch_fuzz`. Kernel and BusyBox builds fail when a requested `CONFIG_…=…` setting does not survive configuration. Destination paths must be unique and stay inside their staging tree.
 
 Each stage runs [runner.py](runner.py) in the libkrun build VM on its read-only Debian root. Inputs are staged into the guest, and the source trees and build directories live on the guest's case-sensitive tmpfs. All tools are Bazel inputs, so the stages cache and rebuild like ordinary actions. [Build VM](../krun/README.md)
 

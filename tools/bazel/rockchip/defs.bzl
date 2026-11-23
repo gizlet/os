@@ -12,7 +12,8 @@ _NATIVE = KRUN_ATTRS | {
 }
 _SOURCE = {
     "archive": attr.label(mandatory = True, allow_single_file = True, doc = "Pinned source tarball with one leading directory."),
-    "patches": attr.label_list(allow_files = True, doc = "Ordered patches applied with GNU patch -p1 and zero fuzz."),
+    "patches": attr.label_list(allow_files = True, doc = "Ordered patches applied with GNU patch -p1."),
+    "patch_fuzz": attr.int(default = 0, doc = "GNU patch --fuzz. Zero requires exact context; 2 matches plain `patch`."),
 }
 _KBUILD = {
     "build_host": attr.string(default = "builder"),
@@ -62,6 +63,7 @@ def _source(ctx):
     return {
         "archive": ctx.file.archive.path,
         "patches": [f.path for f in ctx.files.patches],
+        "patch_fuzz": ctx.attr.patch_fuzz,
     }
 
 def _kbuild(ctx):

@@ -31,7 +31,7 @@ class Stage:
         self.run("tar", "--extract", "--strip-components=1", "--file", self.input(params["archive"]))
         for patch in params["patches"]:
             with self.input(patch).open("rb") as source:
-                self.run("patch", "--batch", "--fuzz=0", "-p1", stdin=source)
+                self.run("patch", "--batch", f"--fuzz={int(params.get('patch_fuzz', 0))}", "-p1", stdin=source)
 
     def configure_make(self, arch, params):
         self.env.update(ARCH=arch, CROSS_COMPILE="aarch64-linux-gnu-", LOCALVERSION="")

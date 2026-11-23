@@ -19,6 +19,9 @@ rockchip_linux_kernel(
     dtb_target = "rockchip/gizlet-r36s-panel0.dtb",
     dts_files = {_BOARD + "gizlet-r36s-panel0.dts": "rockchip/gizlet-r36s-panel0.dts"},
     image = "parts/Image",
+    # ROCKNIX applies this set with plain `patch -p1`, whose default fuzz is 2.
+    # 004-input-drivers needs it after 0006-rk817 shifts its trailing context.
+    patch_fuzz = 2,
     patches = [_BOARD + "kernel_patches"],
     source_date_epoch = _EPOCH,
     target_compatible_with = _PANEL0,
