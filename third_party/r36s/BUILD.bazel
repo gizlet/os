@@ -1,5 +1,0 @@
-exports_files([
-    "repositories.bzl",
-    "rk3326_trust.patch",
-    "trust.sha256",
-])

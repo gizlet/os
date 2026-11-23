@@ -1,0 +1,7 @@
+exports_files(
+    [
+        "README",
+        "gpl-2.0.txt",
+    ],
+    visibility = ["//visibility:public"],
+)

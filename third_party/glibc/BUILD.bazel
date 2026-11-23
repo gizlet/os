@@ -1,0 +1,5 @@
+# License of the GNU C library linked statically into the card executables.
+exports_files(
+    ["LGPL-2.1"],
+    visibility = ["//visibility:public"],
+)

@@ -5,56 +5,43 @@ package(default_visibility = ["//visibility:public"])
 
 _BOARD = "//boards/gameconsole/r36s/rk3326:"
 
-_SOURCE = "@r36s_sources//:"
-
-_RKBIN = _SOURCE + "rkbin_"
-
 _EPOCH = 1704067200
 
 _PANEL0 = [_BOARD + "r36s_panel0"]
 
 rockchip_linux_kernel(
     name = "kernel",
-    archive = _SOURCE + "linux.tar.xz",
+    archive = _BOARD + "linux_source",
     build_user = "gizlet",
     config = _BOARD + "kernel.config",
     dtb = "parts/r36s.dtb",
     dtb_target = "rockchip/gizlet-r36s-panel0.dtb",
     dts_files = {_BOARD + "gizlet-r36s-panel0.dts": "rockchip/gizlet-r36s-panel0.dts"},
     image = "parts/Image",
-    patches = [
-        _SOURCE + "gpio.patch",
-        _SOURCE + "polldev.patch",
-        _SOURCE + "dts.patch",
-        _SOURCE + "panel.patch",
-        _SOURCE + "joypad.patch",
-    ],
+    patches = [_BOARD + "kernel_patches"],
     source_date_epoch = _EPOCH,
     target_compatible_with = _PANEL0,
 )
 
 rockchip_legacy_uboot(
     name = "bootloader",
-    archive = _SOURCE + "uboot.tar.gz",
-    bl31 = _RKBIN + "bl31.elf",
+    archive = _BOARD + "uboot_source",
+    bl31 = _BOARD + "bl31",
     boot_command = _BOARD + "boot.cmd",
     build_user = "gizlet",
-    ddr = _RKBIN + "ddr.bin",
-    defconfig = _SOURCE + "rocknix_rk3326_defconfig",
+    ddr = _BOARD + "ddr",
+    defconfig = _BOARD + "uboot_defconfig",
     idbloader = "parts/idbloader.img",
     load_address = "0x00200000",
-    miniloader = _RKBIN + "miniloader.bin",
+    miniloader = _BOARD + "miniloader",
     mkimage_soc = "px30",
-    patches = [
-        _SOURCE + "uboot.patch",
-        "//third_party/r36s:rk3326_trust.patch",
-    ],
+    patches = [_BOARD + "uboot_patches"],
     script = "parts/boot.scr",
     script_name = "Gizlet R36S Panel 0",
     source_date_epoch = _EPOCH,
     target_compatible_with = _PANEL0,
     trust = "parts/trust.img",
-    trust_checksum = "//third_party/r36s:trust.sha256",
+    trust_checksum = _BOARD + "trust.sha256",
     trust_ini = _BOARD + "trust.ini",
     uboot = "parts/uboot.img",
 )
@@ -62,7 +49,7 @@ rockchip_legacy_uboot(
 busybox_squashfs(
     name = "rootfs",
     out = "parts/rootfs.sqfs",
-    archive = _SOURCE + "busybox.tar.bz2",
+    archive = _BOARD + "busybox_source",
     config = _BOARD + "busybox.config",
     directories = [
         "dev",
@@ -83,13 +70,13 @@ busybox_squashfs(
     },
     files = {
         _BOARD + "inittab": "etc/inittab",
-        _RKBIN + "LICENSE": "usr/share/licenses/rockchip-rkbin",
-        "//third_party/licenses:Linux-COPYING": "usr/share/licenses/linux/COPYING",
-        "//third_party/licenses:Linux-GPL-2.0": "usr/share/licenses/linux/LICENSES/preferred/GPL-2.0",
-        "//third_party/licenses:Linux-syscall-note": "usr/share/licenses/linux/LICENSES/exceptions/Linux-syscall-note",
-        "//third_party/licenses:U-Boot-README": "usr/share/licenses/u-boot/README",
-        "//third_party/licenses:U-Boot-GPL-2.0": "usr/share/licenses/u-boot/gpl-2.0.txt",
-        "//third_party/licenses:glibc-LGPL-2.1": "usr/share/licenses/glibc-LGPL-2.1",
+        _BOARD + "rkbin_license": "usr/share/licenses/rockchip-rkbin",
+        "//third_party/linux:COPYING": "usr/share/licenses/linux/COPYING",
+        "//third_party/linux:GPL-2.0": "usr/share/licenses/linux/LICENSES/preferred/GPL-2.0",
+        "//third_party/linux:Linux-syscall-note": "usr/share/licenses/linux/LICENSES/exceptions/Linux-syscall-note",
+        "//third_party/u-boot:README": "usr/share/licenses/u-boot/README",
+        "//third_party/u-boot:gpl-2.0.txt": "usr/share/licenses/u-boot/gpl-2.0.txt",
+        "//third_party/glibc:LGPL-2.1": "usr/share/licenses/glibc-LGPL-2.1",
     },
     source_date_epoch = _EPOCH,
     source_files = {"LICENSE": "usr/share/licenses/BusyBox"},
@@ -120,8 +107,8 @@ sh_test(
     args = [
         "$(rootpath :gizlet-os-r36s-panel0)",
         "$(rootpath :boot_chain_test.py)",
-        "$(rootpath @r36s_sources//:rkbin_bl31.elf)",
-        "$(rootpath //third_party/r36s:trust.sha256)",
+        "$(rootpath //boards/gameconsole/r36s/rk3326:bl31)",
+        "$(rootpath //boards/gameconsole/r36s/rk3326:trust.sha256)",
         "$(rootpath //boards/gameconsole/r36s/rk3326:boot.cmd)",
         "$(rootpath //boot:booter)",
     ],
@@ -130,8 +117,8 @@ sh_test(
         ":gizlet-os-r36s-panel0",
         _BOARD + "boot.cmd",
         "//boot:booter",
-        "//third_party/r36s:trust.sha256",
-        _RKBIN + "bl31.elf",
+        _BOARD + "bl31",
+        _BOARD + "trust.sha256",
     ],
     exec_compatible_with = ["@platforms//os:linux"],
     tags = ["manual"],

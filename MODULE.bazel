@@ -23,7 +23,18 @@ use_repo(krun, "libkrun", "libkrunfw", "rust_std_aarch64_unknown_linux_musl")
 debian = use_extension("//tools/bazel/debian:repositories.bzl", "debian")
 use_repo(debian, "debian_bookworm_arm64")
 
-# Linux, U-Boot, BusyBox, the gizlet/rocknix board patches and Rockchip rkbin firmware.
-r36s_sources = use_repo_rule("//third_party/r36s:repositories.bzl", "r36s_sources")
+# Pinned upstream sources, one repository per upstream. Boards select from them.
+linux = use_extension("//third_party/linux:repositories.bzl", "linux")
+use_repo(linux, "linux")
 
-r36s_sources(name = "r36s_sources")
+hardkernel_uboot = use_extension("//third_party/u-boot:repositories.bzl", "hardkernel_uboot")
+use_repo(hardkernel_uboot, "hardkernel_uboot")
+
+busybox = use_extension("//third_party/busybox:repositories.bzl", "busybox")
+use_repo(busybox, "busybox")
+
+rkbin = use_extension("//third_party/rkbin:repositories.bzl", "rkbin")
+use_repo(rkbin, "rkbin")
+
+rocknix = use_extension("//third_party/rocknix:repositories.bzl", "rocknix")
+use_repo(rocknix, "rocknix")
