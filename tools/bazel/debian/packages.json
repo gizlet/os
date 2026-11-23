@@ -1,0 +1,42 @@
+{
+ "snapshot": "20261120T000000Z",
+ "suite": "bookworm",
+ "architecture": "arm64",
+ "packages": [
+  "bc",
+  "binutils",
+  "bison",
+  "busybox-static",
+  "bzip2",
+  "cpio",
+  "device-tree-compiler",
+  "dosfstools",
+  "e2fsprogs",
+  "faketime",
+  "fdisk",
+  "file",
+  "flex",
+  "gcc",
+  "genimage",
+  "kmod",
+  "libc6-dev",
+  "libelf-dev",
+  "libssl-dev",
+  "make",
+  "mtools",
+  "openssl",
+  "patch",
+  "perl",
+  "pkgconf",
+  "python3",
+  "qemu-system-arm",
+  "squashfs-tools",
+  "u-boot-tools",
+  "xz-utils"
+ ],
+ "prefer": {
+  "awk": "mawk",
+  "pkg-config": "pkgconf"
+ },
+ "exclude": []
+}

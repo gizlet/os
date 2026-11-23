@@ -20,6 +20,10 @@ register_toolchains("@rust_toolchains//:all")
 krun = use_extension("//tools/bazel/krun:repositories.bzl", "krun_repositories")
 use_repo(krun, "libkrun", "libkrunfw")
 
+# Debian bookworm arm64 tools for the build VM, pinned by snapshot and SHA-256.
+debian = use_extension("//tools/bazel/debian:repositories.bzl", "debian")
+use_repo(debian, "debian_bookworm_arm64")
+
 # Linux, U-Boot, BusyBox, the gizlet/rocknix board patches and Rockchip rkbin firmware.
 r36s_sources = use_repo_rule("//third_party/r36s:repositories.bzl", "r36s_sources")
 

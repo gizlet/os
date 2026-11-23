@@ -115,3 +115,67 @@ hypervisor_binary = rule(
     },
     executable = True,
 )
+
+KRUN_ATTRS = {
+    "_krun_vm": attr.label(default = Label("//tools/bazel/krun:krun-vm"), cfg = "exec", executable = True),
+    "_krunfw": attr.label(default = Label("//tools/bazel/krun:libkrunfw.5.dylib"), cfg = "exec", allow_single_file = True),
+}
+
+def _quote(value):
+    return "'" + value.replace("'", "'\\''") + "'"
+
+def krun_action(ctx, *, command, inputs, outputs, mnemonic, root_dir = None, root_disk = None, env = {}, cpus = 4, mem = 6144, progress_message = None):
+    """Runs `command` in a microVM.
+
+    `inputs` maps Files to their paths under /in in the guest. Outputs must be
+    in this package; the guest writes them under /out at their package paths.
+    Exactly one of `root_dir` (a directory path) and `root_disk` (a SquashFS File) is the guest root.
+    The command starts in /tmp, a private tmpfs, with only `env` and PATH set.
+    """
+    out_root = ctx.bin_dir.path + "/" + ctx.label.package
+    for output in outputs:
+        if not output.path.startswith(out_root + "/"):
+            fail("%s is outside %s" % (output.path, out_root))
+
+    # libkrun passes the command line through the kernel command line, which
+    # cannot carry arbitrary quoting. The real command travels as a script.
+    mount = "/bin/busybox mount" if root_dir else "/bin/mount"
+    path = "/bin" if root_dir else "/usr/sbin:/usr/bin:/sbin:/bin"
+    run = ctx.actions.declare_file(ctx.attr.name + ".krun-run")
+    ctx.actions.write(run, "\n".join(
+        ["set -u", "export PATH=" + path] +
+        ["export %s=%s" % (name, _quote(value)) for name, value in sorted(env.items())] +
+        [
+            "if %s -t tmpfs -o mode=1777 tmpfs /tmp && %s -t virtiofs out /out && cd /tmp; then" % (mount, mount),
+            "    " + " ".join([_quote(arg) for arg in command]),
+            "    status=$?",
+            "else",
+            "    status=125",
+            "fi",
+            "echo $status > /in/.krun-status",
+            "exit $status",
+            "",
+        ],
+    ))
+    manifest = ctx.actions.declare_file(ctx.attr.name + ".krun-inputs")
+    entries = [(run, ".krun-run")] + inputs.items()
+    ctx.actions.write(manifest, "".join(["%s\t%s\n" % (f.path, dest) for f, dest in entries]))
+    args = ctx.actions.args()
+    args.add("--krunfw", ctx.file._krunfw)
+    if root_disk:
+        args.add("--root-disk", root_disk)
+    else:
+        args.add("--root", root_dir)
+    args.add_all(["--cpus", str(cpus), "--mem", str(mem), "--inputs", manifest, "--outputs", out_root])
+    shell = "/bin/busybox sh" if root_dir else "/bin/sh"
+    args.add_all(["--", shell.split(" ")[0]] + shell.split(" ")[1:] + ["-c", "%s -t virtiofs in /in && exec %s /in/.krun-run" % (mount, shell)])
+    ctx.actions.run(
+        executable = ctx.executable._krun_vm,
+        arguments = [args],
+        inputs = [manifest, run, ctx.file._krunfw] + ([root_disk] if root_disk else []) + inputs.keys(),
+        outputs = outputs,
+        mnemonic = mnemonic,
+        progress_message = progress_message,
+        # Hypervisor access and the staging links need the real output tree.
+        execution_requirements = {"no-remote": "1", "no-sandbox": "1"},
+    )
