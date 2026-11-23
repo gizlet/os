@@ -1,0 +1,96 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
+load(":defs.bzl", "cargo_staticlib", "hypervisor_binary", "linux_aarch64_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# libkrun's guest init, injected into every VM's root as /init.krun.
+cc_binary(
+    name = "init_elf",
+    srcs = ["@libkrun//:init_sources"],
+    copts = [
+        "-O2",
+        "-Wall",
+        "-w",
+    ],
+    linkopts = ["-static"],
+    tags = ["manual"],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:private"],
+)
+
+linux_aarch64_binary(
+    name = "init",
+    binary = ":init_elf",
+    visibility = ["//visibility:private"],
+)
+
+cargo_staticlib(
+    name = "libkrun_staticlib",
+    env_files = {":init": "KRUN_INIT_BINARY_PATH"},
+    crate_features = ["blk"],
+    lib = "libkrun.a",
+    manifest = "@libkrun//:Cargo.toml",
+    package = "libkrun",
+    srcs = ["@libkrun//:workspace"],
+    visibility = ["//visibility:private"],
+)
+
+cc_import(
+    name = "libkrun_import",
+    static_library = ":libkrun_staticlib",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "libkrun",
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-framework",
+            "Hypervisor",
+            "-liconv",
+        ],
+        "//conditions:default": [
+            "-ldl",
+            "-lpthread",
+            "-lm",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":libkrun_import",
+        "@libkrun//:headers",
+    ],
+)
+
+# The guest kernel, loaded by libkrun at VM start.
+cc_binary(
+    name = "libkrunfw.5.dylib",
+    srcs = ["@libkrunfw//:kernel.c"],
+    copts = [
+        "-O0",
+        "-DABI_VERSION=5",
+    ],
+    linkopts = select({
+        "@platforms//os:macos": ["-Wl,-install_name,libkrunfw.5.dylib"],
+        "//conditions:default": ["-Wl,-soname,libkrunfw.so.5"],
+    }),
+    linkshared = True,
+)
+
+cc_binary(
+    name = "launcher",
+    srcs = ["launcher.c"],
+    copts = ["-std=c11"],
+    visibility = ["//visibility:private"],
+    deps = [":libkrun"],
+)
+
+hypervisor_binary(
+    name = "krun-vm",
+    binary = ":launcher",
+    codesign = select({
+        "@platforms//os:macos": True,
+        "//conditions:default": False,
+    }),
+    entitlements = "hypervisor.entitlements",
+)

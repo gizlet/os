@@ -3,7 +3,22 @@ module(name = "gizlet_os")
 bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_cc", version = "0.2.28")
+bazel_dep(name = "rules_rust", version = "0.75.0")
 bazel_dep(name = "rules_shell", version = "0.10.0")
+
+# Rust compiles the libkrun VM launcher for the build host.
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.100.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+# libkrun and its guest kernel run the native image stages in a microVM.
+krun = use_extension("//tools/bazel/krun:repositories.bzl", "krun_repositories")
+use_repo(krun, "libkrun", "libkrunfw")
 
 # Linux, U-Boot, BusyBox, the gizlet/rocknix board patches and Rockchip rkbin firmware.
 r36s_sources = use_repo_rule("//third_party/r36s:repositories.bzl", "r36s_sources")
