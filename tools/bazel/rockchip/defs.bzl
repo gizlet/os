@@ -1,6 +1,6 @@
 """Local Linux build rules for ARM64 Rockchip images. See README.md for the host contract.
 
-Derived from GizOS tools/bazel/native/rockchip at 0ac3bfdc2bafa78bfc89965931b5ce22faeff795 (Apache-2.0, see third_party/r36s/GizOS-LICENSE).
+Derived from GizOS tools/bazel/native/rockchip at 0ac3bfdc2bafa78bfc89965931b5ce22faeff795 (Apache-2.0, see LICENSE).
 """
 
 _EXEC_GROUP = "native_linux"

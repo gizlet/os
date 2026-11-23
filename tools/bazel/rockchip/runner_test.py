@@ -1,5 +1,6 @@
 """Check native input assembly and fail-closed status/config validation."""
 
+import importlib.util
 import io
 import os
 from pathlib import Path
@@ -8,7 +9,11 @@ import tarfile
 import tempfile
 import unittest
 
-from tools.bazel.rockchip import runner
+# The test wrapper passes the runner's path. Isolated mode keeps the module
+# search path free of the runfiles and current directories.
+_spec = importlib.util.spec_from_file_location("runner", sys.argv.pop(1))
+runner = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(runner)
 
 
 class NativeInputsTest(unittest.TestCase):

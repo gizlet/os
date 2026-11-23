@@ -84,7 +84,6 @@ busybox_squashfs(
     files = {
         _BOARD + "inittab": "etc/inittab",
         _RKBIN + "LICENSE": "usr/share/licenses/rockchip-rkbin",
-        "//third_party/r36s:GizOS-LICENSE": "usr/share/licenses/GizOS",
         "//third_party/licenses:Linux-COPYING": "usr/share/licenses/linux/COPYING",
         "//third_party/licenses:Linux-GPL-2.0": "usr/share/licenses/linux/LICENSES/preferred/GPL-2.0",
         "//third_party/licenses:Linux-syscall-note": "usr/share/licenses/linux/LICENSES/exceptions/Linux-syscall-note",

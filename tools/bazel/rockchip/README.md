@@ -1,6 +1,6 @@
 # Rockchip image rules
 
-These four rules build the R36S card from labels supplied by the board target. They are derived from GizOS commit `0ac3bfdc2bafa78bfc89965931b5ce22faeff795` under Apache-2.0 and are maintained in this repository. Board targets load them from `//tools/bazel/rockchip:defs.bzl`. [Declarations](defs.bzl) · [Native stages](runner.py) · [R36S target](../../../targets/sd_image/gameconsole/r36s/BUILD.bazel)
+These four rules build the R36S card from labels supplied by the board target. They are derived from GizOS commit `0ac3bfdc2bafa78bfc89965931b5ce22faeff795` under Apache-2.0 and are maintained in this repository. [License](LICENSE) applies to these build files and the test toolchain in `tools/bazel/platforms`; nothing from them is installed on the card. Board targets load them from `//tools/bazel/rockchip:defs.bzl`. [Declarations](defs.bzl) · [Native stages](runner.py) · [R36S target](../../../targets/sd_image/gameconsole/r36s/BUILD.bazel)
 
 | Rule | Inputs | Outputs |
 | --- | --- | --- |

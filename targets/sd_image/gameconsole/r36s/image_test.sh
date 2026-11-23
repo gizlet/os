@@ -71,7 +71,7 @@ grep -Fx 'tty1::askfirst:-/bin/sh' root/etc/inittab
 test "$(realpath root/bin/cttyhack)" = "$PWD/root/bin/busybox"
 test -x root/sbin/boot-session && test -x root/sbin/gizlet-booter
 test -d root/opt/gizlet && test -d root/home
-for notice in BusyBox GizOS rockchip-rkbin musl-COPYRIGHT Zig-MIT glibc-LGPL-2.1 linux/COPYING linux/LICENSES/preferred/GPL-2.0 linux/LICENSES/exceptions/Linux-syscall-note u-boot/README u-boot/gpl-2.0.txt; do
+for notice in BusyBox rockchip-rkbin musl-COPYRIGHT Zig-MIT glibc-LGPL-2.1 linux/COPYING linux/LICENSES/preferred/GPL-2.0 linux/LICENSES/exceptions/Linux-syscall-note u-boot/README u-boot/gpl-2.0.txt; do
     test -s "root/usr/share/licenses/$notice"
 done
 cmp "$booter" root/sbin/gizlet-booter
