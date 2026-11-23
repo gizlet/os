@@ -36,7 +36,6 @@ class NativeInputsTest(unittest.TestCase):
                     runner.install(root, [(source, invalid)], 0o755)
             self.assertEqual(source.read_bytes(), b"ELF fixture")
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "native Linux stage")
     def test_kernel_stage_uses_explicit_target_and_ordered_patches(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

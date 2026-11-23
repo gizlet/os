@@ -1,5 +1,6 @@
-load("//tools/bazel/rockchip:defs.bzl", "busybox_squashfs", "rockchip_legacy_uboot", "rockchip_linux_kernel", "rockchip_sd_image")
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//boards/gameconsole/r36s/rk3326:card.bzl", "R36S_CARD", "R36S_DATA_UUID")
+load("//boot:defs.bzl", "gizlet_qemu_test", "gizlet_rootfs_test")
+load("//tools/bazel/rockchip:defs.bzl", "busybox_squashfs", "rockchip_card_test", "rockchip_legacy_uboot", "rockchip_linux_kernel", "rockchip_sd_image")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -101,43 +102,40 @@ rockchip_sd_image(
     target_compatible_with = _PANEL0,
 )
 
-sh_test(
+rockchip_card_test(
     name = "image_test",
-    srcs = ["image_test.sh"],
-    args = [
-        "$(rootpath :gizlet-os-r36s-panel0)",
-        "$(rootpath :boot_chain_test.py)",
-        "$(rootpath //boards/gameconsole/r36s/rk3326:bl31)",
-        "$(rootpath //boards/gameconsole/r36s/rk3326:trust.sha256)",
-        "$(rootpath //boards/gameconsole/r36s/rk3326:boot.cmd)",
-        "$(rootpath //boot:booter)",
-    ],
-    data = [
-        ":boot_chain_test.py",
-        ":gizlet-os-r36s-panel0",
-        _BOARD + "boot.cmd",
-        "//boot:booter",
-        _BOARD + "bl31",
-        _BOARD + "trust.sha256",
-    ],
-    exec_compatible_with = ["@platforms//os:linux"],
+    bl31 = _BOARD + "bl31",
+    boot_command = _BOARD + "boot.cmd",
+    card = R36S_CARD,
+    image = ":gizlet-os-r36s-panel0",
     tags = ["manual"],
-    target_compatible_with = [_BOARD + "r36s_panel0"],
+    target_compatible_with = _PANEL0,
+    trust_checksum = _BOARD + "trust.sha256",
 )
 
-sh_test(
+gizlet_rootfs_test(
+    name = "rootfs_test",
+    booter = "//boot:booter",
+    data_uuid = R36S_DATA_UUID,
+    image = ":gizlet-os-r36s-panel0",
+    licenses = [
+        "BusyBox",
+        "glibc-LGPL-2.1",
+        "linux/COPYING",
+        "linux/LICENSES/exceptions/Linux-syscall-note",
+        "linux/LICENSES/preferred/GPL-2.0",
+        "rockchip-rkbin",
+        "u-boot/README",
+        "u-boot/gpl-2.0.txt",
+    ],
+    tags = ["manual"],
+    target_compatible_with = _PANEL0,
+)
+
+gizlet_qemu_test(
     name = "boot_test",
     size = "medium",
-    srcs = ["boot_test.sh"],
-    args = [
-        "$(rootpath :boot_test.py)",
-        "$(rootpath :gizlet-os-r36s-panel0)",
-    ],
-    data = [
-        ":boot_test.py",
-        ":gizlet-os-r36s-panel0",
-    ],
-    exec_compatible_with = ["@platforms//os:linux"],
+    image = ":gizlet-os-r36s-panel0",
     tags = ["manual"],
-    target_compatible_with = [_BOARD + "r36s_panel0"],
+    target_compatible_with = _PANEL0,
 )

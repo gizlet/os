@@ -1,26 +1,19 @@
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools/bazel/krun:defs.bzl", "vm_test")
+
+exports_files(
+    ["card_test.py"],
+    visibility = ["//visibility:public"],
+)
 
 exports_files(
     ["runner.py"],
     visibility = ["//visibility:private"],
 )
 
-# Host-side unit test for the native stage runner. Like the stages themselves
-# it uses the host's /usr/bin/python3. Board configurations target the
-# handheld, so the test runs only in the default host configuration.
-sh_test(
+# Unit test of the native stage runner, in the build VM like the stages.
+vm_test(
     name = "runner_test",
-    srcs = ["runner_test.sh"],
-    args = [
-        "$(rootpath :runner_test.py)",
-        "$(rootpath :runner.py)",
-    ],
-    data = [
-        ":runner.py",
-        ":runner_test.py",
-    ],
-    target_compatible_with = select({
-        "//boards/gameconsole/r36s/rk3326:r36s_panel0": ["@platforms//:incompatible"],
-        "//conditions:default": [],
-    }),
+    src = "runner_test.py",
+    data = [":runner.py"],
+    guest_args = ["$(rootpath :runner.py)"],
 )

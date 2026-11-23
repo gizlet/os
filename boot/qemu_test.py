@@ -1,4 +1,10 @@
-"""Exercise the generated TF1 card and persistent installation area using QEMU virt."""
+"""Boot a Gizlet OS card image on QEMU virt and exercise installation and recovery.
+
+Usage: qemu_test.py IMAGE KERNEL_NAME
+
+KERNEL_NAME is the kernel file on the card's boot partition. The kernel boots
+the card's SquashFS partition, which the test finds through the MBR.
+"""
 
 from contextlib import contextmanager
 import hashlib
@@ -11,8 +17,10 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).parent))
+import card  # noqa: E402
+
 PROMPT = b"recovery# "
-MIB = 1024 * 1024
 
 
 class Console:
@@ -51,12 +59,12 @@ class Console:
 
 
 @contextmanager
-def boot(card, kernel, other=None):
+def boot(disk, kernel, root, other=None):
     args = ["qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a35", "-m", "512",
             "-display", "none", "-monitor", "none", "-serial", "stdio", "-nic", "none", "-no-reboot",
-            "-kernel", str(kernel), "-append", "console=ttyAMA0 root=PARTUUID=36335030-02 rootfstype=squashfs rootwait ro"]
-    for index, disk in enumerate([card] if other is None else [card, other]):
-        args += ["-drive", f"if=none,id=d{index},format=raw,file={str(disk).replace(',', ',,')}",
+            "-kernel", str(kernel), "-append", f"console=ttyAMA0 root={root} rootfstype=squashfs rootwait ro"]
+    for index, drive in enumerate([disk] if other is None else [disk, other]):
+        args += ["-drive", f"if=none,id=d{index},format=raw,file={str(drive).replace(',', ',,')}",
                  "-device", f"virtio-blk-device,drive=d{index}"]
     with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT) as guest, selectors.DefaultSelector() as serial:
@@ -69,12 +77,14 @@ def boot(card, kernel, other=None):
                 guest.wait()
 
 
-def scenarios(image, work):
-    kernel = work / "Image"
-    subprocess.run(["mcopy", "-i", f"{image}@@{16 * MIB}", "::Image", kernel], check=True)
-    card = work / "private.img"
-    shutil.copyfile(image, card)
-    with boot(card, kernel) as console:
+def scenarios(image, kernel_name, work):
+    parts, signature = card.partitions(image)
+    root = f"PARTUUID={signature:08x}-{parts['root'][0]:02x}"
+    kernel = work / "kernel"
+    subprocess.run(["mcopy", "-i", f"{image}@@{parts['boot'][1]}", "::" + kernel_name, kernel], check=True)
+    private = work / "private.img"
+    shutil.copyfile(image, private)
+    with boot(private, kernel, root) as console:
         console.expect(b"/opt/gizlet/boot.ini: No such file")
         console.expect(PROMPT)
         console.enter("cat /proc/mounts")
@@ -86,7 +96,7 @@ def scenarios(image, work):
         console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini")
         console.command("echo persistent-user-file > /home/check")
         console.stop()
-    with boot(card, kernel) as console:
+    with boot(private, kernel, root) as console:
         console.expect(b"starting /opt/gizlet/bin/hello")
         console.expect(b"\r\nhello-from-card\r\n")
         console.expect(b"boot entry finished with status 0")
@@ -117,17 +127,18 @@ def scenarios(image, work):
         console.expect(b"\r\npersistent-user-file\r\n")
         console.expect(PROMPT)
         console.stop()
-    # A TF1 card missing p3 must not pick a valid data volume on another disk.
+    # A card missing its data partition must not pick a valid data volume on another disk.
     # The second disk is the real, populated data partition as a standalone virtual disk.
+    index, offset, size = parts["data"]
     decoy = work / "other.img"
-    with card.open("rb") as source, decoy.open("wb") as output:
-        source.seek(96 * MIB)
-        shutil.copyfileobj(source, output)
+    with private.open("rb") as source, decoy.open("wb") as output:
+        source.seek(offset)
+        output.write(source.read(size))
     before = hashlib.sha256(decoy.read_bytes()).digest()
-    with card.open("r+b") as data:
-        data.seek(446 + 2 * 16)
+    with private.open("r+b") as data:
+        data.seek(446 + (index - 1) * 16)
         data.write(bytes(16))
-    with boot(card, kernel, decoy) as console:
+    with boot(private, kernel, root, decoy) as console:
         console.expect(b"data partition missing")
         console.expect(PROMPT)
         console.command("echo local-console-ok")
@@ -137,4 +148,4 @@ def scenarios(image, work):
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(dir=os.environ.get("TEST_TMPDIR")) as temp:
-        scenarios(Path(sys.argv[1]).resolve(), Path(temp))
+        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], Path(temp))

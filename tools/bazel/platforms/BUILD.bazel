@@ -2,28 +2,14 @@ load(":test_toolchain.bzl", "empty_test_toolchain")
 
 package(default_visibility = ["//visibility:public"])
 
-# Image tests run on the Linux build host while the target platform is the
-# AArch64 handheld. These toolchains let Bazel pick the host as test executor.
+# Image tests run in the build VM on the build host while the target platform
+# is the AArch64 handheld. This toolchain lets any host execute them.
 empty_test_toolchain(
     name = "host_test_toolchain_info",
 )
 
 toolchain(
-    name = "linux_x86_64_test_toolchain",
-    exec_compatible_with = [
-        "@platforms//cpu:x86_64",
-        "@platforms//os:linux",
-    ],
-    toolchain = ":host_test_toolchain_info",
-    toolchain_type = "@bazel_tools//tools/test:default_test_toolchain_type",
-)
-
-toolchain(
-    name = "linux_arm64_test_toolchain",
-    exec_compatible_with = [
-        "@platforms//cpu:arm64",
-        "@platforms//os:linux",
-    ],
+    name = "host_test_toolchain",
     toolchain = ":host_test_toolchain_info",
     toolchain_type = "@bazel_tools//tools/test:default_test_toolchain_type",
 )

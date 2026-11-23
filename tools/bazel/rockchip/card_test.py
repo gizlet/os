@@ -1,17 +1,27 @@
-"""Check the R36S BootROM and miniloader inputs read back from a card image."""
+"""Check a Rockchip legacy-boot card image read back as a regular file.
+
+Usage: card_test.py IMAGE BL31_ELF TRUST_SHA256 BOOT_CMD CONFIG_JSON
+
+CONFIG_JSON describes the board's card: MBR disk signature, partitions as
+[boot flag, type, first sector, sectors], total size, the pinned IDB digest
+and length, the boot partition's file names and device tree expectations.
+The BootROM stages sit at the legacy offsets: IDB at sector 64, U-Boot at
+8 MiB and BL31 trust at 12 MiB.
+"""
 
 import hashlib
+import json
 from pathlib import Path
 import shlex
 import struct
+import subprocess
 import sys
+import tempfile
 import unittest
 import zlib
 
 MIB = 1024 * 1024
 SECTOR = 512
-# ROCKNIX 20261101-a, from LBA 64 through the last byte of the pinned miniloader.
-IDB_SHA256 = "2fc42ada721b84d8bd40a9a3486abde92d869a5124cad14789743205b1168384"
 
 
 def rk_crc32(payload):
@@ -72,7 +82,7 @@ def check_trust(trust, segments, golden):
         payload = primary[start * SECTOR:next_sector * SECTOR]
         assert payload == segment.ljust(sectors * SECTOR, b"\0"), f"BL31[{i}] ELF contents"
         assert hashlib.sha256(payload).digest() == digest, f"BL31[{i}] segment digest"
-    assert hashlib.sha256(trust).hexdigest() == golden, "4 MiB trust region differs from ROCKNIX 20261101-a"
+    assert hashlib.sha256(trust).hexdigest() == golden, "4 MiB trust region differs from the pinned digest"
 
 
 def check_script(script, commands):
@@ -107,12 +117,48 @@ def check_regressions(trust, segments, golden, script, commands):
     print("Rejected incorrect physical addresses, sector counts, signature-only trust and non-script boot image")
 
 
+def run(*command, **options):
+    print("+", " ".join(map(str, command)), flush=True)
+    return subprocess.run(command, check=True, **options)
+
+
+def fdt(dtb, node, prop, kind=None):
+    command = ["fdtget"] + (["-t", kind] if kind else []) + [dtb, node, prop]
+    return subprocess.run(command, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def check_mbr(card, config):
+    mbr = card.read(SECTOR)
+    assert mbr[510:] == b"\x55\xaa", "MBR boot signature"
+    assert mbr[440:444] == bytes.fromhex(config["disk_signature"])[::-1], "MBR disk signature"
+    expected = config["partitions"]
+    for index in range(4):
+        entry = mbr[446 + 16 * index:462 + 16 * index]
+        if index < len(expected):
+            assert list(struct.unpack("<B3xB3xII", entry)) == expected[index], f"partition {index + 1}"
+        else:
+            assert entry == bytes(16), f"unexpected partition {index + 1}"
+    assert card.seek(0, 2) == config["size_mib"] * MIB, "truncated or oversized card"
+    return mbr
+
+
+def check_device_tree(dtb, config):
+    for node, prop, value in config.get("properties", []):
+        assert fdt(dtb, node, prop) == value, f"{node} {prop}"
+    for node, prop, target in config.get("links", []):
+        assert fdt(dtb, node, prop, "x") == fdt(dtb, target, "phandle", "x"), f"{node} {prop} -> {target}"
+    print(f"Device tree matches {len(config.get('properties', []))} properties and {len(config.get('links', []))} links")
+
+
 def main():
-    image, bl31, trust_pin, boot_scr, boot_cmd = map(Path, sys.argv[1:])
+    image, bl31, trust_pin, boot_cmd, config = sys.argv[1:]
+    image, bl31, trust_pin, boot_cmd = map(Path, (image, bl31, trust_pin, boot_cmd))
+    config = json.loads(config)
+    work = Path(tempfile.mkdtemp(prefix="card-test-"))
     with image.open("rb") as card:
-        mbr = card.read(SECTOR)
+        mbr = check_mbr(card, config)
         disk_id, = struct.unpack_from("<I", mbr, 440)
-        # The immutable system and the mutable data filesystem both use MBR type 0x83.
+        # The immutable system and the mutable data filesystem may both use MBR type 0x83.
         # Identify the actual SquashFS by its on-card superblock at the listed partition offset.
         roots = []
         for i in range(4):
@@ -123,25 +169,41 @@ def main():
                     roots.append(i + 1)
         assert len(roots) == 1, "expected one SquashFS root partition"
         root_option = f"root=PARTUUID={disk_id:08x}-{roots[0]:02x}"
+        idb = config["idbloader"]
         card.seek(64 * SECTOR)
-        assert hashlib.sha256(card.read(176452)).hexdigest() == IDB_SHA256, "IDB, DDR or miniloader differs"
+        assert hashlib.sha256(card.read(idb["size"])).hexdigest() == idb["sha256"], "IDB, DDR or miniloader differs"
         card.seek(8 * MIB)
         check_loader(card.read(4 * MIB))
         trust = card.read(4 * MIB)
+        boot_index = next(i for i, p in enumerate(config["partitions"]) if p[0] == 0x80)
+        start, sectors = config["partitions"][boot_index][2:]
+        card.seek(start * SECTOR)
+        (work / "boot.vfat").write_bytes(card.read(sectors * SECTOR))
+    run("sfdisk", "--dump", image)
+    run("fsck.fat", "-n", work / "boot.vfat")
+    files = config["boot_files"]
+    for name in files.values():
+        run("mcopy", "-i", work / "boot.vfat", "::" + name, work / name)
+    run("dumpimage", "-l", work / files["script"])
+    kernel = (work / files["kernel"]).read_bytes()
+    assert kernel[56:60] == b"ARM\x64", "AArch64 Linux Image magic"
+
     segments = elf_segments(bl31.read_bytes())
     golden = trust_pin.read_text().split()[0]
     check_trust(trust, segments, golden)
-    script, commands = boot_scr.read_bytes(), boot_cmd.read_bytes()
+    script, commands = (work / files["script"]).read_bytes(), boot_cmd.read_bytes()
     check_script(script, commands)
     settings = [shlex.split(line) for line in commands.decode().splitlines()]
     bootargs, = [line[2] for line in settings if line[:2] == ["setenv", "bootargs"]]
     assert [arg for arg in bootargs.split() if arg.startswith("root=")] == [root_option], "boot root must match MBR"
     assert {"rootfstype=squashfs", "ro"}.issubset(bootargs.split()), "read-only SquashFS boot"
-    print(f"TF1 active root {root_option}")
-    print(f"BL31 primary and backup match ELF PT_LOAD segments and ROCKNIX golden {golden}")
+    print(f"Active root {root_option}")
+    print(f"BL31 primary and backup match ELF PT_LOAD segments and pinned digest {golden}")
     for i, (_, addr, data) in enumerate(segments):
         print(f"  BL31[{i}] physical={addr:#010x} bytes={len(data)}")
     check_regressions(trust, segments, golden, script, commands)
+    check_device_tree(str(work / files["dtb"]), config.get("device_tree", {}))
+    run("sha256sum", image, work / files["kernel"], work / files["dtb"])
 
 
 if __name__ == "__main__":

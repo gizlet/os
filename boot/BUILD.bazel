@@ -1,6 +1,11 @@
 load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
 
-exports_files(["boot-session"])
+exports_files([
+    "boot-session",
+    "card.py",
+    "qemu_test.py",
+    "rootfs_test.py",
+])
 
 # Built with the build VM's Debian GCC as a static AArch64 glibc executable,
 # like BusyBox, so the card needs no further C library notices.
@@ -14,5 +19,5 @@ debian_cc_binary(
         "-Wextra",
         "-Werror",
     ],
-    visibility = ["//targets/sd_image/gameconsole/r36s:__pkg__"],
+    visibility = ["//targets:__subpackages__"],
 )
