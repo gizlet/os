@@ -1,4 +1,4 @@
-load("@gizos//tools/bazel/native/rockchip:defs.bzl", "busybox_squashfs", "rockchip_legacy_uboot", "rockchip_linux_kernel", "rockchip_sd_image")
+load("//tools/bazel/rockchip:defs.bzl", "busybox_squashfs", "rockchip_legacy_uboot", "rockchip_linux_kernel", "rockchip_sd_image")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -7,7 +7,7 @@ _BOARD = "//boards/gameconsole/r36s/rk3326:"
 
 _SOURCE = "@r36s_sources//:"
 
-_RKBIN = "@gizos_rk3326_legacy_rkbin//:"
+_RKBIN = _SOURCE + "rkbin_"
 
 _EPOCH = 1704067200
 
@@ -123,7 +123,7 @@ sh_test(
     args = [
         "$(rootpath :gizlet-os-r36s-panel0)",
         "$(rootpath :boot_chain_test.py)",
-        "$(rootpath @gizos_rk3326_legacy_rkbin//:bl31.elf)",
+        "$(rootpath @r36s_sources//:rkbin_bl31.elf)",
         "$(rootpath //third_party/r36s:trust.sha256)",
         "$(rootpath //boards/gameconsole/r36s/rk3326:boot.cmd)",
         "$(rootpath //boot:booter)",

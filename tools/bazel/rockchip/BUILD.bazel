@@ -1,0 +1,22 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+exports_files(
+    ["runner.py"],
+    visibility = ["//visibility:private"],
+)
+
+# Host-side unit test for the native stage runner. Board configurations target
+# the handheld, so the test runs only in the default host configuration.
+py_test(
+    name = "runner_test",
+    srcs = [
+        "runner.py",
+        "runner_test.py",
+    ],
+    legacy_create_init = 0,
+    main = "runner_test.py",
+    target_compatible_with = select({
+        "//boards/gameconsole/r36s/rk3326:r36s_panel0": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
