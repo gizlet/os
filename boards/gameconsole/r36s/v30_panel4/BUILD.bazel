@@ -1,0 +1,34 @@
+package(default_visibility = ["//visibility:public"])
+
+constraint_value(
+    name = "r36s_v30_panel4",
+    constraint_setting = "//boards/gameconsole/r36s/rk3326:board",
+)
+
+platform(
+    name = "panel4",
+    constraint_values = [
+        ":r36s_v30_panel4",
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+filegroup(
+    name = "ram_files",
+    srcs = [
+        "display-check",
+        "init",
+        "inittab",
+        "recovery",
+        "trial-entry.ini",
+    ],
+)
+
+exports_files([
+    "boot-mainline.ini",
+    "boot.ini",
+    "gizlet-r36s-v30-panel4.dts",
+    "kernel.config",
+    "nv3051d-v30.patch",
+])

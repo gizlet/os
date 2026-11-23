@@ -1,0 +1,55 @@
+#!/bin/sh
+export PATH=/bin:/sbin
+printf '\nGizlet OS | V30 Panel 4 | RAM trial\n'
+
+# /dev/console and tty1 also exist in the archive, before devtmpfs is available.
+report() {
+    printf 'Gizlet OS: %s\n' "$*" >/dev/console
+    if [ -c /dev/tty1 ]; then printf 'Gizlet OS: %s\n' "$*" >/dev/tty1 2>/dev/null || :; fi
+    printf 'Gizlet OS: %s\n' "$*" >> /run/boot.log
+}
+report '1. RAM /init reached'
+mount -t devtmpfs devtmpfs /dev || report 'ERROR mounting /dev; using archive console nodes'
+mount -t proc proc /proc || report 'ERROR mounting /proc'
+mount -t sysfs sysfs /sys || report 'ERROR mounting /sys'
+report "2. Linux $(uname -r); root is in memory"
+
+# Keep earlier stages visible if DRM or the PWM backlight probes after /init.
+# read -t on a private FIFO supplies a bounded delay even on minimal BusyBox.
+display() (
+    exec 8<>/etc/display.tick
+    for tick in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        for light in /sys/class/backlight/*; do
+            [ -r "$light/brightness" ] || continue
+            read -r level < "$light/brightness" || continue
+            read -r max < "$light/max_brightness" || continue
+            if [ "$level" = 0 ] && [ "$max" -gt 0 ]; then
+                target=51  # Stock DTB uses index 51 of 255.
+                [ "$max" -ge "$target" ] || target=$max
+                printf '%s\n' "$target" > "$light/brightness" || report 'ERROR setting backlight'
+            fi
+            if [ -w "$light/bl_power" ]; then printf '0\n' > "$light/bl_power" || report 'ERROR unblanking backlight'; fi
+            report "backlight ${light##*/}: $(cat "$light/brightness")/$max"
+            break
+        done
+        if [ -r /sys/class/graphics/fb0/name ]; then
+            if [ -w /sys/class/graphics/fb0/blank ]; then printf '0\n' > /sys/class/graphics/fb0/blank || report 'ERROR unblanking fb0'; fi
+            report "framebuffer: $(cat /sys/class/graphics/fb0/name), $(cat /sys/class/graphics/fb0/virtual_size)"
+            if [ -c /dev/tty1 ]; then cat /run/boot.log > /dev/tty1 2>/dev/null || :; fi
+            exit 0
+        fi
+        read -r -t 1 unused <&8 || :
+    done
+    report 'DISPLAY: fb0 did not register within 15 seconds; inspect dmesg'
+)
+display &
+report '3. Starting Gizlet Booter'
+/sbin/gizlet-booter >> /run/booter.log 2>&1
+status=$?
+while IFS= read -r line; do report "$line"; done < /run/booter.log
+if [ "$status" -eq 0 ]; then
+    report '4. GIZLET PANEL TEST READY - local recovery console available'
+else
+    report "ERROR: Booter exited $status - local recovery console available"
+fi
+exec /bin/busybox init

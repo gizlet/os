@@ -1,2 +1,4 @@
 # Preserve the upstream license text byte for byte.
 third_party/licenses/Linux-syscall-note whitespace=-blank-at-eof
+# Unified diff context carries a leading space before kernel tabs and on blank lines.
+boards/gameconsole/r36s/v30_panel4/nv3051d-v30.patch whitespace=-space-before-tab,-blank-at-eol

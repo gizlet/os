@@ -1,0 +1,3 @@
+#!/bin/sh
+# Booter starts this RAM-resident entry to prove that the Gizlet userspace ran.
+printf 'RAM entry running; Linux %s\n' "$(uname -r)"
