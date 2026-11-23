@@ -1,6 +1,5 @@
 module(name = "gizlet_os")
 
-bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_cc", version = "0.2.28")
 bazel_dep(name = "rules_rust", version = "0.75.0")
@@ -28,7 +27,3 @@ use_repo(debian, "debian_bookworm_arm64")
 r36s_sources = use_repo_rule("//third_party/r36s:repositories.bzl", "r36s_sources")
 
 r36s_sources(name = "r36s_sources")
-
-# Select the static AArch64 musl toolchain for the installed Booter.
-zig_toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
-use_repo(zig_toolchains, "zig_sdk")

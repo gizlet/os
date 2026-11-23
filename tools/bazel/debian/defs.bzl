@@ -32,3 +32,41 @@ debian_rootfs = rule(
         "source_date_epoch": attr.int(default = 1704067200),
     },
 )
+
+def _debian_cc_binary_impl(ctx):
+    out = ctx.actions.declare_file(ctx.attr.name)
+    sources = [f for f in ctx.files.srcs if f.extension == "c"]
+    if not sources:
+        fail("srcs must contain at least one C file")
+    krun_action(
+        ctx,
+        root_disk = ctx.file._rootfs,
+        inputs = {f: f.path for f in ctx.files.srcs},
+        outputs = [out],
+        command = ["gcc"] + ctx.attr.copts + [
+            # Sources arrive under /in; record their workspace paths only.
+            "-ffile-prefix-map=/in/=",
+            "-static",
+            "-s",
+            "-o",
+            "/out/" + out.path.removeprefix(ctx.bin_dir.path + "/" + ctx.label.package + "/"),
+        ] + ["/in/" + f.path for f in sources] + ctx.attr.linkopts,
+        env = {"LC_ALL": "C", "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch), "TZ": "UTC"},
+        cpus = 2,
+        mem = 1024,
+        mnemonic = "DebianCc",
+        progress_message = "Compiling %{output} in the build VM",
+    )
+    return [DefaultInfo(files = depset([out]), executable = out)]
+
+debian_cc_binary = rule(
+    implementation = _debian_cc_binary_impl,
+    doc = "Compiles a static, stripped AArch64 Linux glibc executable with the build VM's Debian GCC.",
+    attrs = KRUN_ATTRS | {
+        "srcs": attr.label_list(mandatory = True, allow_files = [".c", ".h"]),
+        "copts": attr.string_list(),
+        "linkopts": attr.string_list(),
+        "source_date_epoch": attr.int(default = 1704067200),
+        "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
+    },
+)

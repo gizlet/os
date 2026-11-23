@@ -90,8 +90,6 @@ busybox_squashfs(
         "//third_party/licenses:U-Boot-README": "usr/share/licenses/u-boot/README",
         "//third_party/licenses:U-Boot-GPL-2.0": "usr/share/licenses/u-boot/gpl-2.0.txt",
         "//third_party/licenses:glibc-LGPL-2.1": "usr/share/licenses/glibc-LGPL-2.1",
-        "//third_party/licenses:musl-COPYRIGHT": "usr/share/licenses/musl-COPYRIGHT",
-        "//third_party/licenses:Zig-MIT": "usr/share/licenses/Zig-MIT",
     },
     source_date_epoch = _EPOCH,
     source_files = {"LICENSE": "usr/share/licenses/BusyBox"},

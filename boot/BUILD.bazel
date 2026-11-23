@@ -1,16 +1,18 @@
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
 
 exports_files(["boot-session"])
 
-cc_binary(
+# Built with the build VM's Debian GCC as a static AArch64 glibc executable,
+# like BusyBox, so the card needs no further C library notices.
+debian_cc_binary(
     name = "booter",
     srcs = ["booter.c"],
     copts = [
         "-std=c11",
+        "-O2",
         "-Wall",
         "-Wextra",
         "-Werror",
     ],
-    target_compatible_with = ["@platforms//os:linux"],
     visibility = ["//targets/sd_image/gameconsole/r36s:__pkg__"],
 )
