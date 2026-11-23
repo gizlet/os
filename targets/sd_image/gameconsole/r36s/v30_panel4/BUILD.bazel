@@ -18,6 +18,7 @@ rockchip_linux_kernel(
     image = "gizlet-test/Image",
     patches = [
         "@r36s_sources//:dts.patch",
+        "@r36s_sources//:panel.patch",
         _BOARD + "nv3051d-v30.patch",
     ],
     source_date_epoch = 1704067200,
