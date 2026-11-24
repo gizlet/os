@@ -43,7 +43,7 @@ struct device {
     unsigned char abs[BITS(ABS_CNT)];
     struct input_absinfo info[ABS_CNT];
     int last[ABS_CNT];
-    /* Each axis's value when the device was opened, where it rests. */
+    /* Where each axis rests (idle_axis_rest). */
     int rest[ABS_CNT];
 };
 
@@ -191,7 +191,9 @@ static void rescan(void) {
         if (test_bit(types, EV_ABS) && ioctl(fd, EVIOCGBIT(EV_ABS, sizeof d->abs), d->abs) >= 0) {
             for (int a = 0; a < ABS_CNT; a++) {
                 if (test_bit(d->abs, a) && ioctl(fd, EVIOCGABS(a), &d->info[a]) >= 0) {
-                    d->last[a] = d->rest[a] = d->info[a].value;
+                    int trigger = a == ABS_Z || a == ABS_RZ || a == ABS_GAS || a == ABS_BRAKE;
+                    d->last[a] = d->info[a].value;
+                    d->rest[a] = idle_axis_rest(trigger, d->info[a].value, d->info[a].minimum, d->info[a].maximum);
                 }
             }
         }
@@ -256,7 +258,7 @@ int main(int argc, char **argv) {
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
 
-    long long last_use = now_ms(), last_scan = 0;
+    long long last_use = now_ms(), last_event = last_use, last_scan = 0;
     while (!stopping) {
         long long t = now_ms();
         if (t - last_scan >= RESCAN_MS) {
@@ -267,7 +269,7 @@ int main(int argc, char **argv) {
         long long off_at = last_use + (long long)seconds * 1000;
         long long dim_at = off_at - (seconds > DIM_SECONDS * 2 ? DIM_SECONDS * 1000 : 0);
         /* What is held is only read when the screen is due to dim or turn off. */
-        int held = seconds && screen != SCREEN_OFF && t >= dim_at && controls_held();
+        int held = seconds && screen != SCREEN_OFF && t >= dim_at && idle_held_counts(t, last_event) && controls_held();
         set_screen(idle_next(screen, t, &last_use, seconds, DIM_SECONDS, held));
         off_at = last_use + (long long)seconds * 1000;
         dim_at = off_at - (seconds > DIM_SECONDS * 2 ? DIM_SECONDS * 1000 : 0);
@@ -296,11 +298,11 @@ int main(int argc, char **argv) {
         }
         if (screen == SCREEN_OFF) {
             if (pressed) {
-                last_use = now_ms();
+                last_use = last_event = now_ms();
                 set_screen(SCREEN_ON);
             }
         } else if (used) {
-            last_use = now_ms();
+            last_use = last_event = now_ms();
             set_screen(SCREEN_ON);
         }
         /* The press that woke the screen stays with us until it is let go. */

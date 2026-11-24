@@ -54,6 +54,18 @@ int main(void) {
     check(idle_next(st, 999999, &last, 60, 15, 1) == SCREEN_OFF, "off waits for a press");
     check(idle_next(st, 0, &last, 0, 15, 0) == SCREEN_ON, "never turns back on");
 
+    /* Rest positions come from the range: a stick held when the device
+     * was opened still rests in the middle once it is let go. */
+    int rest = idle_axis_rest(0, 1023, 0, 1023);
+    check(rest == 511, "a stick held at open rests in the middle");
+    check(!idle_axis_engaged(512, rest, 0, 1023, 0), "the released stick is not held");
+    check(idle_axis_engaged(1023, rest, 0, 1023, 0), "the stick pushed again is held");
+    check(idle_axis_rest(1, 3, 0, 255) == 0, "a trigger rests at its minimum");
+    check(idle_axis_rest(1, 128, 0, 255) == 127, "a second stick on ABS_Z rests in the middle");
+    /* Held without any new input counts for ten minutes at most. */
+    check(idle_held_counts(IDLE_HELD_LIMIT_MS - 1, 0), "held within the limit");
+    check(!idle_held_counts(IDLE_HELD_LIMIT_MS, 0), "held past the limit");
+
     if (failures) return 1;
     puts("idle_test: sustained input counts as use");
     return 0;

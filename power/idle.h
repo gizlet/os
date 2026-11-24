@@ -28,6 +28,27 @@ static inline int idle_axis_engaged(int value, int rest, int min, int max, int h
     return range > 0 && abs(value - rest) * 8 >= range;
 }
 
+/* Where an axis rests, from its range rather than from its value when the
+ * device was opened, which may be a stick held at that moment. Sticks rest
+ * in the middle. A trigger (TRIGGER: ABS_Z, ABS_RZ, ABS_GAS, ABS_BRAKE) rests
+ * at its minimum when it reads near it; some pads report a second stick on
+ * ABS_Z and ABS_RZ, which then rests in the middle. */
+static inline int idle_axis_rest(int trigger, int value, int min, int max) {
+    int range = max - min;
+    if (trigger && range > 0 && (value - min) * 8 <= range) return min;
+    return min + range / 2;
+}
+
+/* How long controls held without any new input keep the screen on: long
+ * enough for any held button in a game, short enough that an axis whose rest
+ * was guessed wrong cannot keep it on for good. */
+#define IDLE_HELD_LIMIT_MS (10 * 60 * 1000LL)
+
+/* Whether what is held still counts, LAST_EVENT ms being the last real input. */
+static inline int idle_held_counts(long long now, long long last_event) {
+    return now - last_event < IDLE_HELD_LIMIT_MS;
+}
+
 enum screen_state { SCREEN_ON, SCREEN_DIM, SCREEN_OFF };
 
 /* The screen's state at NOW (ms), from the one it is in. SECONDS is the
