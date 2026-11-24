@@ -16,6 +16,7 @@ def _gizlet_launcher_impl(ctx):
         inputs[f] = _repo_relative(f)
     for f in ctx.files._rust:
         inputs[f] = "rust/" + _repo_relative(f)
+    inputs[ctx.file._raylib] = "raylib/libraylib.so"
     krun_action(
         ctx,
         root_disk = ctx.file._rootfs,
@@ -32,11 +33,12 @@ def _gizlet_launcher_impl(ctx):
 
 gizlet_launcher = rule(
     implementation = _gizlet_launcher_impl,
-    doc = "Builds the launcher's Rust crate with a static DRM raylib for AArch64 Gizlet OS (glibc, libdrm).",
+    doc = "Builds the launcher's Rust crate for AArch64 Gizlet OS, linked with Gizlet runtime 1's raylib.",
     attrs = KRUN_ATTRS | {
         "srcs": attr.label_list(mandatory = True, allow_files = True),
         "source_date_epoch": attr.int(default = 1704067200),
         "_crates": attr.label(default = Label("@launcher_crates//:vendor")),
+        "_raylib": attr.label(default = Label("//runtime:raylib"), allow_single_file = True),
         "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
         "_rust": attr.label(default = Label("@rust_aarch64_linux//:toolchain")),
         "_script": attr.label(default = Label(":build_card.sh"), allow_single_file = True),

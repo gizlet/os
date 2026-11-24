@@ -27,7 +27,7 @@ Keys: arrows, Enter or K (A), Escape or J (B), I (X), U (Y), Q/E (L/R), = (Start
 bazel build --config=r36s //launcher:gizlet-launcher
 ```
 
-The build VM builds raylib from the vendored raylib-sys sources with its DRM platform and software renderer, patched for the panel's XRGB8888 framebuffer, and links it statically; the card needs only glibc and libdrm. [Build](build_card.sh) · [Patch](raylib-drm-scanout.patch)
+On the card the launcher draws with OpenGL ES 2 through Gizlet runtime 1's raylib and Mesa: Panfrost on the R36S's GPU, llvmpipe on the CPU where there is no GPU driver. It links the runtime's `libraylib.so` (`//runtime:raylib`, built from the same vendored raylib-sys sources as its bindings), and [start.sh](start.sh), installed as its boot entry, runs it through the runtime's `gizlet-run`. It redraws every frame. [Build](build_card.sh) · [Runtime](../runtime/README.md)
 
 ## Fonts
 

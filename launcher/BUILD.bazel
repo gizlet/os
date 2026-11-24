@@ -5,10 +5,12 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Cargo.lock",
     "build_card.sh",
+    "start.sh",
 ] + glob(["fonts/*.txt"]))
 
-# The Gizlet launcher for the card: home, settings and the button test. The
-# card installs it as the boot entry of a fresh data partition (see
+# The Gizlet launcher for the card: home, settings and the button test. It
+# links Gizlet runtime 1's raylib, and start.sh runs it against the runtime.
+# The card installs both as the boot entry of a fresh data partition (see
 # rootfs/usr/lib/gizlet/boot-session). On a computer, `cargo run` in this
 # directory opens it in a window.
 gizlet_launcher(
@@ -17,7 +19,6 @@ gizlet_launcher(
         "Cargo.lock",
         "Cargo.toml",
         "build.rs",
-        "raylib-drm-scanout.patch",
     ] + glob([
         "fonts/**",
         "src/**",

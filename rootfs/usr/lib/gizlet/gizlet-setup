@@ -17,10 +17,15 @@ networks=/var/lib/iwd
 boot_dev=$(/usr/lib/gizlet/gizlet-boot-device) || exit 0
 fat=/run/gizlet-setup-bootfs
 mkdir -p "$fat"
+# Mounts of the boot partition take /run/gizlet-bootfs.lock: a second mount of
+# the same device with other options fails while one is held.
+exec 9> /run/gizlet-bootfs.lock
+flock 9
 mount -t vfat -o ro,nodev,nosuid,noexec "$boot_dev" "$fat" || exit 0
 setup=
 [ -f "$fat/setup.ini" ] && setup=$(tr -d '\r' < "$fat/setup.ini")
 umount "$fat"
+exec 9>&-
 [ -n "$setup" ] || exit 0
 
 # value KEY: everything after the first = on KEY's line.

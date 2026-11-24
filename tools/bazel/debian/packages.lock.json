@@ -688,6 +688,27 @@
    "version": "3.1-20221030-2"
   },
   {
+   "name": "libegl-dev",
+   "path": "pool/main/libg/libglvnd/libegl-dev_1.6.0-1_arm64.deb",
+   "sha256": "8a3004f892785a5fa4c9f969c116f567a36d1c8e9b3d5fd0403055151e36c7d3",
+   "size": 19060,
+   "version": "1.6.0-1"
+  },
+  {
+   "name": "libegl-mesa0",
+   "path": "pool/main/m/mesa/libegl-mesa0_22.3.6-1+deb12u2_arm64.deb",
+   "sha256": "fe41047fbd6b823f56d87d2fe4cec28f9058985862f3aac828971624a37f8871",
+   "size": 106836,
+   "version": "22.3.6-1+deb12u2"
+  },
+  {
+   "name": "libegl1",
+   "path": "pool/main/libg/libglvnd/libegl1_1.6.0-1_arm64.deb",
+   "sha256": "707097a275155c600e2e9251c4ee7cdfdb2d8f50a678a850a2526a7bc9664166",
+   "size": 33104,
+   "version": "1.6.0-1"
+  },
+  {
    "name": "libelf-dev",
    "path": "pool/main/e/elfutils/libelf-dev_0.188-2.1_arm64.deb",
    "sha256": "fe16ede10e1b80a2f882f0e83c52695e77280c61eebe7106f016d4025e82399b",
@@ -779,6 +800,13 @@
    "version": "3.14.0-4"
   },
   {
+   "name": "libgbm-dev",
+   "path": "pool/main/m/mesa/libgbm-dev_22.3.6-1+deb12u2_arm64.deb",
+   "sha256": "0ab863c32efc2519db45bacb9a1f916455d9db2c3ba10ea4797e56eda9dcd7be",
+   "size": 18460,
+   "version": "22.3.6-1+deb12u2"
+  },
+  {
    "name": "libgbm1",
    "path": "pool/main/m/mesa/libgbm1_22.3.6-1+deb12u2_arm64.deb",
    "sha256": "f5c8fdddbf365259d74af270fb10f30d7fddb3fbe7b2ff62f0fdd556f8db0dc8",
@@ -821,11 +849,88 @@
    "version": "1.23-3"
   },
   {
+   "name": "libgl-dev",
+   "path": "pool/main/libg/libglvnd/libgl-dev_1.6.0-1_arm64.deb",
+   "sha256": "56add9e710c072cf56504beed50a639f9f7c64f4e31e66958fa65a566084888c",
+   "size": 100164,
+   "version": "1.6.0-1"
+  },
+  {
+   "name": "libgl1",
+   "path": "pool/main/libg/libglvnd/libgl1_1.6.0-1_arm64.deb",
+   "sha256": "f4043ab47f52325973d2b608514b3469b055b65c744861c7f378755a32e799d6",
+   "size": 90232,
+   "version": "1.6.0-1"
+  },
+  {
+   "name": "libgl1-mesa-dri",
+   "path": "pool/main/m/mesa/libgl1-mesa-dri_22.3.6-1+deb12u2_arm64.deb",
+   "sha256": "2381957e885754c0aa59ffef0a3671ad4aeb9e83476d87c979bb2d7675a6a342",
+   "size": 6281392,
+   "version": "22.3.6-1+deb12u2"
+  },
+  {
+   "name": "libglapi-mesa",
+   "path": "pool/main/m/mesa/libglapi-mesa_22.3.6-1+deb12u2_arm64.deb",
+   "sha256": "bc604daab873ed7ddf82667903cd84070dde7b99d78a9f7d51a6ffac45575183",
+   "size": 45060,
+   "version": "22.3.6-1+deb12u2"
+  },
+  {
+   "name": "libgles-dev",
+   "path": "pool/main/libg/libglvnd/libgles-dev_1.6.0-1_arm64.deb",
+   "sha256": "941e9963d64479544691f7183fe0eeae32b53b633df71c4c51263517ab2ea8f3",
+   "size": 50360,
+   "version": "1.6.0-1"
+  },
+  {
+   "name": "libgles1",
+   "path": "pool/main/libg/libglvnd/libgles1_1.6.0-1_arm64.deb",
+   "sha256": "672256ffce24a7a5d4a5b513eb63e04baaa3df779c08513c46c37f66e2e4c1dd",
+   "size": 12112,
+   "version": "1.6.0-1"
+  },
+  {
+   "name": "libgles2",
+   "path": "pool/main/libg/libglvnd/libgles2_1.6.0-1_arm64.deb",
+   "sha256": "efeb2717380f8411d66b3f669bb99bbd83ff09db3d4a1661533aa31af659608c",
+   "size": 17524,
+   "version": "1.6.0-1"
+  },
+  {
    "name": "libglib2.0-0",
    "path": "pool/main/g/glib2.0/libglib2.0-0_2.74.6-2+deb12u9_arm64.deb",
    "sha256": "61d92fffada7e27fc0ed9d23e047b45bca3b2e3bfe1a918f4ec16559282859f4",
    "size": 1315904,
    "version": "2.74.6-2+deb12u9"
+  },
+  {
+   "name": "libglvnd0",
+   "path": "pool/main/libg/libglvnd/libglvnd0_1.6.0-1_arm64.deb",
+   "sha256": "d5063205fab5322ee686f33f87c6315b3fcd1335ea4e7bc8202b48ed4f9c9e83",
+   "size": 41396,
+   "version": "1.6.0-1"
+  },
+  {
+   "name": "libglx-dev",
+   "path": "pool/main/libg/libglvnd/libglx-dev_1.6.0-1_arm64.deb",
+   "sha256": "f3d6fca16c259743208df6f845aee3189eb54fed00e159811135089c16d0ad9c",
+   "size": 15340,
+   "version": "1.6.0-1"
+  },
+  {
+   "name": "libglx-mesa0",
+   "path": "pool/main/m/mesa/libglx-mesa0_22.3.6-1+deb12u2_arm64.deb",
+   "sha256": "59642b0dceb0932ba98dfc40de97c1592ac278fa21749c1283ad4b7332696f8c",
+   "size": 146024,
+   "version": "22.3.6-1+deb12u2"
+  },
+  {
+   "name": "libglx0",
+   "path": "pool/main/libg/libglvnd/libglx0_1.6.0-1_arm64.deb",
+   "sha256": "523f9b71f75e48ae605d8ef298a4b03ade26ade9a808a85329a3bd82a54b9b0d",
+   "size": 30848,
+   "version": "1.6.0-1"
   },
   {
    "name": "libgmp10",
@@ -1001,6 +1106,13 @@
    "sha256": "f22c3e843b12de66d642dceddc1db0de02934a4028dd60aecc4722f8bf04e6d6",
    "size": 19317400,
    "version": "1:14.0.6-12"
+  },
+  {
+   "name": "libllvm15",
+   "path": "pool/main/l/llvm-toolchain-15/libllvm15_15.0.6-4+b1_arm64.deb",
+   "sha256": "9eecca617a53fb80ce0de5c6f475817528b3284cd43eec3863126715dc850dd2",
+   "size": 20662856,
+   "version": "1:15.0.6-4+b1"
   },
   {
    "name": "liblsan0",
@@ -1283,6 +1395,13 @@
    "version": "0.21.2-1"
   },
   {
+   "name": "libpthread-stubs0-dev",
+   "path": "pool/main/libp/libpthread-stubs/libpthread-stubs0-dev_0.4-1_arm64.deb",
+   "sha256": "acd58ed5d26d3f4d4b0856ebec6bc43f9c4357601a532eee0d2de839a8b8952e",
+   "size": 5336,
+   "version": "0.4-1"
+  },
+  {
    "name": "libpython3-stdlib",
    "path": "pool/main/p/python3-defaults/libpython3-stdlib_3.11.2-1+b1_arm64.deb",
    "sha256": "3ceea13a9d2eff6e850d47b4f03ebd0162acb2aa5646a84ccbe77783be104302",
@@ -1372,6 +1491,20 @@
    "sha256": "6d1958b29ac622d352e00f9de55d9de8aea12bd0c27dee8b522e052ace3c67bd",
    "size": 82628,
    "version": "3.4-1+b5"
+  },
+  {
+   "name": "libsensors-config",
+   "path": "pool/main/l/lm-sensors/libsensors-config_3.6.0-7.1_all.deb",
+   "sha256": "7f3c9fbd822858a9e30335e4a7f66c9468962eb26cd375b93bc8b789660bf02f",
+   "size": 14252,
+   "version": "1:3.6.0-7.1"
+  },
+  {
+   "name": "libsensors5",
+   "path": "pool/main/l/lm-sensors/libsensors5_3.6.0-7.1_arm64.deb",
+   "sha256": "adfdf7c7ee1a1c7bc61b5bf691d3a501e857c44243c7cdb6c8b81de86592e03b",
+   "size": 33276,
+   "version": "1:3.6.0-7.1"
   },
   {
    "name": "libsepol2",
@@ -1577,6 +1710,13 @@
    "version": "4.0.1-4"
   },
   {
+   "name": "libwayland-client0",
+   "path": "pool/main/w/wayland/libwayland-client0_1.21.0-1_arm64.deb",
+   "sha256": "ae390cc04c2eb1de90b9a6373505b22c730ada5e72daa50c507b7f99c12faf06",
+   "size": 27604,
+   "version": "1.21.0-1"
+  },
+  {
    "name": "libwayland-server0",
    "path": "pool/main/w/wayland/libwayland-server0_1.21.0-1_arm64.deb",
    "sha256": "4d99e7e0503fdaa999e67d47d8612c0465e775eafa47819573da50bdb09064f2",
@@ -1584,11 +1724,165 @@
    "version": "1.21.0-1"
   },
   {
+   "name": "libx11-6",
+   "path": "pool/main/libx/libx11/libx11-6_1.8.4-2+deb12u2_arm64.deb",
+   "sha256": "d1d533e983582282a9ea82c87ac5ce715a9b67bd6d1acbd2439a11c63c36549b",
+   "size": 735284,
+   "version": "2:1.8.4-2+deb12u2"
+  },
+  {
+   "name": "libx11-data",
+   "path": "pool/main/libx/libx11/libx11-data_1.8.4-2+deb12u2_all.deb",
+   "sha256": "987a848aeb1c358e4186368871b0526f10bb14c6b53214ab3bf8b69abb830191",
+   "size": 291884,
+   "version": "2:1.8.4-2+deb12u2"
+  },
+  {
+   "name": "libx11-dev",
+   "path": "pool/main/libx/libx11/libx11-dev_1.8.4-2+deb12u2_arm64.deb",
+   "sha256": "34bfc833561de983cfb4475523fedc13abb4faee14a876300de659591779add8",
+   "size": 817724,
+   "version": "2:1.8.4-2+deb12u2"
+  },
+  {
+   "name": "libx11-xcb1",
+   "path": "pool/main/libx/libx11/libx11-xcb1_1.8.4-2+deb12u2_arm64.deb",
+   "sha256": "21c7e6f19909bb1e02bb3c2089789791858c54d37e86cef9d7872782c1cb711e",
+   "size": 192472,
+   "version": "2:1.8.4-2+deb12u2"
+  },
+  {
+   "name": "libxau-dev",
+   "path": "pool/main/libx/libxau/libxau-dev_1.0.9-1_arm64.deb",
+   "sha256": "21db3761a8f388fc83707c00fac645d4332737a859dd727571e1e6ede003b048",
+   "size": 23172,
+   "version": "1:1.0.9-1"
+  },
+  {
+   "name": "libxau6",
+   "path": "pool/main/libx/libxau/libxau6_1.0.9-1_arm64.deb",
+   "sha256": "36c2bf400641a80521093771dc2562c903df4065f9eb03add50d90564337ea6c",
+   "size": 19696,
+   "version": "1:1.0.9-1"
+  },
+  {
+   "name": "libxcb-dri2-0",
+   "path": "pool/main/libx/libxcb/libxcb-dri2-0_1.15-1_arm64.deb",
+   "sha256": "ec012de2f5945a5662b32ab1eb59be944e4b5b5ddae89ae28765819df62817f6",
+   "size": 106984,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxcb-dri3-0",
+   "path": "pool/main/libx/libxcb/libxcb-dri3-0_1.15-1_arm64.deb",
+   "sha256": "a4b2a700d0da1dcaddc6435986d2ae45e8efdb58a2892a2e87cebb0c85dca359",
+   "size": 106796,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxcb-glx0",
+   "path": "pool/main/libx/libxcb/libxcb-glx0_1.15-1_arm64.deb",
+   "sha256": "4ad61651315a9267e4447af9cc1a63b08eded03697af34fa65cc3128f5466e37",
+   "size": 122504,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxcb-present0",
+   "path": "pool/main/libx/libxcb/libxcb-present0_1.15-1_arm64.deb",
+   "sha256": "df2148b69f25b6a31af73bcfb355b2ae3724678167457996febb3d335377ca17",
+   "size": 105532,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxcb-randr0",
+   "path": "pool/main/libx/libxcb/libxcb-randr0_1.15-1_arm64.deb",
+   "sha256": "9e09fe9b7f6ac596f8b14499e9a10c336b7d3ff27e78f751dffeac9975113004",
+   "size": 116728,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxcb-shm0",
+   "path": "pool/main/libx/libxcb/libxcb-shm0_1.15-1_arm64.deb",
+   "sha256": "825931950d42f51cd795cf2e5b9399d840225491e95ec530e0c5a9145c4ba5a0",
+   "size": 105620,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxcb-sync1",
+   "path": "pool/main/libx/libxcb/libxcb-sync1_1.15-1_arm64.deb",
+   "sha256": "63f165fb851ffacf021cdc4224fb93f5694a5c03dc699f2f4237aa67e1550d25",
+   "size": 108904,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxcb-xfixes0",
+   "path": "pool/main/libx/libxcb/libxcb-xfixes0_1.15-1_arm64.deb",
+   "sha256": "e6cfc1f2a68d4c7f0c10e8bf24ebab20d791ba96ec1ca70824ccd927f0fa9e21",
+   "size": 109596,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxcb1",
+   "path": "pool/main/libx/libxcb/libxcb1_1.15-1_arm64.deb",
+   "sha256": "041d9a68415c3ccf3ce8f4f8b88e4bbfb5dc1f0d97013c6ef8423e620ea50f84",
+   "size": 142664,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxcb1-dev",
+   "path": "pool/main/libx/libxcb/libxcb1-dev_1.15-1_arm64.deb",
+   "sha256": "87b5c3f1bb130727df68295ecfaadc305ee10c150afeb1a183e95b9150e18db5",
+   "size": 181748,
+   "version": "1.15-1"
+  },
+  {
+   "name": "libxdmcp-dev",
+   "path": "pool/main/libx/libxdmcp/libxdmcp-dev_1.1.2-3_arm64.deb",
+   "sha256": "6fd0bc51f3a4e6b7f944f24f15524a4c4ba68a4b0aa136c18bdb96a2d36988f2",
+   "size": 41214,
+   "version": "1:1.1.2-3"
+  },
+  {
+   "name": "libxdmcp6",
+   "path": "pool/main/libx/libxdmcp/libxdmcp6_1.1.2-3_arm64.deb",
+   "sha256": "e92569ac33247261aa09adfadc34ced3994ac301cf8b58de415a2d5dbf15ccfc",
+   "size": 25358,
+   "version": "1:1.1.2-3"
+  },
+  {
+   "name": "libxext6",
+   "path": "pool/main/libx/libxext/libxext6_1.3.4-1+b1_arm64.deb",
+   "sha256": "5e9c0ad606eb4674c645fe8e0e64330c47d2729f7a59ed569848610efd5d5b62",
+   "size": 51744,
+   "version": "2:1.3.4-1+b1"
+  },
+  {
+   "name": "libxfixes3",
+   "path": "pool/main/libx/libxfixes/libxfixes3_6.0.0-2_arm64.deb",
+   "sha256": "d47bda8fed01b19b41d503e2df05d9166c58e30e2376f2f8784ceb7a834befe6",
+   "size": 22880,
+   "version": "1:6.0.0-2"
+  },
+  {
    "name": "libxml2",
    "path": "pool/main/libx/libxml2/libxml2_2.9.14+dfsg-1.3~deb12u6_arm64.deb",
    "sha256": "0bc00975e459387535a4bbabe98a398f0e77c9ab82474face18d01ae8ed0dae4",
    "size": 620500,
    "version": "2.9.14+dfsg-1.3~deb12u6"
+  },
+  {
+   "name": "libxshmfence1",
+   "path": "pool/main/libx/libxshmfence/libxshmfence1_1.3-1_arm64.deb",
+   "sha256": "fa2edaae6902681ecd02534dcdf8389ac48714d3385d572cc17747160957acc8",
+   "size": 8712,
+   "version": "1.3-1"
+  },
+  {
+   "name": "libxxf86vm1",
+   "path": "pool/main/libx/libxxf86vm/libxxf86vm1_1.1.4-1+b2_arm64.deb",
+   "sha256": "8a4826772ac480804d6b8d776a4130d95260c036b9b218de4c8a0f07eb9c5bba",
+   "size": 20062,
+   "version": "1:1.1.4-1+b2"
   },
   {
    "name": "libxxhash0",
@@ -1897,6 +2191,34 @@
    "sha256": "95a531ddba4e6e10f440146a695d5b886dadec8766982096350f8d810e7a069b",
    "size": 111916,
    "version": "2.38.1-5+deb12u3"
+  },
+  {
+   "name": "x11proto-core-dev",
+   "path": "pool/main/x/xorgproto/x11proto-core-dev_2022.1-1_all.deb",
+   "sha256": "5fb73f674e174e766f489039f4e321bd6062986a8306643d71a07e4cc2e4edf7",
+   "size": 3528,
+   "version": "2022.1-1"
+  },
+  {
+   "name": "x11proto-dev",
+   "path": "pool/main/x/xorgproto/x11proto-dev_2022.1-1_all.deb",
+   "sha256": "3cab66a6591774188a568f9b54c4e7956f18da76e0e0fc4a779db5f6bcc3f148",
+   "size": 598924,
+   "version": "2022.1-1"
+  },
+  {
+   "name": "xorg-sgml-doctools",
+   "path": "pool/main/x/xorg-sgml-doctools/xorg-sgml-doctools_1.11-1.1_all.deb",
+   "sha256": "168345058319094e475a87ace66f5fb6ae802109650ea8434d672117982b5d0a",
+   "size": 22064,
+   "version": "1:1.11-1.1"
+  },
+  {
+   "name": "xtrans-dev",
+   "path": "pool/main/x/xtrans/xtrans-dev_1.4.0-1_all.deb",
+   "sha256": "9ce1af9464faee0c679348dd11cdf63934c12e734a64e0903692b0cb5af38e06",
+   "size": 98740,
+   "version": "1.4.0-1"
   },
   {
    "name": "xz-utils",

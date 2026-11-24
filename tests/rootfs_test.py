@@ -53,6 +53,7 @@ def main():
     run("debugfs", "-R", f"dump /gizlet/runtime/1.sqfs {runtime}", data)
     listing = output("unsquashfs", "-l", runtime)
     for path in ("lib/ld-linux-aarch64.so.1", "lib/libEGL.so.1", "lib/libGLESv2.so.2", "lib/libgbm.so.1",
+                 "lib/libraylib.so.600", "lib/dri/rockchip_dri.so",
                  "share/glvnd/egl_vendor.d/50_mesa.json", "bin/gizlet-run", "bin/gizlet-gl-info"):
         assert f"squashfs-root/{path}\n" in listing, f"runtime 1 lacks {path}"
     assert any("_dri.so" in line and "panfrost" in line for line in listing.splitlines()), "runtime 1 lacks Panfrost"
@@ -79,7 +80,7 @@ def main():
     assert not list((root / "etc/ssh").glob("ssh_host_*")), "the image carries ssh host keys"
     assert (root / "etc/machine-id").read_text() == "", "the image carries a machine ID"
     for script in ("boot-session", "gizlet-boot-device", "gizlet-mount-data", "gizlet-ssh", "gizlet-setup", "gizlet-switch",
-                   "gizlet-var", "save-boot-log", "gizlet-booter", "gizlet-launcher"):
+                   "gizlet-var", "save-boot-log", "gizlet-booter", "gizlet-launcher", "gizlet-launcher-start"):
         assert (root / "usr/lib/gizlet" / script).stat().st_mode & 0o111, f"/usr/lib/gizlet/{script} is executable"
     # First boot grows the data partition and its filesystem.
     for tool in ("usr/sbin/sfdisk", "usr/bin/partx", "usr/sbin/resize2fs"):
@@ -95,11 +96,11 @@ def main():
         assert "AArch64" in output("readelf", "-h", root / executable), f"/{executable} is AArch64"
     booter_path = "usr/lib/gizlet/gizlet-booter"
     assert "INTERP" not in output("readelf", "-lW", root / booter_path), f"/{booter_path} requires a dynamic loader"
-    # The launcher links the base's glibc and libdrm; every library it needs is installed.
+    # The launcher runs against runtime 1, which has every library it needs, raylib among them.
     needed = re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", output("readelf", "-dW", root / "usr/lib/gizlet/gizlet-launcher"))
-    assert "libdrm.so.2" in needed, needed
+    assert "libraylib.so.600" in needed, needed
     for library in needed:
-        assert list(root.glob(f"usr/lib/aarch64-linux-gnu/{library}")), f"the base lacks {library} for the launcher"
+        assert f"squashfs-root/lib/{library}\n" in listing, f"runtime 1 lacks {library} for the launcher"
     run("sha256sum", image, root / "usr/lib/gizlet/gizlet-booter")
     print("Root and data filesystems match the Gizlet OS layout")
 

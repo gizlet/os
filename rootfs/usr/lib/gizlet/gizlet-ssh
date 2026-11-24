@@ -10,10 +10,14 @@ rm -f "$dir/authorized_keys"
 if boot_dev=$(/usr/lib/gizlet/gizlet-boot-device); then
     fat=/run/gizlet-ssh-bootfs
     mkdir -p "$fat"
+    # Mounts of the boot partition take this lock (see save-boot-log).
+    exec 9> /run/gizlet-bootfs.lock
+    flock 9
     if mount -t vfat -o ro,nodev,nosuid,noexec "$boot_dev" "$fat"; then
         [ -f "$fat/authorized_keys" ] && cp "$fat/authorized_keys" "$dir/authorized_keys"
         umount "$fat"
     fi
+    exec 9>&-
 fi
 if [ -f "$dir/authorized_keys" ]; then
     chmod 0600 "$dir/authorized_keys"

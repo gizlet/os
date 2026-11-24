@@ -4,10 +4,15 @@
 # the session again.
 export HOME=/home PATH=/usr/sbin:/usr/bin:/sbin:/bin
 factory=/usr/lib/gizlet/gizlet-launcher
-# Without boot.ini, as on a fresh card, the factory launcher becomes the entry.
-if [ -f /run/gizlet-data.ready ] && [ ! -e /opt/gizlet/boot.ini ] && [ -x "$factory" ]; then
-    mkdir -p /opt/gizlet/launcher &&
-        cp "$factory" /opt/gizlet/launcher/gizlet-launcher.new &&
+start=/usr/lib/gizlet/gizlet-launcher-start
+# Without boot.ini, as on a fresh card, the factory launcher becomes the entry:
+# its program in launcher/bin, and launcher/gizlet-launcher, which runs it
+# against Gizlet runtime 1.
+if [ -f /run/gizlet-data.ready ] && [ ! -e /opt/gizlet/boot.ini ] && [ -x "$factory" ] && [ -x "$start" ]; then
+    mkdir -p /opt/gizlet/launcher/bin &&
+        cp "$factory" /opt/gizlet/launcher/bin/gizlet-launcher.new &&
+        mv /opt/gizlet/launcher/bin/gizlet-launcher.new /opt/gizlet/launcher/bin/gizlet-launcher &&
+        cp "$start" /opt/gizlet/launcher/gizlet-launcher.new &&
         mv /opt/gizlet/launcher/gizlet-launcher.new /opt/gizlet/launcher/gizlet-launcher &&
         printf '%s\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini.new &&
         mv /opt/gizlet/boot.ini.new /opt/gizlet/boot.ini && sync &&

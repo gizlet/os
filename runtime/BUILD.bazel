@@ -1,14 +1,24 @@
-load(":defs.bzl", "gizlet_runtime")
+load(":defs.bzl", "gizlet_runtime", "raylib_library")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["packages.lock.json"])
 
-# Gizlet runtime 1: Debian trixie's glibc, Mesa and libdrm for launchers and
-# apps on any arm64 device, independent of the read-only base. The card carries it as /opt/gizlet/runtime/1.sqfs on the data partition, mounted at
-# /opt/gizlet/runtime/1 at boot; programs start through bin/gizlet-run.
+# raylib 6.0 for DRM with OpenGL ES 2 on the runtime's Mesa. The launcher
+# links it, and apps can too.
+raylib_library(
+    name = "raylib",
+    out = "libraylib.so",
+)
+
+# Gizlet runtime 1: Debian trixie's glibc, Mesa and libdrm, and raylib, for
+# launchers and apps on any arm64 device, independent of the read-only base.
+# The card carries it as /opt/gizlet/runtime/1.sqfs on the data partition,
+# mounted at /opt/gizlet/runtime/1 at boot; programs start through
+# bin/gizlet-run.
 gizlet_runtime(
     name = "gizlet-runtime-1",
     out = "gizlet-runtime-1.sqfs",
     debs = "@debian_trixie_arm64_runtime//:debs",
+    libraries = [":raylib"],
 )
