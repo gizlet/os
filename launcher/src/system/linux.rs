@@ -170,15 +170,38 @@ impl Iwd {
         Self::iface().ok_or_else(|| "no Wi-Fi adapter".into())
     }
 
+    /// The saved networks, from iwd's own files: their names are exact,
+    /// where iwctl's table loses repeated spaces. iwctl is the fallback.
     fn known() -> Vec<String> {
+        if let Ok(dir) = fs::read_dir(IWD_NETWORKS) {
+            return dir.flatten().filter_map(|e| known_name(&e.file_name().to_string_lossy())).collect();
+        }
         Self::iwctl(&["known-networks", "list"], 10)
-            .map(|out| table_rows(&out).into_iter().filter_map(|(_, cols)| cols.into_iter().next()).collect())
+            .map(|out| table_rows(&out).into_iter().filter_map(|(_, row)| columns(&row).into_iter().next()).collect())
             .unwrap_or_default()
     }
 }
 
-/// Rows below the last dashed separator of an iwctl table, with the connected marker split off.
-fn table_rows(out: &str) -> Vec<(bool, Vec<String>)> {
+const IWD_NETWORKS: &str = "/var/lib/iwd";
+
+/// The SSID of an iwd network file: `NAME.psk`, or `=HEX.psk` for a name
+/// with other characters than letters, digits, space, `-` and `_`.
+fn known_name(file: &str) -> Option<String> {
+    let (stem, kind) = file.rsplit_once('.')?;
+    if !matches!(kind, "psk" | "open" | "8021x") || stem.is_empty() {
+        return None;
+    }
+    let Some(hex) = stem.strip_prefix('=') else { return Some(stem.to_string()) };
+    let bytes: Option<Vec<u8>> = (0..hex.len())
+        .step_by(2)
+        .map(|i| hex.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok()))
+        .collect();
+    bytes.and_then(|b| String::from_utf8(b).ok())
+}
+
+/// Rows below the last dashed separator of an iwctl table, with the connected
+/// marker split off and the text otherwise as printed.
+fn table_rows(out: &str) -> Vec<(bool, String)> {
     let lines: Vec<&str> = out.lines().collect();
     let start = lines.iter().rposition(|l| l.trim_start().starts_with("----")).map_or(0, |i| i + 1);
     lines[start..]
@@ -186,9 +209,19 @@ fn table_rows(out: &str) -> Vec<(bool, Vec<String>)> {
         .filter(|l| !l.trim().is_empty())
         .map(|l| {
             let t = l.trim_start();
-            (t.starts_with('>'), columns(t.trim_start_matches('>')))
+            (t.starts_with('>'), t.trim_start_matches('>').trim().to_string())
         })
         .collect()
+}
+
+/// A `get-networks` row: name, security and signal. Security and signal are
+/// single words, so they are taken from the right and the name keeps every
+/// space inside it.
+fn network_row(row: &str) -> Option<(String, String, String)> {
+    let (rest, signal) = row.trim_end().rsplit_once(char::is_whitespace)?;
+    let (ssid, security) = rest.trim_end().rsplit_once(char::is_whitespace)?;
+    let ssid = ssid.trim();
+    (!ssid.is_empty()).then(|| (ssid.to_string(), security.to_string(), signal.to_string()))
 }
 
 impl Wifi for Iwd {
@@ -200,8 +233,12 @@ impl Wifi for Iwd {
         // iwd needs a moment after starting before it lists the station.
         let Ok(out) = Self::iwctl(&["station", &iface, "show"], 5) else { return Ok(state) };
         for line in out.lines() {
+            // The name is the rest of the line, with its spaces.
+            if let Some(name) = line.trim().strip_prefix("Connected network") {
+                state.link.ssid = Some(name.trim().to_string()).filter(|n| !n.is_empty());
+                continue;
+            }
             match columns(line).as_slice() {
-                [k, v] if k == "Connected network" => state.link.ssid = Some(v.clone()),
                 [k, v] if k == "RSSI" => {
                     let dbm: i32 = v.trim_end_matches(" dBm").trim().parse().unwrap_or(-100);
                     state.link.signal = Some(((dbm + 100) * 2).clamp(0, 100) as u8);
@@ -236,11 +273,11 @@ impl Wifi for Iwd {
         let known = Self::known();
         Ok(table_rows(&out)
             .into_iter()
-            .filter_map(|(_, cols)| {
-                let [ssid, security, signal] = cols.as_slice() else { return None };
+            .filter_map(|(_, row)| {
+                let (ssid, security, signal) = network_row(&row)?;
                 Some(WifiNetwork {
-                    known: known.contains(ssid),
-                    ssid: ssid.clone(),
+                    known: known.contains(&ssid),
+                    ssid,
                     signal: (signal.chars().filter(|c| *c == '*').count() as u8 * 25).min(100),
                     secured: security != "open",
                 })
@@ -341,10 +378,25 @@ mod tests {
 --------------------------------------------------------------------------------
   \u{1b}[0m>\u{1b}[0m   Home Net                          psk                 ****
       Cafe                              open                **
+      Home  Net 5G                      psk                 \u{1b}[1;90m*\u{1b}[0m***
 ";
         let rows = table_rows(&strip_ansi(out));
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], (true, vec!["Home Net".to_string(), "psk".into(), "****".into()]));
-        assert!(!rows[1].0);
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0].0 && !rows[1].0);
+        let net = |i: usize| network_row(&rows[i].1).unwrap();
+        assert_eq!(net(0), ("Home Net".to_string(), "psk".into(), "****".into()));
+        assert_eq!(net(1), ("Cafe".to_string(), "open".into(), "**".into()));
+        // Repeated spaces stay in the name.
+        assert_eq!(net(2).0, "Home  Net 5G");
+    }
+
+    #[test]
+    fn names_iwd_network_files() {
+        assert_eq!(known_name("Home  Net.psk").as_deref(), Some("Home  Net"));
+        assert_eq!(known_name("Cafe.open").as_deref(), Some("Cafe"));
+        // "小米" in UTF-8.
+        assert_eq!(known_name("=e5b08fe7b1b3.psk").as_deref(), Some("小米"));
+        assert_eq!(known_name("notes.txt"), None);
+        assert_eq!(known_name("=zz.psk"), None);
     }
 }
