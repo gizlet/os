@@ -1,4 +1,4 @@
-"""ARM64 Linux, legacy U-Boot, BusyBox and genimage stages, run inside the build VM.
+"""ARM64 Linux, legacy U-Boot and genimage stages, run inside the build VM.
 
 Derived from GizOS tools/bazel/native/rockchip at 0ac3bfdc2bafa78bfc89965931b5ce22faeff795 (Apache-2.0, see LICENSE).
 """
@@ -51,7 +51,7 @@ def relative_path(name):
 
 def child(root, name):
     path = root / relative_path(name)
-    # The tree may contain symlinks from a source archive or BusyBox's installer.
+    # The tree may contain symlinks from a source archive.
     if not path.resolve().is_relative_to(root.resolve()):
         raise ValueError(f"Destination escapes staging tree: {name}")
     return path
@@ -147,35 +147,6 @@ def legacy_uboot(stage, params):
     return [idb, stage.work / "uboot.img", trust, stage.work / "boot.scr"]
 
 
-def busybox_rootfs(stage, params):
-    stage.unpack(params)
-    stage.configure_make("arm64", {})
-    stage.env["KCONFIG_NOTIMESTAMP"] = "1"
-    stage.run("make", "-s", "allnoconfig", stdout=subprocess.DEVNULL)
-    config = stage.work / ".config"
-    # BusyBox allnoconfig resets KCONFIG_ALLCONFIG. Replace its defaults before
-    # resolving the selected applets. Preserve config order for the same inputs.
-    requested = config_settings(stage.input(params["config"]))
-    keys = {setting.split("=", 1)[0] for setting in requested}
-    baseline = [line for line in config.read_text().splitlines()
-                if line.removeprefix("# ").split("=", 1)[0].removesuffix(" is not set") not in keys]
-    config.write_text("\n".join(baseline + requested) + "\n")
-    stage.run("scripts/kconfig/conf", "-D", ".config", "Config.in", stdout=subprocess.DEVNULL)
-    check_config(requested + ["CONFIG_STATIC=y"], config)
-    stage.run("make", "-s", f"-j{stage.jobs}", "busybox")
-    root = stage.work / "root"
-    stage.run("make", "-s", f"CONFIG_PREFIX={root}", "install")
-    for directory in params["directories"]:
-        child(root, directory).mkdir(parents=True, exist_ok=True)
-    install(root, [(child(stage.work, src), dst) for src, dst in params["source_files"].items()], 0o644)
-    for name, mode in (("files", 0o644), ("executables", 0o755)):
-        install(root, [(stage.input(src), dst) for src, dst in params[name]], mode)
-    epoch = stage.env.pop("SOURCE_DATE_EPOCH")
-    stage.run("mksquashfs", root, "rootfs.sqfs", "-comp", "gzip", "-all-root", "-all-time", epoch,
-              "-mkfs-time", epoch, "-noappend", "-no-xattrs", "-no-progress", "-processors", "1")
-    return [stage.work / "rootfs.sqfs"]
-
-
 def sd_image(stage, params):
     inputs = stage.work / "input"
     empty = stage.work / "empty-root"
@@ -198,7 +169,7 @@ def main():
     outputs = [Path(name) for name in params["outputs"]]
     for output in outputs:
         output.parent.mkdir(parents=True, exist_ok=True)
-    functions = {"Kernel": linux_kernel, "LegacyUBoot": legacy_uboot, "BusyBoxSquashfs": busybox_rootfs, "SDImage": sd_image}
+    functions = {"Kernel": linux_kernel, "LegacyUBoot": legacy_uboot, "SDImage": sd_image}
     # Build on the guest's case-sensitive tmpfs. The current directory holds the inputs.
     with tempfile.TemporaryDirectory(prefix="rockchip-", dir="/tmp") as scratch:
         os.umask(0o022)

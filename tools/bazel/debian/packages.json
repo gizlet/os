@@ -3,6 +3,7 @@
  "suite": "bookworm",
  "architecture": "arm64",
  "packages": [
+  "apt-utils",
   "bc",
   "binutils",
   "bison",
@@ -23,7 +24,9 @@
   "libelf-dev",
   "libssl-dev",
   "make",
+  "mmdebstrap",
   "mtools",
+  "openssh-client",
   "openssl",
   "patch",
   "perl",

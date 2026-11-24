@@ -1,4 +1,4 @@
-"""Builds the read-only root image of the build VM."""
+"""Rules that use Debian in the build VM: its own root image, static C programs and the Gizlet OS base."""
 
 load("//tools/bazel/krun:defs.bzl", "KRUN_ATTRS", "krun_action")
 
@@ -71,52 +71,66 @@ debian_cc_binary = rule(
     },
 )
 
-def _debian_build_impl(ctx):
-    inputs = {}
-    for target, name in ctx.attr.srcs.items():
-        files = target.files.to_list()
-        if len(files) != 1:
-            fail("%s must provide exactly one file for %s" % (target.label, name))
-        inputs[files[0]] = "src/" + name
-    out_root = ctx.bin_dir.path + "/" + ctx.label.package + "/"
-    copies = ['cp "%s" "/out/%s"' % (path, out.path.removeprefix(out_root)) for path, out in zip(ctx.attr.built_paths, ctx.outputs.outs)]
+def _single(target, what):
+    files = target.files.to_list()
+    if len(files) != 1:
+        fail("%s must provide exactly one file for %s" % (target.label, what))
+    return files[0]
+
+def _debian_base_impl(ctx):
+    inputs = {ctx.file._script: "build_base.sh"}
+    for deb in ctx.files.debs:
+        inputs[deb] = "debs/" + deb.basename
+    for attr, prefix in ((ctx.attr.files, "files/"), (ctx.attr.executables, "executables/")):
+        for target, path in attr.items():
+            if path.startswith("/") or ".." in path.split("/"):
+                fail("Invalid root path: " + path)
+            inputs[_single(target, path)] = prefix + path
+    out = ctx.outputs.out
     krun_action(
         ctx,
         root_disk = ctx.file._rootfs,
         inputs = inputs,
-        outputs = ctx.outputs.outs,
-        command = ["/bin/sh", "-c", "\n".join(["set -eu", "mkdir /tmp/build && cd /tmp/build", "(", ctx.attr.cmd, ")"] + copies)],
+        outputs = [out],
+        command = [
+            "/bin/sh",
+            "/in/build_base.sh",
+            out.path.removeprefix(ctx.bin_dir.path + "/" + ctx.label.package + "/"),
+            ctx.attr.suite,
+            " ".join(ctx.attr.directories),
+            " ".join(ctx.attr.enable),
+            " ".join(ctx.attr.disable),
+            " ".join(ctx.attr.mask),
+        ],
         env = {"LC_ALL": "C", "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch), "TZ": "UTC"},
         cpus = 4,
-        mem = 2048,
-        mnemonic = "DebianBuild",
-        progress_message = "Building %{label} in the build VM",
+        mem = 4096,
+        mnemonic = "DebianBase",
+        progress_message = "Building the Debian base %{output} in the build VM",
     )
-    return [DefaultInfo(files = depset(ctx.outputs.outs))]
+    return [DefaultInfo(files = depset([out]))]
 
-_debian_build = rule(
-    implementation = _debian_build_impl,
+debian_base = rule(
+    implementation = _debian_base_impl,
+    doc = """Installs locked Debian packages with mmdebstrap and writes a read-only SquashFS.
+
+Maintainer scripts run in the build VM, which has the target's architecture.
+`directories` are created, `files` (0644) and `executables` (0755) installed at their root paths,
+the `enable` units are enabled, the `disable` units disabled and the `mask` units masked. Host keys and the
+machine ID are removed, so every boot of a card creates its own.
+""",
     attrs = KRUN_ATTRS | {
-        "built_paths": attr.string_list(mandatory = True),
-        "cmd": attr.string(mandatory = True),
-        "outs": attr.output_list(mandatory = True),
+        "debs": attr.label(mandatory = True, allow_files = [".deb"]),
+        "directories": attr.string_list(doc = "Root-relative directories to create, such as mount points."),
+        "disable": attr.string_list(doc = "Units a package enabled that must not start at boot."),
+        "enable": attr.string_list(),
+        "executables": attr.label_keyed_string_dict(allow_files = True),
+        "files": attr.label_keyed_string_dict(allow_files = True),
+        "mask": attr.string_list(),
+        "out": attr.output(mandatory = True),
         "source_date_epoch": attr.int(default = 1704067200),
-        "srcs": attr.label_keyed_string_dict(allow_files = True),
+        "suite": attr.string(mandatory = True),
         "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
+        "_script": attr.label(default = Label(":build_base.sh"), allow_single_file = True),
     },
 )
-
-def debian_build(name, srcs, cmd, outs, **kwargs):
-    """Runs the shell commands `cmd` (set -eu) in an empty /tmp/build in the build VM.
-
-    Each `srcs` label is available as /in/src/<name>. `outs` maps paths relative
-    to /tmp/build after `cmd` to output file names, which become targets.
-    """
-    _debian_build(
-        name = name,
-        srcs = srcs,
-        cmd = cmd,
-        built_paths = list(outs.keys()),
-        outs = list(outs.values()),
-        **kwargs
-    )

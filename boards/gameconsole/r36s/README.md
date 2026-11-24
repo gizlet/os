@@ -10,7 +10,7 @@ The legacy U-Boot picks a dtb name from a board-revision ADC reading before it r
 
 ## TF1 storage
 
-The 160 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes. The boot stages, kernel load address, device tree, UART2 and OTG VBUS configuration follow the reviewed R36S boot chain. The kernel includes its ext4 driver for the data partition. [Layout](sdcard.cfg) · [Linux configuration](kernel/kernel.config) · [U-Boot commands](boot/boot.cmd)
+The 400 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes. The boot stages, kernel load address, device tree, UART2 and OTG VBUS configuration follow the reviewed R36S boot chain. The kernel includes its ext4 driver for the data partition. [Layout](sdcard.cfg) · [Linux configuration](kernel/kernel.config) · [U-Boot commands](boot/boot.cmd)
 
 | Start sector | Contents | Use |
 | ---: | --- | --- |
@@ -18,10 +18,10 @@ The 160 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes.
 | 16384 | U-Boot `LOADER` copies | U-Boot loads from `mmc 1:1` |
 | 24576 | BL31 `BL3X` copies | Secure firmware |
 | 32768 | Partition 1, 64 MiB FAT16 | `boot.scr`, `Image` and `r36s.dtb` |
-| 163840 | Partition 2, 16 MiB allocation | `root=PARTUUID=36335030-02`, read-only SquashFS |
-| 196608 | Partition 3, 64 MiB ext4, `GIZLETDATA` | Writable installation and user storage |
+| 163840 | Partition 2, 256 MiB allocation | `root=PARTUUID=36335030-02`, the read-only Debian base (SquashFS) |
+| 688128 | Partition 3, 64 MiB ext4, `GIZLETDATA` | Writable installation and user storage |
 
-Init identifies the mounted root device through `/proc/self/mountinfo` and sysfs. It mounts ext4 partition 3 of that same disk, with the image's filesystem UUID `17605036-fda0-4633-a95b-2ed27409a90c`. Its `gizlet/` and `home/` directories are bind-mounted at `/opt/gizlet` and `/home`. Both live on the card. `/run` and `/tmp` live in RAM. Boot-time setup only mounts existing filesystems. Formatting and creation of the two data directories happen while building the image. An unmountable, read-only, mismatched or incomplete data partition results in local recovery. [Early mounts](../../../rootfs/etc/rcS)
+`gizlet-data.service` identifies the mounted root device through `/proc/self/mountinfo` and sysfs. It mounts ext4 partition 3 of that same disk, with the image's filesystem UUID `17605036-fda0-4633-a95b-2ed27409a90c`. Its `gizlet/` and `home/` directories are bind-mounted at `/opt/gizlet` and `/home`. Both live on the card, and `system/` keeps the ssh host key and iwd's networks. `/run` and `/tmp` live in RAM, and `/var` is the image's `/var` with a RAM overlay. Boot-time setup only mounts existing filesystems. Formatting and creation of the two data directories happen while building the image. An unmountable, read-only, mismatched or incomplete data partition results in local recovery. [Data mounts](../../../rootfs/usr/lib/gizlet/gizlet-mount-data) · [Units](../../../rootfs/usr/lib/systemd/system)
 
 ## Installing an entry
 
@@ -46,15 +46,8 @@ sync
 exit
 ```
 
-The active kernel console owns the configured application session. On this board it is UART2, 1500000 8N1. The LCD's `tty1` offers a local shell on Enter. A missing or invalid `boot.ini`, a failed exec or an application return prints a diagnostic and opens the local `recovery#` shell. Exiting that shell retries the configuration. Treat these root consoles, and the debug link below, as trusted physical development access. [BusyBox init table](../../../rootfs/etc/inittab) · [Boot session](../../../session/boot-session)
+`gizlet-session.service` runs the configured application on the kernel console, on this board UART2 at 1500000 8N1; the launcher draws on the LCD's `tty1`. No getty runs. A missing or invalid `boot.ini`, a failed exec or an application return prints a diagnostic and opens the local `recovery#` shell. Exiting that shell retries the configuration. Treat this root console and ssh as trusted development access. [Session unit](../../../rootfs/usr/lib/systemd/system/gizlet-session.service) · [Boot session](../../../rootfs/usr/lib/gizlet/boot-session)
 
 ## Network
 
-The OTG port is a USB host with VBUS on from boot, as in the stock firmware. V30 boards carry an RTL8188EU WiFi (0bda:0179) on the same bus, powered from the PMIC's LDO9 (`vcc_wifi`); the kernel drives it with `rtl8xxxu` and built-in firmware, which also covers the RTL8188FU named by the stock kernel. Put the network in `wifi.txt` on the FAT boot partition, and the public keys allowed to log in in `authorized_keys` beside it. At boot `wpa_supplicant` joins the network (WPA2 or WPA3 personal, or open without a `password=` line) and `udhcpc` takes an address, which the LCD shows. `gizlet-net.log` on the boot partition records the address, the association state and the USB devices found. Dropbear listens on port 22 and accepts only those keys; there are no passwords. Its host key is kept on the data partition. Dropbear has no SFTP server, so OpenSSH clients copy files with `scp -O`. `wifi.txt` holds the passphrase in plain text; keep it off shared cards. [Network startup](../../../rootfs/sbin/gizlet-net)
-
-```sh
-printf 'ssid=%s\npassword=%s\n' 'NETWORK' 'PASSPHRASE' > /Volumes/GIZLETBOOT/wifi.txt
-cp ~/.ssh/id_ed25519.pub /Volumes/GIZLETBOOT/authorized_keys
-ssh root@ADDRESS
-scp -O file root@ADDRESS:/home/
-```
+The OTG port is a USB host with VBUS on from boot, as in the stock firmware. V30 boards carry an RTL8188EU WiFi (0bda:0179) on the same bus, powered from the PMIC's LDO9 (`vcc_wifi`); the kernel drives it with `rtl8xxxu` and built-in firmware, which also covers the RTL8188FU named by the stock kernel. The base installs iwd and OpenSSH's sshd but starts neither at boot; the launcher is to join WiFi and turn ssh on. iwd keeps its networks on the data partition. Started with `systemctl start ssh`, sshd accepts only the public keys in `authorized_keys` on the FAT boot partition, with no passwords, and keeps its host key on the data partition. [ssh keys](../../../rootfs/usr/lib/gizlet/gizlet-ssh)

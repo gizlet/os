@@ -1,0 +1,8 @@
+[Unit]
+Description=Gizlet OS state 15 s after boot
+
+[Timer]
+OnBootSec=15s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,25 @@
+#!/bin/sh
+# gizlet-session.service runs this on the console: the boot.ini entry, the
+# launcher by default, then a local recovery shell. Leaving the shell starts
+# the session again.
+export HOME=/home PATH=/usr/sbin:/usr/bin:/sbin:/bin
+factory=/usr/lib/gizlet/gizlet-launcher
+# Without boot.ini, as on a fresh card, the factory launcher becomes the entry.
+if [ -f /run/gizlet-data.ready ] && [ ! -e /opt/gizlet/boot.ini ] && [ -x "$factory" ]; then
+    mkdir -p /opt/gizlet/launcher &&
+        cp "$factory" /opt/gizlet/launcher/gizlet-launcher.new &&
+        mv /opt/gizlet/launcher/gizlet-launcher.new /opt/gizlet/launcher/gizlet-launcher &&
+        printf '%s\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini.new &&
+        mv /opt/gizlet/boot.ini.new /opt/gizlet/boot.ini && sync &&
+        echo 'Gizlet OS: installed the factory launcher as the boot entry'
+fi
+if [ -f /run/gizlet-data.ready ]; then
+    /usr/lib/gizlet/gizlet-booter
+    printf 'Gizlet OS: boot entry finished with status %d\n' "$?"
+else
+    echo 'Gizlet OS: data mounts unavailable'
+fi
+stty sane || :
+printf 'Gizlet OS local recovery. Type exit to retry boot.ini.\n'
+export PS1='recovery# ' INPUTRC=/usr/lib/gizlet/inputrc
+exec /bin/bash --noprofile --norc -i

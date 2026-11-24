@@ -1,4 +1,4 @@
-"""Debian packages for the build VM, pinned by a snapshot lock file."""
+"""Debian packages pinned by snapshot lock files: the build VM and the Gizlet OS base."""
 
 _SNAPSHOT = "https://snapshot.debian.org/archive/debian/{snapshot}/{path}"
 
@@ -17,6 +17,17 @@ def _debian_packages_impl(ctx):
         ))
     for download in downloads:
         download.wait()
+
+    if not ctx.attr.bootstrap:
+        ctx.file("BUILD.bazel", """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "debs",
+    srcs = {debs},
+)
+""".format(debs = repr(names)))
+        return
 
     # The bootstrap root holds only the static BusyBox. It unpacks the other
     # packages inside the guest, where the filesystem is case-sensitive.
@@ -43,14 +54,18 @@ exports_files(["bootstrap/bin/busybox"])
 
 debian_packages = repository_rule(
     implementation = _debian_packages_impl,
-    attrs = {"lock": attr.label(mandatory = True, allow_single_file = True)},
+    attrs = {
+        "bootstrap": attr.bool(doc = "Also provide the static BusyBox bootstrap root of the build VM."),
+        "lock": attr.label(mandatory = True, allow_single_file = True),
+    },
 )
 
 def _debian_impl(module_ctx):
-    debian_packages(name = "debian_bookworm_arm64", lock = Label("//tools/bazel/debian:packages.lock.json"))
+    debian_packages(name = "debian_bookworm_arm64", bootstrap = True, lock = Label("//tools/bazel/debian:packages.lock.json"))
+    debian_packages(name = "debian_trixie_arm64_base", lock = Label("//rootfs:packages.lock.json"))
     return module_ctx.extension_metadata(reproducible = True)
 
 debian = module_extension(
     implementation = _debian_impl,
-    doc = "Provides the locked Debian bookworm arm64 packages and the bootstrap BusyBox root.",
+    doc = "Provides the build VM's locked bookworm packages with its bootstrap root, and the Gizlet OS base's locked trixie packages.",
 )

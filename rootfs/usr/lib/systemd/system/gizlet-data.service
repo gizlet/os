@@ -1,0 +1,16 @@
+[Unit]
+Description=Gizlet OS data partition (/opt/gizlet and /home)
+DefaultDependencies=no
+After=gizlet-var.service
+Requires=gizlet-var.service
+Before=local-fs.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/gizlet/gizlet-mount-data
+StandardOutput=journal+console
+
+[Install]
+WantedBy=local-fs.target

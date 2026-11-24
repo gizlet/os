@@ -7,7 +7,7 @@ The native image stages and image tests run in a libkrun microVM so that one Baz
 | `krun-vm` | libkrun 2.0 (`main` at a fixed commit) with this launcher as an added workspace member. Cargo runs offline over crates vendored by checksum. On macOS the binary is ad-hoc signed with the hypervisor entitlement. |
 | Guest init | libkrun's `krun-init`, cross-compiled for `aarch64-unknown-linux-musl` with the Rust toolchain's `rust-lld` and the pinned musl target library. |
 | Guest kernel | libkrunfw's prebuilt aarch64 kernel C bundle, compiled into `libkrunfw.5.dylib` by the host C compiler. |
-| Root image | [`//tools/bazel/debian:rootfs`](../debian/BUILD.bazel), a reproducible SquashFS of the locked Debian bookworm arm64 build tools. A bootstrap VM whose root holds only static BusyBox unpacks the packages on its tmpfs. |
+| Root image | [`//tools/bazel/debian:rootfs`](../debian/BUILD.bazel), a reproducible SquashFS of the locked Debian bookworm arm64 build tools, including mmdebstrap, which installs the card's Debian base. A bootstrap VM whose root holds only static BusyBox unpacks the packages on its tmpfs. |
 
 `krun_action` runs one command per VM. Inputs are linked into a private shared directory at `/in`, outputs are written to `/out`, and the command starts in a tmpfs `/tmp`. The guest writes its exit status back through `/in`, because libkrun does not report it for a disk root. `vm_test` runs a Python or Bash test the same way. `debian_cc_binary` compiles static AArch64 glibc executables with the VM's GCC.
 

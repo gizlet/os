@@ -1,0 +1,14 @@
+[Unit]
+Description=Writable /var over the read-only base
+DefaultDependencies=no
+ConditionPathIsMountPoint=!/var
+Before=local-fs-pre.target systemd-journal-flush.service systemd-random-seed.service systemd-tmpfiles-setup.service
+Wants=local-fs-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/gizlet/gizlet-var
+
+[Install]
+WantedBy=local-fs.target

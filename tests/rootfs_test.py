@@ -7,6 +7,7 @@ under /usr/share/licenses.
 """
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -49,27 +50,36 @@ def main():
     extract(image, *parts["root"][1:], squashfs)
     root = work / "root"
     run("unsquashfs", "-no-progress", "-d", root, squashfs, stdout=subprocess.DEVNULL)
-    busybox = (root / "bin/busybox").resolve()
-    for link in ("sbin/init", "bin/sh", "bin/cttyhack"):
-        assert (root / link).resolve() == busybox, f"/{link} is BusyBox"
-    inittab = (root / "etc/inittab").read_text().splitlines()
-    for line in ("::sysinit:/etc/rcS", "::sysinit:/sbin/gizlet-net", "::sysinit:/sbin/save-boot-log", "::respawn:/bin/cttyhack /sbin/boot-session", "tty1::askfirst:-/bin/sh"):
-        assert line in inittab, line
-    for executable in ("etc/rcS", "sbin/boot-session", "sbin/save-boot-log", "sbin/gizlet-net", "etc/udhcpc.script", "usr/sbin/wpa_supplicant", "usr/bin/wpa_cli", "sbin/gizlet-booter", "usr/lib/gizlet/gizlet-launcher", "usr/sbin/dropbear", "usr/bin/scp"):
-        assert (root / executable).stat().st_mode & 0o111, f"/{executable} is executable"
-    # Everyday commands for the ssh and LCD shells.
-    for applet in ("clear", "less", "sed", "awk", "sort", "tar", "gzip", "wget", "nc", "which", "watch"):
-        paths = [root / d / applet for d in ("bin", "sbin", "usr/bin", "usr/sbin")]
-        assert any(p.is_symlink() and p.resolve() == busybox for p in paths), f"BusyBox applet {applet}"
+    # Debian with systemd as init; links are read, not followed, as they point into the card.
+    assert os.readlink(root / "usr/sbin/init").endswith("/systemd"), "/sbin/init is systemd"
+    systemd = root / "etc/systemd/system"
+    for wants in ("local-fs.target.wants/gizlet-var.service", "local-fs.target.wants/gizlet-data.service",
+                  "multi-user.target.wants/gizlet-session.service", "multi-user.target.wants/gizlet-boot-log.service",
+                  "timers.target.wants/gizlet-late-log.timer"):
+        assert (systemd / wants).is_symlink(), f"{wants} is enabled"
+    # WiFi and ssh are installed for the launcher to start, not started at boot.
+    for wants in ("multi-user.target.wants/ssh.service", "multi-user.target.wants/iwd.service"):
+        assert not (systemd / wants).is_symlink(), f"{wants} starts at boot"
+    assert (root / "usr/lib/systemd/system/ssh.service.d/gizlet.conf").is_file(), "ssh.service uses gizlet-ssh"
+    for unit in ("getty@.service", "serial-getty@.service", "systemd-firstboot.service"):
+        assert os.readlink(systemd / unit) == "/dev/null", f"{unit} is masked"
+    # Each card creates its own identity at boot.
+    assert not list((root / "etc/ssh").glob("ssh_host_*")), "the image carries ssh host keys"
+    assert (root / "etc/machine-id").read_text() == "", "the image carries a machine ID"
+    for script in ("boot-session", "gizlet-boot-device", "gizlet-mount-data", "gizlet-ssh",
+                   "gizlet-var", "save-boot-log", "gizlet-booter", "gizlet-launcher"):
+        assert (root / "usr/lib/gizlet" / script).stat().st_mode & 0o111, f"/usr/lib/gizlet/{script} is executable"
     for directory in ("opt/gizlet", "home"):
         assert (root / directory).is_dir(), f"/{directory}"
     for notice in config["licenses"]:
         assert (root / "usr/share/licenses" / notice).stat().st_size > 0, f"license notice {notice}"
-    assert (root / "sbin/gizlet-booter").read_bytes() == booter.read_bytes(), "installed Booter differs from the build"
-    for executable in ("sbin/gizlet-booter", "usr/lib/gizlet/gizlet-launcher", "bin/busybox", "usr/sbin/dropbear", "usr/bin/dropbearkey", "usr/bin/scp", "usr/sbin/wpa_supplicant", "usr/bin/wpa_cli"):
+    for package in ("libc6", "systemd", "openssh-server", "iwd"):
+        assert (root / "usr/share/doc" / package / "copyright").stat().st_size > 0, f"{package} copyright notice"
+    assert (root / "usr/lib/gizlet/gizlet-booter").read_bytes() == booter.read_bytes(), "installed Booter differs from the build"
+    for executable in ("usr/lib/gizlet/gizlet-booter", "usr/lib/gizlet/gizlet-launcher"):
         assert "AArch64" in output("readelf", "-h", root / executable), f"/{executable} is AArch64"
         assert "INTERP" not in output("readelf", "-lW", root / executable), f"/{executable} requires a dynamic loader"
-    run("sha256sum", image, root / "bin/busybox", root / "sbin/gizlet-booter")
+    run("sha256sum", image, root / "usr/lib/gizlet/gizlet-booter")
     print("Root and data filesystems match the Gizlet OS layout")
 
 

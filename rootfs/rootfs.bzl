@@ -1,55 +1,67 @@
-"""The userspace every board shares: BusyBox and what is installed beside it.
+"""The Gizlet OS base every board shares, for a target's debian_base.
 
-A target composes its root filesystem from these and adds its board's notices.
+A target adds its board's notices under /usr/share/licenses.
 """
 
-ROOTFS_BUSYBOX = "@busybox//:busybox-1.37.0.tar.bz2"
+ROOTFS_DEBS = "@debian_trixie_arm64_base//:debs"
 
-ROOTFS_BUSYBOX_CONFIG = "//rootfs:busybox.config"
+ROOTFS_SUITE = "trixie"
 
-ROOTFS_DIRECTORIES = [
-    "dev",
-    "etc",
-    "proc",
-    "sys",
-    "run",
-    "tmp",
-    "home",
-    "opt/gizlet",
-    "sbin",
-    "usr/bin",
-    "usr/sbin",
-    "usr/share/licenses",
-]
-
-ROOTFS_EXECUTABLES = {
-    "//rootfs:etc/rcS": "etc/rcS",
-    "//rootfs:etc/udhcpc.script": "etc/udhcpc.script",
-    "//rootfs:sbin/gizlet-boot-device": "sbin/gizlet-boot-device",
-    "//rootfs:sbin/gizlet-net": "sbin/gizlet-net",
-    "//rootfs:sbin/save-boot-log": "sbin/save-boot-log",
-    "//rootfs/dropbear:dropbear-bin": "usr/sbin/dropbear",
-    "//rootfs/dropbear:dropbearkey-bin": "usr/bin/dropbearkey",
-    "//rootfs/dropbear:scp-bin": "usr/bin/scp",
-    "//rootfs/wpa_supplicant:wpa_cli-bin": "usr/bin/wpa_cli",
-    "//rootfs/wpa_supplicant:wpa_supplicant-bin": "usr/sbin/wpa_supplicant",
-    # The factory launcher, copied to /opt/gizlet when it has no boot.ini.
-    "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",
-    "//session:boot-session": "sbin/boot-session",
-    "//session:booter": "sbin/gizlet-booter",
-}
+# Mount points of the data partition on the read-only root.
+ROOTFS_DIRECTORIES = ["opt/gizlet"]
 
 ROOTFS_FILES = {
-    "//rootfs:etc/group": "etc/group",
-    "//rootfs:etc/inittab": "etc/inittab",
-    "//rootfs:etc/nsswitch.conf": "etc/nsswitch.conf",
-    "//rootfs:etc/passwd": "etc/passwd",
-    "//rootfs:etc/shells": "etc/shells",
-    "//rootfs/dropbear:LICENSE": "usr/share/licenses/dropbear",
-    "//rootfs/wpa_supplicant:LICENSE": "usr/share/licenses/wpa_supplicant",
-    "//rootfs/wpa_supplicant:libnl-LICENSE": "usr/share/licenses/libnl",
+    "//rootfs:etc/hostname": "etc/hostname",
+    "//rootfs:etc/hosts": "etc/hosts",
+    "//rootfs:etc/iwd/main.conf": "etc/iwd/main.conf",
+    "//rootfs:etc/ssh/sshd_config.d/gizlet.conf": "etc/ssh/sshd_config.d/gizlet.conf",
+    "//rootfs:usr/lib/gizlet/inputrc": "usr/lib/gizlet/inputrc",
+    "//rootfs:usr/lib/systemd/system/ssh.service.d/gizlet.conf": "usr/lib/systemd/system/ssh.service.d/gizlet.conf",
+    "//rootfs:usr/lib/systemd/journald.conf.d/gizlet.conf": "usr/lib/systemd/journald.conf.d/gizlet.conf",
+    "//rootfs:usr/lib/systemd/system.conf.d/gizlet.conf": "usr/lib/systemd/system.conf.d/gizlet.conf",
+    "//rootfs:usr/lib/systemd/system/gizlet-boot-log.service": "usr/lib/systemd/system/gizlet-boot-log.service",
+    "//rootfs:usr/lib/systemd/system/gizlet-data.service": "usr/lib/systemd/system/gizlet-data.service",
+    "//rootfs:usr/lib/systemd/system/gizlet-late-log.service": "usr/lib/systemd/system/gizlet-late-log.service",
+    "//rootfs:usr/lib/systemd/system/gizlet-late-log.timer": "usr/lib/systemd/system/gizlet-late-log.timer",
+    "//rootfs:usr/lib/systemd/system/gizlet-session.service": "usr/lib/systemd/system/gizlet-session.service",
+    "//rootfs:usr/lib/systemd/system/gizlet-ssh.service": "usr/lib/systemd/system/gizlet-ssh.service",
+    "//rootfs:usr/lib/systemd/system/gizlet-var.service": "usr/lib/systemd/system/gizlet-var.service",
     "//third_party/glibc:LGPL-2.1": "usr/share/licenses/glibc-LGPL-2.1",
 }
 
-# Notices under /usr/share/licenses: those above and BusyBox's own.
-ROOTFS_LICENSES = ["BusyBox", "dropbear", "glibc-LGPL-2.1", "libnl", "wpa_supplicant"]
+ROOTFS_EXECUTABLES = {
+    "//rootfs:usr/lib/gizlet/boot-session": "usr/lib/gizlet/boot-session",
+    "//rootfs:usr/lib/gizlet/gizlet-boot-device": "usr/lib/gizlet/gizlet-boot-device",
+    "//rootfs:usr/lib/gizlet/gizlet-mount-data": "usr/lib/gizlet/gizlet-mount-data",
+    "//rootfs:usr/lib/gizlet/gizlet-ssh": "usr/lib/gizlet/gizlet-ssh",
+    "//rootfs:usr/lib/gizlet/gizlet-var": "usr/lib/gizlet/gizlet-var",
+    "//rootfs:usr/lib/gizlet/save-boot-log": "usr/lib/gizlet/save-boot-log",
+    # Static glibc programs from the build VM, covered by the glibc notice above.
+    "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",
+    "//session:booter": "usr/lib/gizlet/gizlet-booter",
+}
+
+ROOTFS_ENABLE = [
+    "gizlet-boot-log.service",
+    "gizlet-data.service",
+    "gizlet-late-log.timer",
+    "gizlet-session.service",
+    "gizlet-var.service",
+]
+
+# Installed for the launcher to start later, not at boot. Debian enables sshd.
+ROOTFS_DISABLE = ["ssh.service"]
+
+# The session owns the console and the launcher the LCD, so no getty runs.
+# Each boot looks like a first boot to systemd (the machine ID is not kept), and
+# the read-only base never updates its packages.
+ROOTFS_MASK = [
+    "apt-daily-upgrade.timer",
+    "apt-daily.timer",
+    "getty@.service",
+    "serial-getty@.service",
+    "systemd-firstboot.service",
+]
+
+# Notices under /usr/share/licenses besides each Debian package's copyright file.
+ROOTFS_LICENSES = ["glibc-LGPL-2.1"]

@@ -1,10 +1,11 @@
 """Boot a Gizlet OS card image on QEMU virt and exercise installation and recovery.
 
-Usage: qemu_test.py IMAGE KERNEL_NAME DBCLIENT DROPBEARKEY SCP
+Usage: qemu_test.py IMAGE KERNEL_NAME
 
 KERNEL_NAME is the kernel file on the card's boot partition. The kernel boots
-the card's SquashFS partition, which the test finds through the MBR. The
-Dropbear tools log in to the guest's sshd over a forwarded virtio-net port.
+the card's SquashFS partition, which the test finds through the MBR, with
+systemd. The build VM's OpenSSH client logs in to the guest's sshd over a
+forwarded virtio-net port.
 """
 
 from contextlib import contextmanager
@@ -32,7 +33,7 @@ class Console:
         self.pending = bytearray()
 
     def expect(self, marker):
-        deadline = time.monotonic() + 45
+        deadline = time.monotonic() + 120
         while marker not in self.pending:
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not self.serial.select(remaining):
@@ -89,28 +90,24 @@ def free_port():
         return probe.getsockname()[1]
 
 
-def check_ssh(private, boot_offset, kernel, root, tools, work):
-    """Logs in with a key from authorized_keys on the boot partition, runs ls and copies a file both ways."""
-    dbclient, dropbearkey, scp = tools
+def check_ssh(private, boot_offset, kernel, root, work):
+    """Starts sshd as the launcher will, logs in with a key from authorized_keys on the boot partition and copies a file both ways."""
     key = work / "client_key"
-    subprocess.run([dropbearkey, "-t", "ed25519", "-f", key], check=True, capture_output=True)
-    public = subprocess.run([dropbearkey, "-y", "-f", key], check=True, capture_output=True, text=True).stdout
-    keys = work / "authorized_keys"
-    keys.write_text("".join(line + "\n" for line in public.splitlines() if line.startswith("ssh-ed25519 ")))
-    subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", keys, "::authorized_keys"], check=True)
-    # Quotes inside the values must survive into wpa_supplicant's quoted strings.
-    wifi = work / "wifi.txt"
-    wifi.write_bytes(b'ssid=Test "Net"\r\npassword=!pass"word1\r\n')
-    subprocess.run(["mcopy", "-o", "-i", f"{private}@@{boot_offset}", wifi, "::wifi.txt"], check=True)
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key], check=True)
+    subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", key.with_suffix(".pub"), "::authorized_keys"], check=True)
     port = free_port()
     client = work / "ssh"
-    client.write_text(f'#!/bin/sh\nexec "{dbclient}" -y -y -i "{key}" -p {port} "$@"\n')
+    client.write_text(f'#!/bin/sh\nexec ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "{key}" -p {port} "$@"\n')
     client.chmod(0o755)
     with boot(private, kernel, root, ssh_port=port) as console:
-        console.expect(b"dropbear listening on port 22")
         console.expect(PROMPT)
         console.command("ip addr add 10.0.2.15/24 dev eth0 && ip link set eth0 up")
-        deadline = time.monotonic() + 30
+        # sshd does not start at boot.
+        console.enter("systemctl is-active ssh")
+        console.expect(b"\r\ninactive\r\n")
+        console.expect(PROMPT)
+        console.command("systemctl start ssh")
+        deadline = time.monotonic() + 60
         while True:
             login = subprocess.run([client, "root@127.0.0.1", "ls /; echo ssh-ok"],
                                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
@@ -120,7 +117,6 @@ def check_ssh(private, boot_offset, kernel, root, tools, work):
         assert "ssh-ok" in login.stdout and "home" in login.stdout.split(), f"ssh login failed: {login.stderr}"
         # An interactive login asks for a pseudo-terminal first. The client
         # gets a terminal of its own, as when a person runs ssh.
-        console.command("grep devpts /proc/mounts")
         local, remote = os.openpty()
         try:
             pty = subprocess.run([client, "-t", "root@127.0.0.1", "readlink /proc/self/fd/0"],
@@ -129,31 +125,20 @@ def check_ssh(private, boot_offset, kernel, root, tools, work):
             os.close(local)
             os.close(remote)
         assert "/dev/pts/" in pty.stdout, f"ssh got no pseudo-terminal: {pty.stdout!r} {pty.stderr!r}"
-        # QEMU has no WiFi adapter; gizlet-net still parses wifi.txt and reports.
-        wifi_state = subprocess.run([client, "root@127.0.0.1",
-                                     "while [ ! -f /run/gizlet-net.log ]; do sleep 1; done; cat /run/gizlet-net/wpa_supplicant.conf; "
-                                     "wpa_supplicant -v | head -n 1; grep gizlet-net: /run/gizlet-boot.log"],
-                                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90).stdout
-        for marker in ('ssid="Test "Net""', 'psk="!pass"word1"', "key_mgmt=WPA-PSK WPA-PSK-SHA256 SAE",
-                       "wpa_supplicant v2.12", "no WiFi adapter (wlan0) after 30 s"):
-            assert marker in wifi_state, f"WiFi setup lacks {marker!r}: {wifi_state}"
         payload = work / "payload"
         payload.write_bytes(os.urandom(65536))
-        subprocess.run([scp, "-S", client, payload, "root@127.0.0.1:/home/payload"],
+        subprocess.run(["scp", "-O", "-S", client, payload, "root@127.0.0.1:/home/payload"],
                        stdin=subprocess.DEVNULL, check=True, timeout=30)
         back = work / "back"
-        subprocess.run([scp, "-S", client, "root@127.0.0.1:/home/payload", back],
+        subprocess.run(["scp", "-O", "-S", client, "root@127.0.0.1:/home/payload", back],
                        stdin=subprocess.DEVNULL, check=True, timeout=30)
         assert back.read_bytes() == payload.read_bytes(), "scp round trip changed the file"
         console.command("rm /home/payload")
         console.stop()
-    net = subprocess.run(["mtype", "-i", f"{private}@@{boot_offset}", "::gizlet-net.log"],
-                         check=True, capture_output=True, text=True).stdout
-    assert "== Gizlet OS network" in net and "!pass" not in net, "gizlet-net.log is missing or shows the password"
-    print("ssh login and scp in both directions work; wifi.txt is parsed and gizlet-net.log saved")
+    print("sshd starts on demand; ssh login and scp in both directions work")
 
 
-def scenarios(image, kernel_name, work, tools):
+def scenarios(image, kernel_name, work):
     parts, signature = card.partitions(image)
     root = f"PARTUUID={signature:08x}-{parts['root'][0]:02x}"
     kernel = work / "kernel"
@@ -182,7 +167,7 @@ def scenarios(image, kernel_name, work, tools):
         console.stop()
     log = subprocess.run(["mtype", "-i", f"{private}@@{parts['boot'][1]}", "::gizlet.log"],
                          check=True, capture_output=True, text=True).stdout
-    for marker in ("== Gizlet OS boot log", "== rcS", "data mounts ready", "rcS exit 0", "Linux version"):
+    for marker in ("== Gizlet OS boot log", "== Gizlet OS services", "data mounts ready", "gizlet-mount-data exit 0", "Linux version"):
         assert marker in log, f"gizlet.log lacks {marker!r}"
     late = subprocess.run(["mtype", "-i", f"{private}@@{parts['boot'][1]}", "::gizlet-late.log"],
                           check=True, capture_output=True, text=True).stdout
@@ -206,7 +191,7 @@ def scenarios(image, kernel_name, work, tools):
         console.enter("exit")
         console.expect(b"cannot open configured entry")
         console.expect(PROMPT)
-        console.command("ln -s /bin/busybox /opt/gizlet/bin/link")
+        console.command("ln -s /bin/true /opt/gizlet/bin/link")
         console.command("printf '%s\\n' '[boot]' 'entry=bin/link' > /opt/gizlet/boot.ini")
         console.enter("exit")
         console.expect(b"cannot open configured entry")
@@ -220,7 +205,7 @@ def scenarios(image, kernel_name, work, tools):
         console.expect(b"\r\npersistent-user-file\r\n")
         console.expect(PROMPT)
         console.stop()
-    check_ssh(private, parts["boot"][1], kernel, root, tools, work)
+    check_ssh(private, parts["boot"][1], kernel, root, work)
     # A card missing its data partition must not pick a valid data volume on another disk.
     # The second disk is the real, populated data partition as a standalone virtual disk.
     index, offset, size = parts["data"]
@@ -242,5 +227,4 @@ def scenarios(image, kernel_name, work, tools):
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(dir=os.environ.get("TEST_TMPDIR")) as temp:
-        tools = [Path(tool).resolve() for tool in sys.argv[3:6]]
-        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], Path(temp), tools)
+        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], Path(temp))

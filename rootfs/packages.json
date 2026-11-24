@@ -1,0 +1,29 @@
+{
+ "snapshot": "20261120T000000Z",
+ "suite": "trixie",
+ "architecture": "arm64",
+ "packages": [
+  "dbus",
+  "iproute2",
+  "iputils-ping",
+  "iwd",
+  "kmod",
+  "less",
+  "openssh-server",
+  "procps",
+  "systemd",
+  "systemd-resolved",
+  "systemd-sysv",
+  "udev",
+  "usbutils",
+  "vim-tiny"
+ ],
+ "prefer": {
+  "awk": "mawk",
+  "dbus-system-bus": "dbus-daemon",
+  "default-dbus-system-bus": "dbus-daemon",
+  "default-logind": "systemd",
+  "logind": "systemd"
+ },
+ "exclude": []
+}

@@ -1,7 +1,8 @@
 load("//boards/gameconsole/r36s:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_PANELS", "R36S_UBOOT_DTB_NAMES")
-load("//rootfs:rootfs.bzl", "ROOTFS_BUSYBOX", "ROOTFS_BUSYBOX_CONFIG", "ROOTFS_DIRECTORIES", "ROOTFS_EXECUTABLES", "ROOTFS_FILES", "ROOTFS_LICENSES")
+load("//rootfs:rootfs.bzl", "ROOTFS_DEBS", "ROOTFS_DIRECTORIES", "ROOTFS_DISABLE", "ROOTFS_ENABLE", "ROOTFS_EXECUTABLES", "ROOTFS_FILES", "ROOTFS_LICENSES", "ROOTFS_MASK", "ROOTFS_SUITE")
+load("//tools/bazel/debian:defs.bzl", "debian_base")
 load("//tests:defs.bzl", "gizlet_qemu_test", "gizlet_rootfs_test", "rockchip_card_test")
-load("//tools/bazel/rockchip:defs.bzl", "busybox_squashfs", "rockchip_sd_image")
+load("//tools/bazel/rockchip:defs.bzl", "rockchip_sd_image")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -11,12 +12,14 @@ _EPOCH = 1704067200
 
 _R36S = [_BOARD + "r36s"]
 
-busybox_squashfs(
+# The shared Debian base with the board's notices.
+debian_base(
     name = "rootfs",
     out = "parts/rootfs.sqfs",
-    archive = ROOTFS_BUSYBOX,
-    config = ROOTFS_BUSYBOX_CONFIG,
+    debs = ROOTFS_DEBS,
     directories = ROOTFS_DIRECTORIES,
+    disable = ROOTFS_DISABLE,
+    enable = ROOTFS_ENABLE,
     executables = ROOTFS_EXECUTABLES,
     files = ROOTFS_FILES | {
         "@linux_firmware//:LICENCE.rtlwifi_firmware.txt": "usr/share/licenses/linux-firmware/LICENCE.rtlwifi_firmware.txt",
@@ -27,8 +30,9 @@ busybox_squashfs(
         "//third_party/u-boot:README": "usr/share/licenses/u-boot/README",
         "//third_party/u-boot:gpl-2.0.txt": "usr/share/licenses/u-boot/gpl-2.0.txt",
     },
+    mask = ROOTFS_MASK,
     source_date_epoch = _EPOCH,
-    source_files = {"LICENSE": "usr/share/licenses/BusyBox"},
+    suite = ROOTFS_SUITE,
     target_compatible_with = _R36S,
 )
 

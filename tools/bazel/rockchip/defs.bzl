@@ -25,7 +25,6 @@ _KBUILD = {
 _RESOURCES = {
     "Kernel": (8, 8192),
     "LegacyUBoot": (4, 4096),
-    "BusyBoxSquashfs": (4, 2048),
     "SDImage": (2, 2048),
 }
 
@@ -149,30 +148,6 @@ rockchip_legacy_uboot = rule(
         "uboot": attr.output(mandatory = True),
         "trust": attr.output(mandatory = True),
         "script": attr.output(mandatory = True),
-    },
-)
-
-def _rootfs(ctx):
-    params = _source(ctx) | {
-        "config": ctx.file.config.path,
-        "files": _mapping(ctx.attr.files),
-        "executables": _mapping(ctx.attr.executables),
-        "source_files": ctx.attr.source_files,
-        "directories": ctx.attr.directories,
-    }
-    inputs = [ctx.file.archive, ctx.file.config] + ctx.files.patches + ctx.files.files + ctx.files.executables
-    return _stage(ctx, "BusyBoxSquashfs", inputs, [ctx.outputs.out], params)
-
-busybox_squashfs = rule(
-    implementation = _rootfs,
-    doc = "Build a static AArch64 BusyBox root filesystem with caller-supplied files and directories.",
-    attrs = _NATIVE | _SOURCE | {
-        "config": attr.label(mandatory = True, allow_single_file = True, doc = "BusyBox options over allnoconfig, including CONFIG_STATIC=y."),
-        "files": attr.label_keyed_string_dict(allow_files = True, doc = "Data labels mapped to root-relative destinations, mode 0644."),
-        "executables": attr.label_keyed_string_dict(allow_files = True, doc = "Executable labels mapped to root-relative destinations, mode 0755."),
-        "source_files": attr.string_dict(doc = "Files from the unpacked BusyBox source mapped to root-relative destinations, mode 0644."),
-        "directories": attr.string_list(doc = "Root-relative directories to create."),
-        "out": attr.output(mandatory = True),
     },
 )
 

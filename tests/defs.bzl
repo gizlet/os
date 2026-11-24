@@ -16,19 +16,13 @@ def gizlet_rootfs_test(name, image, booter, data_uuid, licenses, **kwargs):
         **kwargs
     )
 
-_SSH_TOOLS = [
-    Label("//rootfs/dropbear:dbclient-bin"),
-    Label("//rootfs/dropbear:dropbearkey-bin"),
-    Label("//rootfs/dropbear:scp-bin"),
-]
-
 def gizlet_qemu_test(name, image, kernel = "Image", **kwargs):
     """Boots the card on QEMU virt: recovery, installation, persistence, invalid entries and ssh."""
     vm_test(
         name = name,
         src = Label("//tests:qemu_test.py"),
-        data = [image, Label("//tests:card.py")] + _SSH_TOOLS,
-        guest_args = ["$(rootpath %s)" % image, kernel] + ["$(rootpath %s)" % tool for tool in _SSH_TOOLS],
+        data = [image, Label("//tests:card.py")],
+        guest_args = ["$(rootpath %s)" % image, kernel],
         **kwargs
     )
 

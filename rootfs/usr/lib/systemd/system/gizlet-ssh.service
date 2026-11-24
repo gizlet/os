@@ -1,0 +1,11 @@
+[Unit]
+Description=Gizlet OS ssh keys from the boot partition
+# Pulled in by ssh.service (ssh.service.d/gizlet.conf); ssh does not start at boot.
+After=gizlet-data.service
+Before=ssh.service ssh.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/gizlet/gizlet-ssh
+StandardOutput=journal+console

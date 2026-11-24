@@ -2,7 +2,7 @@ load(":defs.bzl", "debian_rootfs")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["packages.lock.json"])
+exports_files(["build_base.sh", "packages.lock.json"])
 
 # Root filesystem of the build VM: Debian bookworm arm64 build tools.
 debian_rootfs(

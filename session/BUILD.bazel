@@ -2,12 +2,9 @@ load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-# boot-session runs the Booter, which starts the entry named in
-# /opt/gizlet/boot.ini and opens the recovery shell when it fails.
-exports_files(["boot-session"])
-
-# Built with the build VM's Debian GCC as a static AArch64 glibc executable,
-# like BusyBox, so the card needs no further C library notices.
+# The Booter starts the entry named in /opt/gizlet/boot.ini. It runs from
+# boot-session (rootfs/usr/lib/gizlet), which opens the recovery shell after it.
+# Built with the build VM's Debian GCC as a static AArch64 glibc executable.
 debian_cc_binary(
     name = "booter",
     srcs = ["booter.c"],

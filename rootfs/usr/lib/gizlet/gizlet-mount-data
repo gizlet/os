@@ -1,0 +1,58 @@
+#!/bin/sh
+# Mounts the data partition: ext4 partition 3 of the very disk that supplied
+# the read-only base (partition 2), with the image's filesystem UUID. Its
+# gizlet/ and home/ directories become /opt/gizlet and /home; state that must
+# survive a reboot (ssh host key, WiFi networks) lives under system/.
+set -eu
+# save-boot-log copies these messages to the boot partition.
+say() { echo "Gizlet OS: $*"; echo "$*" >> /run/gizlet-boot.log; }
+trap 'echo "gizlet-mount-data exit $?" >> /run/gizlet-boot.log' EXIT
+
+# Locate partition 3 on the very disk that supplied the mounted SquashFS (p2).
+root_device=
+while read -r id parent device fsroot target rest; do
+    if [ "$target" = / ]; then root_device=$device; break; fi
+done < /proc/self/mountinfo
+sysroot=$(readlink -f "/sys/dev/block/$root_device")
+[ "$(cat "$sysroot/partition")" = 2 ] || { say 'unexpected system partition'; exit 1; }
+data_dev=
+for sibling in "${sysroot%/*}"/*; do
+    if [ -f "$sibling/partition" ] && [ "$(cat "$sibling/partition")" = 3 ]; then
+        data_dev=/dev/${sibling##*/}
+        break
+    fi
+done
+[ -b "$data_dev" ] || { say 'data partition missing'; exit 1; }
+identity=$(blkid "$data_dev")
+case " $identity " in
+    *' UUID="17605036-fda0-4633-a95b-2ed27409a90c" '*) ;;
+    *) say 'unexpected data filesystem'; exit 1 ;;
+esac
+store=/run/gizlet-data
+mkdir -m 0700 "$store"
+mount -t ext4 -o rw,nodev,nosuid "$data_dev" "$store"
+# mount(8) can fall back to read-only mode when the card is write protected.
+writable=
+while read -r id parent device fsroot target opts rest; do
+    if [ "$target" = "$store" ]; then
+        case ,$opts, in *,rw,*) writable=yes ;; esac
+    fi
+done < /proc/self/mountinfo
+if [ "$writable" != yes ]; then
+    say 'writable data partition required'
+    umount "$store"
+    exit 1
+fi
+for directory in gizlet home; do
+    if [ ! -d "$store/$directory" ] || [ -L "$store/$directory" ]; then
+        say "invalid data directory $directory"
+        umount "$store"
+        exit 1
+    fi
+done
+mount -o bind "$store/gizlet" /opt/gizlet || { umount "$store"; exit 1; }
+mount -o bind "$store/home" /home || { umount /opt/gizlet; umount "$store"; exit 1; }
+mkdir -p -m 0700 "$store/system/ssh" "$store/system/iwd"
+mkdir -p /var/lib/iwd
+mount -o bind "$store/system/iwd" /var/lib/iwd
+: > /run/gizlet-data.ready

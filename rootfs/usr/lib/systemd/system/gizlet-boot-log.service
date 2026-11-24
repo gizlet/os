@@ -1,0 +1,10 @@
+[Unit]
+Description=Gizlet OS boot log on the boot partition (gizlet.log)
+After=gizlet-data.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/gizlet/save-boot-log boot
+
+[Install]
+WantedBy=multi-user.target
