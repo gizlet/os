@@ -9,6 +9,20 @@
    "version": "14.2.0-19"
   },
   {
+   "name": "libasound2-data",
+   "path": "pool/main/a/alsa-lib/libasound2-data_1.2.14-1+deb13u1_all.deb",
+   "sha256": "04688afdff3769c0f685541daed7b2f6f0cb946799ddf1d5847ddf11fe245559",
+   "size": 21188,
+   "version": "1.2.14-1+deb13u1"
+  },
+  {
+   "name": "libasound2t64",
+   "path": "pool/main/a/alsa-lib/libasound2t64_1.2.14-1+deb13u1_arm64.deb",
+   "sha256": "9c808d819ccddc37c793dd3186c2ecd858b2feb2474cebb883f70386e7890d39",
+   "size": 341632,
+   "version": "1.2.14-1+deb13u1"
+  },
+  {
    "name": "libbsd0",
    "path": "pool/main/libb/libbsd/libbsd0_0.12.2-2_arm64.deb",
    "sha256": "6827c1b3ad8dcbf3478803f9150359433e3376a3bde01c4503888a22eb3924e3",

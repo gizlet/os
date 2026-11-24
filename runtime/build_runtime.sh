@@ -3,9 +3,10 @@
 # libraries in /in/debs, Debian's own builds, and the libraries built here in
 # /in/libraries (raylib), laid out as
 #
-#   lib/                 glibc with its loader, libglvnd, Mesa, libdrm, raylib and their dependencies
+#   lib/                 glibc with its loader, libglvnd, Mesa, libdrm, ALSA's libasound, raylib and their dependencies
 #   lib/dri, lib/gbm     Mesa's drivers and GBM backend
 #   share/glvnd/         the EGL vendor file naming Mesa
+#   share/alsa/          ALSA's configuration, for libasound
 #   share/doc/PACKAGE/   each package's copyright
 #   bin/gizlet-run       runs a program against the runtime
 #   bin/gizlet-gl-info   prints the OpenGL ES renderer and checks a render
@@ -24,6 +25,8 @@ for dir in "$unpack/usr/lib/aarch64-linux-gnu" "$unpack/lib/aarch64-linux-gnu"; 
 done
 rm -rf "$runtime/lib/pkgconfig"
 cp "$unpack"/usr/share/glvnd/egl_vendor.d/*.json "$runtime/share/glvnd/egl_vendor.d/"
+# ALSA's configuration, which gizlet-run points libasound at.
+cp -a "$unpack/usr/share/alsa" "$runtime/share/alsa"
 for doc in "$unpack"/usr/share/doc/*; do
     if [ -f "$doc/copyright" ]; then
         mkdir -p "$runtime/share/doc/${doc##*/}"
@@ -43,9 +46,10 @@ for library in /in/libraries/*; do
     done
 done
 
-for required in ld-linux-aarch64.so.1 libc.so.6 libEGL.so.1 libEGL_mesa.so.0 libGLESv2.so.2 libgbm.so.1 libdrm.so.2; do
+for required in ld-linux-aarch64.so.1 libc.so.6 libasound.so.2 libEGL.so.1 libEGL_mesa.so.0 libGLESv2.so.2 libgbm.so.1 libdrm.so.2; do
     [ -e "$runtime/lib/$required" ] || { echo "runtime lacks $required" >&2; exit 1; }
 done
+[ -f "$runtime/share/alsa/alsa.conf" ] || { echo "runtime lacks ALSA's alsa.conf" >&2; exit 1; }
 ls "$runtime"/lib/dri/*panfrost* > /dev/null || { echo "runtime lacks Mesa's Panfrost driver" >&2; exit 1; }
 # kmsro joins a display-only KMS device (Rockchip's VOP) with the render-only GPU.
 [ -e "$runtime/lib/dri/rockchip_dri.so" ] || { echo "runtime lacks Mesa's rockchip (kmsro) driver" >&2; exit 1; }

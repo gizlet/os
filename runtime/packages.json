@@ -4,6 +4,7 @@
  "architecture": "arm64",
  "required": false,
  "packages": [
+  "libasound2t64",
   "libc6",
   "libdrm2",
   "libegl-mesa0",

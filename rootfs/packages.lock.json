@@ -9,6 +9,13 @@
    "version": "3.152"
   },
   {
+   "name": "alsa-utils",
+   "path": "pool/main/a/alsa-utils/alsa-utils_1.2.14-1_arm64.deb",
+   "sha256": "485fdd5ff4232fcc761ee4ca2f6e8be7572783e696a0d595ccffcba324db1026",
+   "size": 1120348,
+   "version": "1.2.14-1"
+  },
+  {
    "name": "apt",
    "path": "pool/main/a/apt/apt_3.0.3_arm64.deb",
    "sha256": "9d88b95c6a6c9880b1bb40aebe7df3b34a0a160a9430d76fac496512a4cf69a6",
@@ -247,6 +254,27 @@
    "version": "3.0.3"
   },
   {
+   "name": "libasound2-data",
+   "path": "pool/main/a/alsa-lib/libasound2-data_1.2.14-1+deb13u1_all.deb",
+   "sha256": "04688afdff3769c0f685541daed7b2f6f0cb946799ddf1d5847ddf11fe245559",
+   "size": 21188,
+   "version": "1.2.14-1+deb13u1"
+  },
+  {
+   "name": "libasound2t64",
+   "path": "pool/main/a/alsa-lib/libasound2t64_1.2.14-1+deb13u1_arm64.deb",
+   "sha256": "9c808d819ccddc37c793dd3186c2ecd858b2feb2474cebb883f70386e7890d39",
+   "size": 341632,
+   "version": "1.2.14-1+deb13u1"
+  },
+  {
+   "name": "libatopology2t64",
+   "path": "pool/main/a/alsa-lib/libatopology2t64_1.2.14-1+deb13u1_arm64.deb",
+   "sha256": "8e9dd1458d0b990f6391c0612e38a26adba4fdc138a6a911be905acc9e499ccd",
+   "size": 49148,
+   "version": "1.2.14-1+deb13u1"
+  },
+  {
    "name": "libattr1",
    "path": "pool/main/a/attr/libattr1_2.5.2-3_arm64.deb",
    "sha256": "25057d7bfba969a76cdf18ae88ce7ff6e664520726ddf02cdde97c03d5e9a43c",
@@ -429,6 +457,13 @@
    "version": "2.41.5-0+deb13u1"
   },
   {
+   "name": "libfftw3-single3",
+   "path": "pool/main/f/fftw3/libfftw3-single3_3.3.10-2+b1_arm64.deb",
+   "sha256": "874b10ccab6219bcae210cc9ff9298389e266ad7308be086956c859ae1aa8ba5",
+   "size": 516600,
+   "version": "3.3.10-2+b1"
+  },
+  {
    "name": "libfido2-1",
    "path": "pool/main/libf/libfido2/libfido2-1_1.15.0-1+b1_arm64.deb",
    "sha256": "510f81957f2905c57d3d8681c3ed9bf68a17bfb254d721a578c88edd8158477c",
@@ -448,6 +483,13 @@
    "sha256": "a27bbc27f119161ea9702c8dd66f54131cdf0d2ca73000f50ea91ef2fdfef0fb",
    "size": 535088,
    "version": "2:6.3.0+dfsg-3"
+  },
+  {
+   "name": "libgomp1",
+   "path": "pool/main/g/gcc-14/libgomp1_14.2.0-19_arm64.deb",
+   "sha256": "43e84cb7971d8a4d8870cab6204e998ea4f23ee1339bb0ff556dd881bac82d25",
+   "size": 123520,
+   "version": "14.2.0-19"
   },
   {
    "name": "libgssapi-krb5-2",
@@ -609,6 +651,13 @@
    "sha256": "f78ff432b2a627bc04f7eef0e6e2696501c9e06feca748a5b741d5e594429033",
    "size": 159264,
    "version": "8.2-6"
+  },
+  {
+   "name": "libsamplerate0",
+   "path": "pool/main/libs/libsamplerate/libsamplerate0_0.2.2-4+b2_arm64.deb",
+   "sha256": "5d9fad694b249d48d8457e1242ab60e04db6a30d7d56f80c6ae463ff122147ec",
+   "size": 944716,
+   "version": "0.2.2-4+b2"
   },
   {
    "name": "libseccomp2",

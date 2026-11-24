@@ -3,6 +3,7 @@
  "suite": "trixie",
  "architecture": "arm64",
  "packages": [
+  "alsa-utils",
   "dbus",
   "dosfstools",
   "e2fsprogs",
