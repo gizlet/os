@@ -55,5 +55,17 @@ R36S_CARD = {
     },
 }
 
+_PANEL0_COMPATIBLE = "gameconsole,r36s-panel sitronix,st7703"
+
+# The V30 Panel 4 card differs only in its device tree's panel driver.
+R36S_V30_PANEL4_CARD = R36S_CARD | {
+    "device_tree": R36S_CARD["device_tree"] | {
+        "properties": [
+            p[:2] + ["rocknix,generic-dsi"] if p[2] == _PANEL0_COMPATIBLE else p
+            for p in R36S_CARD["device_tree"]["properties"]
+        ],
+    },
+}
+
 # Filesystem UUID of the data partition, set in sdcard.cfg and checked by rcS.
 R36S_DATA_UUID = "17605036-fda0-4633-a95b-2ed27409a90c"

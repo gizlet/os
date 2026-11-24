@@ -86,14 +86,23 @@ def linux_kernel(stage, params):
     shutil.copyfile(config, stage.work / ".config")
     stage.run("make", "-s", "olddefconfig")
     check_config(config_settings(config), stage.work / ".config")
+    # Out-of-tree drivers become built-in objects of their directory, as ROCKNIX adds them.
+    for src, dst in params.get("builtin_sources", []):
+        if not dst.endswith(".c"):
+            raise ValueError(f"Built-in source must be a C file: {dst!r}")
+        install(stage.work, [(stage.input(src), dst)], 0o644)
+        makefile = child(stage.work, str(Path(dst).parent / "Makefile"))
+        with makefile.open("a") as out:
+            out.write(f"obj-y += {Path(dst).stem}.o\n")
     dt_dir = stage.work / "arch/arm64/boot/dts"
     install(dt_dir, [(stage.input(src), dst) for src, dst in params["dts_files"]], 0o644, replace=True)
-    target = params["dtb_target"]
-    dtb = child(dt_dir, target)
-    if dtb.suffix != ".dtb" or target.startswith("-"):
-        raise ValueError(f"Expected a Kbuild DTB target: {target!r}")
-    stage.run("make", "-s", f"-j{stage.jobs}", "Image", target)
-    return [stage.work / "arch/arm64/boot/Image", dtb]
+    targets = [params["dtb_target"]] + params.get("extra_dtb_targets", [])
+    dtbs = [child(dt_dir, target) for target in targets]
+    for target, dtb in zip(targets, dtbs):
+        if dtb.suffix != ".dtb" or target.startswith("-"):
+            raise ValueError(f"Expected a Kbuild DTB target: {target!r}")
+    stage.run("make", "-s", f"-j{stage.jobs}", "Image", *targets)
+    return [stage.work / "arch/arm64/boot/Image"] + dtbs
 
 
 def legacy_uboot(stage, params):

@@ -37,6 +37,7 @@ _FILES = {
     "projects/Rockchip/patches/linux/RK3326/021-magicx-xu-mini-m.patch": (_LINUX, "4d53355ad506048ea4f3950f4b6d226647b4604206950fd46918a0f20ec97822"),
     "projects/Rockchip/patches/linux/RK3326/022-usb-role-switch.patch": (_LINUX, "f22ff902b22f636dc179e279d9f203ea8a49f349aebf50e1c3633644aef1a536"),
     "projects/Rockchip/patches/linux/RK3326/023-gameconsole-r36max.patch": (_LINUX, "6c1a710ccb21420849ed7f0daf0171cb26d9ab4d9bc123daf1fa8cb629cd5edd"),
+    "packages/kernel/drivers/generic-dsi/sources/panel-generic-dsi.c": (_LINUX, "0901af6b33384f27378ce299b67bf998c7cb0780b6585ed161cfd036c8abe800"),
     "projects/ROCKNIX/devices/RK3326/packages/u-boot-legacy/patches/01-fix-building.patch": (_UBOOT, "b051d4ed375c6906317eeddf538e0e3d1d87088a62e58a0432c7960bd990201a"),
     "projects/ROCKNIX/devices/RK3326/packages/u-boot-legacy/sources/configs/rocknix_rk3326_defconfig": (_UBOOT, "f2b66d895ee7c67639f8eb526466079d72678f84123709aea8b44cb6f203d738"),
 }

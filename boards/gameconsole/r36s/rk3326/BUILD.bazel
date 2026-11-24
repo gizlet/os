@@ -20,6 +20,7 @@ exports_files([
     "boot.cmd",
     "busybox.config",
     "gizlet-r36s-panel0.dts",
+    "gizlet-r36s-v30-panel4.dts",
     "inittab",
     "kernel.config",
     "rcS",
@@ -73,6 +74,12 @@ filegroup(
         _ROCKNIX_LINUX + "022-usb-role-switch.patch",
         _ROCKNIX_LINUX + "023-gameconsole-r36max.patch",
     ],
+)
+
+# ROCKNIX's panel driver that takes the init sequence from the device tree.
+alias(
+    name = "panel_generic_dsi",
+    actual = "@rocknix//:packages/kernel/drivers/generic-dsi/sources/panel-generic-dsi.c",
 )
 
 alias(
