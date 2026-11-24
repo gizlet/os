@@ -13,10 +13,15 @@ bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-pan
 bazel test --config=r36s --test_output=all //targets/sd_image/gameconsole/r36s:image_test //targets/sd_image/gameconsole/r36s:boot_test
 ```
 
-The unprivileged build writes `bazel-bin/targets/sd_image/gameconsole/r36s/gizlet-os-r36s-panel0.img`. The artifact test reads back the boot stages, both BL31 copies, partition table, filesystems and Booter. The QEMU test starts the kernel extracted from the image on a Cortex-A35 `virt` machine. It boots a private writable copy twice, installs a test executable through the guest console, checks its output and verifies a user file across reboot. It also exercises recovery from invalid entries and isolation from a second data disk. The delivered data partition starts with empty `gizlet/` and `home/` directories. CI runs the same build and both tests on an Ubuntu 24.04 ARM64 runner for every pull request and push to `main` (`.github/workflows/build.yml`).
+The unprivileged build writes `bazel-bin/targets/sd_image/gameconsole/r36s/gizlet-os-r36s-panel0.img`. The artifact test reads back the boot stages, both BL31 copies, partition table, filesystems and Booter. The QEMU test starts the kernel extracted from the image on a Cortex-A35 `virt` machine. It boots a private writable copy twice, installs a test executable through the guest console, checks its output and verifies a user file across reboot. It also exercises recovery from invalid entries and isolation from a second data disk. The delivered data partition starts with empty `gizlet/` and `home/` directories.
 
 The board guide covers the storage contract, local recovery and application setup. Keep the original TF1 and back up an existing data partition before writing a full image. A whole-card write replaces all three partitions. Qualification of DDR, TF1, Panel 0, UART and physical controls requires a matching handheld. [R36S guide](boards/gameconsole/r36s/rk3326/README.md) · [Sources and licensing](third_party/r36s/README.md)
 
-## Code review
+## CI and code review
 
-Pull requests to `main` must pass the `Codex Code Review` check. A user with write access starts a review by commenting `@codex review` on its own line; every new push needs a new request. The workflow is `.github/workflows/codex-review.yml` and uses the shared [Gizlet reviewer](https://github.com/gizlet/github-workflows#codex-code-review).
+Pull requests to `main` must pass two checks:
+
+- `Bazel build and test (R36S)` runs the build and both tests above on an Ubuntu 24.04 ARM64 runner (`.github/workflows/build.yml`). It starts automatically for every push to a pull request whose branch is in this repository (`.github/workflows/pr-trigger.yml`). Fork pull requests are never built. A user with write access can rerun it by commenting `/test`.
+- `Codex Code Review` runs only when a user with write access comments `/codex-review` (`.github/workflows/codex-review.yml`). Every new push needs a new request.
+
+Both workflows run from `main` and use the shared [Gizlet workflows](https://github.com/gizlet/github-workflows). Pushes to `main` build directly and refresh the Bazel caches.

@@ -1,0 +1,23 @@
+name: PR trigger
+
+# Starts CI for pull requests whose branch is in this repository. Never checks
+# out pull-request code; it dispatches the listed workflows on main.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  trigger:
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+      pull-requests: read
+    uses: gizlet/github-workflows/.github/workflows/pr-auto-trigger.yml@latest
+    with:
+      workflows: build.yml
+      command: /test

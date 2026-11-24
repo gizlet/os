@@ -1,27 +1,68 @@
 name: Build
 
+# Pull requests reach this workflow through pr-trigger.yml (branches in this
+# repository) or a writer's `/test` comment. Both run this file from main and
+# report the required `Bazel build and test (R36S)` check on the PR head.
+# Do not add a pull_request trigger: the PR could then rewrite its own check.
+
 on:
-  pull_request:
   push:
     branches: [main]
+  issue_comment:
+    types: [created]
   workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Pull request to build; leave empty to build the selected branch.
+        required: false
+        default: ''
+        type: string
+      head_sha:
+        description: Expected pull-request head, set by automatic triggers.
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
 
-concurrency:
-  group: build-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
+  start:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.pull_request_number != '')
+      || (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/test'))
+    permissions:
+      checks: write
+      contents: read
+      issues: write
+      pull-requests: read
+    uses: gizlet/github-workflows/.github/workflows/pr-check-start.yml@latest
+    with:
+      check-name: Bazel build and test (R36S)
+      command: /test
+      pull_request_number: ${{ inputs.pull_request_number }}
+      head_sha: ${{ inputs.head_sha }}
+
   r36s:
-    name: Bazel build and test (R36S)
+    name: Bazel (R36S)
+    needs: start
+    if: >-
+      !cancelled() && (
+        needs.start.outputs.run == 'true'
+        || (needs.start.result == 'skipped' && github.event_name != 'issue_comment'))
     # Native ARM64 matches the documented Ubuntu 24.04 ARM64 builder.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
+    # The job builds pull-request code: read-only token and no secrets.
+    permissions:
+      contents: read
+    concurrency:
+      group: build-${{ needs.start.outputs.number || github.ref }}
+      cancel-in-progress: ${{ needs.start.outputs.number != '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ needs.start.outputs.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Install build and verification tools
@@ -37,7 +78,7 @@ jobs:
           bazelisk-cache: true
           repository-cache: true
           disk-cache: ${{ github.workflow }}
-          # Only main writes caches so pull requests cannot poison them.
+          # Only main writes caches; pull-request builds only restore them.
           cache-save: ${{ github.event_name == 'push' }}
 
       - name: Build the system card image
@@ -57,3 +98,16 @@ jobs:
           path: bazel-testlogs/targets/sd_image/gameconsole/r36s/*/test.log
           if-no-files-found: ignore
           retention-days: 7
+
+  finish:
+    needs: [start, r36s]
+    if: always() && needs.start.outputs.run == 'true'
+    permissions:
+      checks: write
+      contents: read
+      issues: write
+    uses: gizlet/github-workflows/.github/workflows/pr-check-finish.yml@latest
+    with:
+      check_run_id: ${{ needs.start.outputs.check_run_id }}
+      comment_id: ${{ needs.start.outputs.comment_id }}
+      result: ${{ needs.r36s.result }}
