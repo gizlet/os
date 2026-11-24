@@ -1,6 +1,17 @@
 #!/bin/sh
-# The primary console owns one configured application. Its exit returns here.
+# The primary console owns one configured application, the launcher by
+# default. Its exit returns here.
 export HOME=/home PATH=/sbin:/bin:/usr/sbin:/usr/bin
+factory=/usr/lib/gizlet/gizlet-launcher
+# Without boot.ini, as on a fresh card, the factory launcher becomes the entry.
+if [ -f /run/gizlet-data.ready ] && [ ! -e /opt/gizlet/boot.ini ] && [ -x "$factory" ]; then
+    mkdir -p /opt/gizlet/launcher &&
+        cp "$factory" /opt/gizlet/launcher/gizlet-launcher.new &&
+        mv /opt/gizlet/launcher/gizlet-launcher.new /opt/gizlet/launcher/gizlet-launcher &&
+        printf '%s\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini.new &&
+        mv /opt/gizlet/boot.ini.new /opt/gizlet/boot.ini && sync &&
+        echo 'Gizlet OS: installed the factory launcher as the boot entry'
+fi
 if [ -f /run/gizlet-data.ready ]; then
     /sbin/gizlet-booter
     printf 'Gizlet OS: boot entry finished with status %d\n' "$?"

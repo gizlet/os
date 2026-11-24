@@ -13,7 +13,7 @@ Every rule takes `source_date_epoch`. Patches apply with GNU `patch -p1` in list
 
 Each stage runs [runner.py](runner.py) in the libkrun build VM on its read-only Debian root. Inputs are staged into the guest, and the source trees and build directories live on the guest's case-sensitive tmpfs. All tools are Bazel inputs, so the stages cache and rebuild like ordinary actions. [Build VM](../krun/README.md)
 
-`rockchip_card_test` checks a finished card in the same VM: MBR, card size, IDB digest, both U-Boot and BL31 copies, the boot script and the board's device tree expectations. Boards describe their card in a `.bzl` dict. [Card test](card_test.py) · [R36S facts](../../../boards/gameconsole/r36s/card.bzl)
+`rockchip_card_test` checks a finished card in the same VM: MBR, card size, IDB digest, both U-Boot and BL31 copies, the boot script and the board's device tree expectations. Boards describe their card in a `.bzl` dict. [Card test](../../../tests/card_test.py) · [R36S facts](../../../boards/gameconsole/r36s/card.bzl)
 
 ```sh
 bazel test //tools/bazel/rockchip:runner_test

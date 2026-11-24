@@ -161,7 +161,14 @@ def scenarios(image, kernel_name, work, tools):
     private = work / "private.img"
     shutil.copyfile(image, private)
     with boot(private, kernel, root) as console:
-        console.expect(b"/opt/gizlet/boot.ini: No such file")
+        # A fresh card starts the factory launcher; q on its console ends it.
+        console.expect(b"installed the factory launcher as the boot entry")
+        console.expect(b"starting /opt/gizlet/launcher/gizlet-launcher")
+        console.expect(b"Gizlet launcher: button test")
+        console.expect(b"none found")
+        console.enter("q")
+        console.expect(b"Leaving the launcher.")
+        console.expect(b"boot entry finished with status 0")
         console.expect(PROMPT)
         console.enter("cat /proc/mounts")
         for mount in (b" / squashfs ro,", b" /opt/gizlet ext4 rw,", b" /home ext4 rw,"):

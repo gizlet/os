@@ -1,0 +1,17 @@
+load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# The Gizlet launcher. This first version is a button test; the card installs
+# it as the boot entry of a fresh data partition (see session/boot-session).
+debian_cc_binary(
+    name = "gizlet-launcher",
+    srcs = ["main.c"],
+    copts = [
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+)

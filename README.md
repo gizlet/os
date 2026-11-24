@@ -1,6 +1,16 @@
 # Gizlet OS
 
-Gizlet OS builds the Linux base system and TF1 system card for the RK3326 Game Console R36S. Its 640×480 panel is selected by a device tree overlay, as in ROCKNIX. BusyBox init mounts a read-only Linux root, gives installed software `/opt/gizlet` and user files `/home`, and starts the executable named in `boot.ini`. A fresh card opens a local recovery shell for installation.
+Gizlet OS builds the Linux base system and TF1 system card for the RK3326 Game Console R36S. Its 640×480 panel is selected by a device tree overlay, as in ROCKNIX. BusyBox init mounts a read-only Linux root, gives installed software `/opt/gizlet` and user files `/home`, and starts the executable named in `boot.ini`. A fresh card installs the Gizlet launcher as that entry; for now the launcher is a button test.
+
+| Path | Contents |
+| --- | --- |
+| `boards/` | One package per device: its kernel config, device trees and panel overlays (`kernel/`), boot script and trust settings (`boot/`), card layout and test expectations |
+| `rootfs/` | The userspace every board shares, laid out as on the card (`etc/`, `sbin/`), plus Dropbear and wpa_supplicant |
+| `session/` | The Booter and boot session that start the `boot.ini` entry or the recovery shell |
+| `launcher/` | The Gizlet launcher |
+| `targets/` | Card images composed from the above |
+| `tests/` | Card, root filesystem and QEMU tests |
+| `third_party/`, `tools/bazel/` | Pinned upstream sources and the build rules |
 
 ## Build and test
 
@@ -14,6 +24,6 @@ bazel test //tools/bazel/rockchip:runner_test
 
 The build writes `gizlet-os-r36s.img` under `bazel-bin/targets/sd_image/gameconsole/r36s/`, for the original ST7703 panel, and `gizlet-os-r36s-v30-panel4.img`, the same card with the V30 Panel 4 overlay preselected as `mipi-panel.dtbo`. Without a serial cable, `uboot.log` and `gizlet.log` on the FAT boot partition show how far the last boot got. The card test reads back the boot stages, both BL31 copies, the partition table and the device tree. The rootfs test checks the root and data filesystems, the license notices and the installed Booter. The QEMU test starts the kernel extracted from the image on a Cortex-A35 `virt` machine. It boots a private writable copy twice, installs a test executable through the guest console, checks its output and verifies a user file across reboot. It also exercises recovery from invalid entries, an ssh login and `scp` in both directions over virtio-net, the WiFi setup from `wifi.txt`, and isolation from a second data disk. The delivered data partition starts with empty `gizlet/` and `home/` directories.
 
-`third_party/` pins each upstream once: Linux, Hardkernel U-Boot, BusyBox, Rockchip rkbin and the `gizlet/rocknix` fork that serves the kernel and U-Boot patches. A board package under `boards/` selects its archives, ordered patch lists, firmware, configuration and test expectations. A target package under `targets/` only composes the card from those labels and the rules in `tools/bazel/`. [Image rules](tools/bazel/rockchip/README.md) · [R36S board](boards/gameconsole/r36s/BUILD.bazel) · [R36S target](targets/sd_image/gameconsole/r36s/BUILD.bazel)
+`third_party/` pins each upstream once: Linux, Hardkernel U-Boot, BusyBox, Rockchip rkbin and the `gizlet/rocknix` fork that serves the kernel and U-Boot patches. A board package under `boards/` builds its kernel, device trees and boot chain from those pins. A target package under `targets/` only composes the card from those labels and the rules in `tools/bazel/`. [Image rules](tools/bazel/rockchip/README.md) · [R36S board](boards/gameconsole/r36s/BUILD.bazel) · [R36S target](targets/sd_image/gameconsole/r36s/BUILD.bazel)
 
 The board guide covers the storage contract, local recovery and application setup. Keep the original TF1 and back up an existing data partition before writing a full image. A whole-card write replaces all three partitions. Qualification of DDR, TF1, Panel 0, UART and physical controls requires a matching handheld. [R36S guide](boards/gameconsole/r36s/README.md) · [Sources and licensing](third_party/README.md)

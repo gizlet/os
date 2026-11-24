@@ -55,7 +55,7 @@ def main():
     inittab = (root / "etc/inittab").read_text().splitlines()
     for line in ("::sysinit:/etc/rcS", "::sysinit:/sbin/gizlet-net", "::sysinit:/sbin/save-boot-log", "::respawn:/bin/cttyhack /sbin/boot-session", "tty1::askfirst:-/bin/sh"):
         assert line in inittab, line
-    for executable in ("etc/rcS", "sbin/boot-session", "sbin/save-boot-log", "sbin/gizlet-net", "etc/udhcpc.script", "usr/sbin/wpa_supplicant", "usr/bin/wpa_cli", "sbin/gizlet-booter", "usr/sbin/dropbear", "usr/bin/scp"):
+    for executable in ("etc/rcS", "sbin/boot-session", "sbin/save-boot-log", "sbin/gizlet-net", "etc/udhcpc.script", "usr/sbin/wpa_supplicant", "usr/bin/wpa_cli", "sbin/gizlet-booter", "usr/lib/gizlet/gizlet-launcher", "usr/sbin/dropbear", "usr/bin/scp"):
         assert (root / executable).stat().st_mode & 0o111, f"/{executable} is executable"
     # Everyday commands for the ssh and LCD shells.
     for applet in ("clear", "less", "sed", "awk", "sort", "tar", "gzip", "wget", "nc", "which", "watch"):
@@ -66,7 +66,7 @@ def main():
     for notice in config["licenses"]:
         assert (root / "usr/share/licenses" / notice).stat().st_size > 0, f"license notice {notice}"
     assert (root / "sbin/gizlet-booter").read_bytes() == booter.read_bytes(), "installed Booter differs from the build"
-    for executable in ("sbin/gizlet-booter", "bin/busybox", "usr/sbin/dropbear", "usr/bin/dropbearkey", "usr/bin/scp", "usr/sbin/wpa_supplicant", "usr/bin/wpa_cli"):
+    for executable in ("sbin/gizlet-booter", "usr/lib/gizlet/gizlet-launcher", "bin/busybox", "usr/sbin/dropbear", "usr/bin/dropbearkey", "usr/bin/scp", "usr/sbin/wpa_supplicant", "usr/bin/wpa_cli"):
         assert "AArch64" in output("readelf", "-h", root / executable), f"/{executable} is AArch64"
         assert "INTERP" not in output("readelf", "-lW", root / executable), f"/{executable} requires a dynamic loader"
     run("sha256sum", image, root / "bin/busybox", root / "sbin/gizlet-booter")

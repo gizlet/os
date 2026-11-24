@@ -33,6 +33,8 @@ ROOTFS_EXECUTABLES = {
     "//rootfs/dropbear:scp-bin": "usr/bin/scp",
     "//rootfs/wpa_supplicant:wpa_cli-bin": "usr/bin/wpa_cli",
     "//rootfs/wpa_supplicant:wpa_supplicant-bin": "usr/sbin/wpa_supplicant",
+    # The factory launcher, copied to /opt/gizlet when it has no boot.ini.
+    "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",
     "//session:boot-session": "sbin/boot-session",
     "//session:booter": "sbin/gizlet-booter",
 }
