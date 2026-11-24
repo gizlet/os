@@ -61,6 +61,18 @@ class Console:
             raise RuntimeError("QEMU failed at shutdown")
 
 
+def set_fat_dirty(disk, offset, dirty):
+    """Sets or clears the dirty flag of the FAT file system at byte OFFSET of DISK."""
+    with open(disk, "r+b") as f:
+        f.seek(offset)
+        sector = f.read(90)
+        # The state byte Linux uses: after the FAT32 extended fields, or the FAT12/16 ones.
+        at = 0x41 if sector[82:90] == b"FAT32   " else 0x25
+        state = sector[at] | 1 if dirty else sector[at] & ~1
+        f.seek(offset + at)
+        f.write(bytes([state]))
+
+
 @contextmanager
 def boot(disk, kernel, root, other=None, ssh_port=None):
     args = ["qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a35", "-m", "512",
@@ -241,6 +253,9 @@ def scenarios(image, kernel_name, work):
                    "Gizlet launcher: no display", "== processes", "== dmesg"):
         assert marker in late, f"gizlet-late.log lacks {marker!r}"
     print("gizlet.log and gizlet-late.log saved on the boot partition")
+    # A card powered off while the boot partition was mounted keeps FAT's dirty
+    # flag; the first mount of the next boot checks and clears it.
+    set_fat_dirty(private, parts["boot"][1], True)
     with boot(private, kernel, root) as console:
         console.expect(b"starting /opt/gizlet/bin/hello")
         console.expect(b"\r\nhello-from-card\r\n")
@@ -248,6 +263,9 @@ def scenarios(image, kernel_name, work):
         console.expect(PROMPT)
         console.enter("cat /home/check")
         console.expect(b"\r\npersistent-user-file\r\n")
+        console.expect(PROMPT)
+        console.enter("dmesg | grep -c 'not properly unmounted'")
+        console.expect(b"\r\n0\r\n")
         console.expect(PROMPT)
         # Exercise invalid configuration, a symlink and an executable rejected by the kernel.
         console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' 'entry=again' > /opt/gizlet/boot.ini")

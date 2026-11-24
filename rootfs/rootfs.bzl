@@ -37,6 +37,7 @@ ROOTFS_FILES = {
 ROOTFS_EXECUTABLES = {
     "//rootfs:usr/lib/gizlet/boot-session": "usr/lib/gizlet/boot-session",
     "//rootfs:usr/lib/gizlet/gizlet-boot-device": "usr/lib/gizlet/gizlet-boot-device",
+    "//rootfs:usr/lib/gizlet/gizlet-mount-boot": "usr/lib/gizlet/gizlet-mount-boot",
     "//rootfs:usr/lib/gizlet/gizlet-mount-data": "usr/lib/gizlet/gizlet-mount-data",
     "//rootfs:usr/lib/gizlet/gizlet-setup": "usr/lib/gizlet/gizlet-setup",
     "//rootfs:usr/lib/gizlet/gizlet-ssh": "usr/lib/gizlet/gizlet-ssh",

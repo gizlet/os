@@ -51,7 +51,11 @@ if [ "$last" = yes ] && [ $((total - end)) -gt 2048 ]; then
 fi
 store=/run/gizlet-data
 mkdir -m 0700 "$store"
-mount -t ext4 -o rw,nodev,nosuid "$data_dev" "$store"
+# noinit_itable: the kernel would otherwise zero the inode tables of a grown
+# filesystem in the background, tens of seconds of SD card writes on the first
+# boot that stall everything else, the launcher's install among them. The
+# group checksums already mark those tables unused, so they need no zeroing.
+mount -t ext4 -o rw,nodev,nosuid,noinit_itable "$data_dev" "$store"
 # Grow the filesystem to its partition, online. Without a change this does nothing.
 case "$(resize2fs "$data_dev" 2>&1)" in
     *'Nothing to do'*) ;;
