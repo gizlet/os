@@ -44,7 +44,6 @@ _FILES = {
     "projects/ROCKNIX/devices/RK3326/patches/linux/035-dwc2-release-vbus-supply-on-role-switch.patch": "11fe2c5e06060c4f54a2371aaeb9dbb3244b7b496edbc50737bf38427c37cbb6",
     "projects/ROCKNIX/devices/RK3326/patches/linux/036-px30-dmc-devfreq.patch": "f4968f5c1e79ecc065defd06dfebd45f3309208b4f3f6ed180253aae04a7e378",
     "projects/ROCKNIX/devices/RK3326/patches/linux/037-px30-dmc-pass-dram-settings-to-bl31.patch": "651745274be27ddd5f1f7c714b90e8d4f6523a791bc09dbcc32a5aa820e10d70",
-    "projects/ROCKNIX/devices/RK3326/patches/linux/038-dwc2-no-pullup-on-id-change-without-gadget.patch": "ebbfd4437e0a1cc36785fb87b8c213543d1e6cfee947a93094d97d384533ef58",
     "projects/ROCKNIX/devices/RK3326/patches/linux/039-drm-rockchip-vop-add-afbc-support-for-px30.patch": "394c8aa1fdacccecbbc2c27cfbfe25e99848288e4d4faf9d67a6da1c664a2fd9",
     "projects/ROCKNIX/packages/linux-drivers/generic-dsi/sources/panel-generic-dsi.c": "4e2d17acaa4b5b9ccc00fc00f793c516c34b5827bdce1e6d6f0706d943c261ca",
     "projects/ROCKNIX/packages/linux/patches/7.0/0006-hid-playstation-expose-DualSense-Edge-Fn-and-back-paddles.patch": "d7edd724869a3767f70a4c6977771944adf75b7d034acdedc9a5c29e0c808578",
