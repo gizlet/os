@@ -1,0 +1,39 @@
+name: Codex review
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Open pull request to review.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.issue.pull_request && contains(github.event.comment.body, '@codex review'))
+    concurrency:
+      group: codex-review-${{ github.event.issue.number || inputs.pull_request_number }}
+      cancel-in-progress: false
+    permissions:
+      checks: write
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: gizlet/github-workflows/.github/workflows/codex-review.yml@latest
+    with:
+      pull_request_number: ${{ inputs.pull_request_number }}
+      review-instructions: >-
+        Gizlet OS builds a read-only Linux base system and TF1 card image for the
+        RK3326 R36S with Bazel. Pay particular attention to boot chain, partition
+        layout, and storage contract regressions, hermeticity and reproducibility
+        of Bazel rules, shell script correctness under BusyBox, and changes that
+        could leave a device unbootable or lose user data on the data partition.
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

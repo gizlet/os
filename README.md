@@ -27,3 +27,7 @@ The build writes `gizlet-os-r36s.img` under `bazel-bin/targets/sd_image/gamecons
 `third_party/` pins each upstream once: Linux, Hardkernel U-Boot, Rockchip rkbin, linux-firmware and the `gizlet/rocknix` fork that serves the kernel and U-Boot patches. A board package under `boards/` builds its kernel, device trees and boot chain from those pins. A target package under `targets/` only composes the card from those labels and the rules in `tools/bazel/`. [Image rules](tools/bazel/rockchip/README.md) · [R36S board](boards/gameconsole/r36s/BUILD.bazel) · [R36S target](targets/sd_image/gameconsole/r36s/BUILD.bazel)
 
 The board guide covers the storage contract, local recovery and application setup. Keep the original TF1 and back up an existing data partition before writing a full image. A whole-card write replaces all three partitions. Qualification of DDR, TF1, Panel 0, UART and physical controls requires a matching handheld. [R36S guide](boards/gameconsole/r36s/README.md) · [Sources and licensing](third_party/README.md)
+
+## Code review
+
+Pull requests to `main` must pass the `Codex Code Review` check. A user with write access starts a review by commenting `@codex review` on its own line; every new push needs a new request. The workflow is `.github/workflows/codex-review.yml` and uses the shared [Gizlet reviewer](https://github.com/gizlet/github-workflows#codex-code-review).
