@@ -21,7 +21,7 @@ The board guide covers the storage contract, local recovery and application setu
 
 Pull requests to `main` must pass two checks. For every push to a pull request whose branch is in this repository, `.github/workflows/triage.yml` starts both. Fork pull requests start neither automatically and are never built.
 
-- `Bazel build and test (R36S)` runs the build and both tests above (`.github/workflows/build.yml`). Compilation runs on the self-hosted ARM64 Linux runner named by the `BUILD_RUNNER` repository variable, with Bazel caches in `BAZEL_CACHE_DIR` on that runner; without the variable it falls back to GitHub's Ubuntu 24.04 ARM64 runner. Triggers, checks and Codex review run on GitHub-hosted runners. A user with write access can rerun it by commenting `/test`.
+- `Bazel build and test (R36S)` runs the build and both tests above (`.github/workflows/build.yml`). It runs on the self-hosted ARM64 Linux runner named by the `BUILD_RUNNER` organization variable, with Bazel caches in `BAZEL_CACHE_DIR` on that runner; without the variable it falls back to GitHub's Ubuntu 24.04 ARM64 runner. Only triage and Codex review run on GitHub-hosted runners. A user with write access can rerun it by commenting `/test`.
 - `Codex Code Review` reviews the diff (`.github/workflows/codex-review.yml`). A user with write access can rerun it by commenting `/codex-review`.
 
 Both workflows run from `main` and use the shared [Gizlet workflows](https://github.com/gizlet/.github). Pushes to `main` build directly and refresh the Bazel caches.
