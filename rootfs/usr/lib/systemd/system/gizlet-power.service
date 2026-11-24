@@ -1,0 +1,13 @@
+[Unit]
+Description=Turn the screen off when the device is idle
+# The timeout is in power.ini on the data partition; without it the default applies.
+After=gizlet-data.service
+ConditionPathExistsGlob=/sys/class/backlight/*
+
+[Service]
+ExecStart=/usr/lib/gizlet/gizlet-power
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -3,7 +3,7 @@
 use crate::i18n::{human_size, T};
 use crate::input::{Action, Input, TextEvent};
 use crate::keyboard::{self, Keyboard};
-use crate::settings::{Language, Settings, Theme};
+use crate::settings::{Language, Power, Settings, Theme};
 use crate::system::{Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
 use std::path::PathBuf;
 
@@ -97,6 +97,7 @@ pub enum ItemId {
     SshPassword,
     Brightness,
     Theme,
+    ScreenOff,
     Volume,
     BatteryPercent,
     ButtonTest,
@@ -194,6 +195,7 @@ pub struct WifiUi {
 pub struct App {
     pub settings: Settings,
     settings_path: PathBuf,
+    pub power: Power,
     pub version: &'static str,
     pages: Vec<Page>,
     pub home_row: HomeRow,
@@ -218,6 +220,7 @@ impl App {
         App {
             settings: Settings::load(&settings_path),
             settings_path,
+            power: Power::load(Power::path()),
             version,
             system: System::start(data_dir),
             pages: vec![Page::Home],
@@ -482,6 +485,7 @@ impl App {
                     match item.as_ref().map(|i| (&i.id, &i.value)) {
                         Some((id, ItemValue::Slider(v))) => self.slide(id, *v + step * 0.05),
                         Some((ItemId::Theme, _)) => self.toggle_theme(),
+                        Some((ItemId::ScreenOff, _)) => self.cycle_screen_off(step as i32),
                         _ if a == Action::Left => self.focus.in_content = false,
                         _ => {}
                     }
@@ -539,6 +543,22 @@ impl App {
         }
     }
 
+    fn cycle_screen_off(&mut self, step: i32) {
+        self.power.cycle(step);
+        if let Err(e) = self.power.save() {
+            let msg = T::Failed.fmt(self.lang(), &[&e.to_string()]);
+            self.toast(msg);
+        }
+    }
+
+    /// The screen-off choice as shown: minutes, or never.
+    pub fn screen_off_label(&self) -> String {
+        match self.power.screen_off {
+            0 => self.t(T::Never).to_string(),
+            s => T::Minutes.fmt(self.lang(), &[&(s / 60).to_string()]),
+        }
+    }
+
     fn toggle_theme(&mut self) {
         self.settings.theme = match self.settings.theme {
             Theme::Dark => Theme::Light,
@@ -575,6 +595,7 @@ impl App {
             ItemId::WifiDisconnect => self.system.send(Request::WifiDisconnect),
             ItemId::WifiNetwork(ssid) => self.choose_network(ssid),
             ItemId::Theme => self.toggle_theme(),
+            ItemId::ScreenOff => self.cycle_screen_off(1),
             ItemId::BatteryPercent => {
                 self.settings.battery_percent = !self.settings.battery_percent;
                 self.save();
@@ -767,6 +788,10 @@ impl App {
                     Theme::Light => t(T::ThemeLight),
                 };
                 items.push(Item::new(ItemId::Theme, t(T::ThemeLabel), ItemValue::Choice(theme)));
+                // Only with a backlight to turn off.
+                if snap.brightness.is_ok() {
+                    items.push(Item::new(ItemId::ScreenOff, t(T::ScreenOff), ItemValue::Choice(self.screen_off_label())));
+                }
             }
             Category::Sound => match &snap.volume {
                 Ok(v) => items.push(Item::new(ItemId::Volume, t(T::Volume), ItemValue::Slider(*v))),

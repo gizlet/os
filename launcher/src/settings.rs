@@ -152,6 +152,59 @@ impl Settings {
     }
 }
 
+/// The system's power settings, which gizlet-power reads: `screen_off`, the
+/// seconds without input before the screen turns off, 0 for never.
+pub struct Power {
+    path: PathBuf,
+    pub screen_off: u32,
+}
+
+impl Power {
+    /// The choices offered, in order: 1, 3, 5 and 10 minutes, then never.
+    pub const SCREEN_OFF: [u32; 5] = [60, 180, 300, 600, 0];
+    /// gizlet-power's default when the file has no value.
+    const DEFAULT: u32 = 300;
+
+    /// On Gizlet OS the file is on the data partition; elsewhere it sits with
+    /// the launcher's settings and nothing reads it.
+    pub fn path() -> PathBuf {
+        if cfg!(feature = "gizlet-os") && std::env::var_os("GIZLET_LAUNCHER_DATA").is_none() {
+            PathBuf::from("/run/gizlet-data/system/power.ini")
+        } else {
+            data_dir().join("power.ini")
+        }
+    }
+
+    pub fn load(path: PathBuf) -> Power {
+        let screen_off = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| {
+                t.lines().find_map(|l| {
+                    let (k, v) = l.split_once('=')?;
+                    (k.trim() == "screen_off").then(|| v.trim().parse().ok()).flatten()
+                })
+            })
+            .unwrap_or(Power::DEFAULT);
+        Power { path, screen_off }
+    }
+
+    /// The next choice after the current one, `step` places on (±1).
+    pub fn cycle(&mut self, step: i32) {
+        let n = Power::SCREEN_OFF.len() as i32;
+        let at = Power::SCREEN_OFF.iter().position(|&s| s == self.screen_off).unwrap_or(2) as i32;
+        self.screen_off = Power::SCREEN_OFF[(at + step).rem_euclid(n) as usize];
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let tmp = self.path.with_extension("tmp");
+        std::fs::write(&tmp, format!("# Seconds without input before the screen turns off; 0 is never.\nscreen_off = {}\n", self.screen_off))?;
+        std::fs::rename(&tmp, &self.path)
+    }
+}
+
 /// Where the launcher keeps its settings: `GIZLET_LAUNCHER_DATA`, the data
 /// partition on Gizlet OS, or the platform's per-user folder.
 pub fn data_dir() -> PathBuf {
@@ -177,6 +230,25 @@ pub fn data_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn power_cycles_and_round_trips() {
+        let dir = std::env::temp_dir().join(format!("gizlet-power-{}", std::process::id()));
+        let path = dir.join("power.ini");
+        let mut p = Power::load(path.clone());
+        assert_eq!(p.screen_off, 300);
+        p.cycle(1);
+        assert_eq!(p.screen_off, 600);
+        p.cycle(1);
+        assert_eq!(p.screen_off, 0);
+        p.cycle(1);
+        assert_eq!(p.screen_off, 60);
+        p.cycle(-1);
+        assert_eq!(p.screen_off, 0);
+        p.save().unwrap();
+        assert_eq!(Power::load(path).screen_off, 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn round_trip_and_defaults() {

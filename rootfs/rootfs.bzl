@@ -22,6 +22,7 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/systemd/system/gizlet-audio-jack.service": "usr/lib/systemd/system/gizlet-audio-jack.service",
     "//rootfs:usr/lib/systemd/system/gizlet-boot-log.service": "usr/lib/systemd/system/gizlet-boot-log.service",
     "//rootfs:usr/lib/systemd/system/gizlet-data.service": "usr/lib/systemd/system/gizlet-data.service",
+    "//rootfs:usr/lib/systemd/system/gizlet-power.service": "usr/lib/systemd/system/gizlet-power.service",
     "//rootfs:usr/lib/systemd/system/gizlet-late-log.service": "usr/lib/systemd/system/gizlet-late-log.service",
     "//rootfs:usr/lib/systemd/system/gizlet-late-log.timer": "usr/lib/systemd/system/gizlet-late-log.timer",
     "//rootfs:usr/lib/systemd/system/gizlet-session.service": "usr/lib/systemd/system/gizlet-session.service",
@@ -52,6 +53,8 @@ ROOTFS_EXECUTABLES = {
     "//session:booter": "usr/lib/gizlet/gizlet-booter",
     # Follows the headphone jack; static, like the Booter.
     "//audio:audio-jack": "usr/lib/gizlet/gizlet-audio-jack",
+    # Turns the screen off when idle; static too.
+    "//power:power": "usr/lib/gizlet/gizlet-power",
 }
 
 ROOTFS_ENABLE = [
@@ -59,6 +62,7 @@ ROOTFS_ENABLE = [
     "gizlet-boot-log.service",
     "gizlet-data.service",
     "gizlet-late-log.timer",
+    "gizlet-power.service",
     "gizlet-session.service",
     "gizlet-switches.service",
     "gizlet-var.service",

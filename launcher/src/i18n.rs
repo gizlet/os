@@ -97,6 +97,9 @@ strings! {
     ThemeLabel => "主题", "Theme";
     ThemeDark => "深色", "Dark";
     ThemeLight => "浅色", "Light";
+    ScreenOff => "自动关闭屏幕", "Turn Off Screen After";
+    Never => "永不", "Never";
+    Minutes => "{} 分钟", "{} min";
     Volume => "音量", "Volume";
     NoAudio => "未检测到音频设备", "No audio device detected";
     NoAudioBody => "这台设备的系统还没有声卡驱动。", "This device's system has no sound driver yet.";
