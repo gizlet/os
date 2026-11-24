@@ -75,6 +75,13 @@ rockchip_sd_image(
     target_compatible_with = _R36S,
 )
 
+# The card's former name. CI checks run main's .github/workflows/build.yml,
+# which builds this label until this name change reaches main.
+alias(
+    name = "gizlet-os-r36s-panel0",
+    actual = ":gizlet-os-r36s",
+)
+
 # The same card with a panel overlay already selected, for flashing a known unit.
 [genrule(
     name = "sdcard_" + panel,

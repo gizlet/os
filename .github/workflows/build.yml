@@ -98,7 +98,7 @@ jobs:
           } >> "$HOME/.bazelrc"
 
       - name: Build the system card image
-        run: bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-panel0
+        run: bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s
 
       - name: Test the image and boot it in QEMU
         run: >-
