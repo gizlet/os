@@ -1,0 +1,59 @@
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  r36s:
+    name: Bazel build and test (R36S)
+    # Native ARM64 matches the documented Ubuntu 24.04 ARM64 builder.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Install build and verification tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev pkg-config xz-utils bzip2 patch \
+            device-tree-compiler genimage dosfstools mtools squashfs-tools e2fsprogs faketime fdisk \
+            u-boot-tools python3 qemu-system-arm
+
+      - uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: ${{ github.workflow }}
+          # Only main writes caches so pull requests cannot poison them.
+          cache-save: ${{ github.event_name == 'push' }}
+
+      - name: Build the system card image
+        run: bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-panel0
+
+      - name: Test the image and boot it in QEMU
+        run: >-
+          bazel test --config=r36s --test_output=errors
+          //targets/sd_image/gameconsole/r36s:image_test
+          //targets/sd_image/gameconsole/r36s:boot_test
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bazel-testlogs
+          path: bazel-testlogs/targets/sd_image/gameconsole/r36s/*/test.log
+          if-no-files-found: ignore
+          retention-days: 7
