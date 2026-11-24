@@ -137,3 +137,54 @@ def debian_configure_make(name, outs, **kwargs):
         outs = list(outs.values()),
         **kwargs
     )
+
+def _debian_script_build_impl(ctx):
+    inputs = {ctx.file.script: "build.sh"}
+    for target, name in ctx.attr.srcs.items():
+        files = target.files.to_list()
+        if len(files) != 1:
+            fail("%s must provide exactly one file for %s" % (target.label, name))
+        inputs[files[0]] = "src/" + name
+    out_root = ctx.bin_dir.path + "/" + ctx.label.package + "/"
+    copies = ['cp "%s" "/out/%s"' % (path, out.path.removeprefix(out_root)) for path, out in zip(ctx.attr.built_paths, ctx.outputs.outs)]
+    krun_action(
+        ctx,
+        root_disk = ctx.file._rootfs,
+        inputs = inputs,
+        outputs = ctx.outputs.outs,
+        command = ["/bin/sh", "-c", "\n".join(["set -eu", "mkdir /tmp/build && cd /tmp/build", "sh /in/build.sh"] + copies)],
+        env = {"LC_ALL": "C", "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch), "TZ": "UTC"},
+        cpus = 4,
+        mem = 2048,
+        mnemonic = "DebianScriptBuild",
+        progress_message = "Building %{label} in the build VM",
+    )
+    return [DefaultInfo(files = depset(ctx.outputs.outs))]
+
+_debian_script_build = rule(
+    implementation = _debian_script_build_impl,
+    attrs = KRUN_ATTRS | {
+        "built_paths": attr.string_list(mandatory = True),
+        "outs": attr.output_list(mandatory = True),
+        "script": attr.label(mandatory = True, allow_single_file = True),
+        "source_date_epoch": attr.int(default = 1704067200),
+        "srcs": attr.label_keyed_string_dict(allow_files = True),
+        "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
+    },
+)
+
+def debian_script_build(name, script, srcs, outs, **kwargs):
+    """Runs `script` with sh in an empty /tmp/build in the build VM.
+
+    Each `srcs` label is available as /in/src/<name>. `outs` maps paths relative
+    to /tmp/build after the script to output file names, which become targets.
+    """
+    _debian_script_build(
+        name = name,
+        script = script,
+        srcs = srcs,
+        built_paths = list(outs.keys()),
+        outs = list(outs.values()),
+        **kwargs
+    )
+

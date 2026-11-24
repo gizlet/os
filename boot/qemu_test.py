@@ -98,6 +98,10 @@ def check_ssh(private, boot_offset, kernel, root, tools, work):
     keys = work / "authorized_keys"
     keys.write_text("".join(line + "\n" for line in public.splitlines() if line.startswith("ssh-ed25519 ")))
     subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", keys, "::authorized_keys"], check=True)
+    # Quotes inside the values must survive into wpa_supplicant's quoted strings.
+    wifi = work / "wifi.txt"
+    wifi.write_bytes(b'ssid=Test "Net"\r\npassword=!pass"word1\r\n')
+    subprocess.run(["mcopy", "-o", "-i", f"{private}@@{boot_offset}", wifi, "::wifi.txt"], check=True)
     port = free_port()
     client = work / "ssh"
     client.write_text(f'#!/bin/sh\nexec "{dbclient}" -y -y -i "{key}" -p {port} "$@"\n')
@@ -114,6 +118,14 @@ def check_ssh(private, boot_offset, kernel, root, tools, work):
                 break
             time.sleep(1)
         assert "ssh-ok" in login.stdout and "home" in login.stdout.split(), f"ssh login failed: {login.stderr}"
+        # QEMU has no WiFi adapter; gizlet-net still parses wifi.txt and reports.
+        wifi_state = subprocess.run([client, "root@127.0.0.1",
+                                     "while [ ! -f /run/gizlet-net.log ]; do sleep 1; done; cat /run/gizlet-net/wpa_supplicant.conf; "
+                                     "wpa_supplicant -v | head -n 1; grep gizlet-net: /run/gizlet-boot.log"],
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90).stdout
+        for marker in ('ssid="Test "Net""', 'psk="!pass"word1"', "key_mgmt=WPA-PSK WPA-PSK-SHA256 SAE",
+                       "wpa_supplicant v2.12", "no WiFi adapter (wlan0) after 30 s"):
+            assert marker in wifi_state, f"WiFi setup lacks {marker!r}: {wifi_state}"
         payload = work / "payload"
         payload.write_bytes(os.urandom(65536))
         subprocess.run([scp, "-S", client, payload, "root@127.0.0.1:/home/payload"],
@@ -124,7 +136,10 @@ def check_ssh(private, boot_offset, kernel, root, tools, work):
         assert back.read_bytes() == payload.read_bytes(), "scp round trip changed the file"
         console.command("rm /home/payload")
         console.stop()
-    print("ssh login and scp in both directions work")
+    net = subprocess.run(["mtype", "-i", f"{private}@@{boot_offset}", "::gizlet-net.log"],
+                         check=True, capture_output=True, text=True).stdout
+    assert "== Gizlet OS network" in net and "!pass" not in net, "gizlet-net.log is missing or shows the password"
+    print("ssh login and scp in both directions work; wifi.txt is parsed and gizlet-net.log saved")
 
 
 def scenarios(image, kernel_name, work, tools):
@@ -155,10 +170,7 @@ def scenarios(image, kernel_name, work, tools):
                           check=True, capture_output=True, text=True).stdout
     for marker in ("15 s after boot", "== usb devices", "== regulators", "== dmesg"):
         assert marker in late, f"gizlet-late.log lacks {marker!r}"
-    usb = subprocess.run(["mtype", "-i", f"{private}@@{parts['boot'][1]}", "::gizlet-usb.log"],
-                         check=True, capture_output=True, text=True).stdout
-    assert "== observe" in usb and "t=" in usb, f"gizlet-usb.log is incomplete: {usb!r}"
-    print("gizlet.log, gizlet-late.log and gizlet-usb.log saved on the boot partition")
+    print("gizlet.log and gizlet-late.log saved on the boot partition")
     with boot(private, kernel, root) as console:
         console.expect(b"starting /opt/gizlet/bin/hello")
         console.expect(b"\r\nhello-from-card\r\n")

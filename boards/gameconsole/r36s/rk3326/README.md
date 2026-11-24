@@ -48,12 +48,13 @@ exit
 
 The active kernel console owns the configured application session. On this board it is UART2, 1500000 8N1. The LCD's `tty1` offers a local shell on Enter. A missing or invalid `boot.ini`, a failed exec or an application return prints a diagnostic and opens the local `recovery#` shell. Exiting that shell retries the configuration. Treat these root consoles, and the debug link below, as trusted physical development access. [BusyBox init table](inittab) · [Boot session](../../../../boot/boot-session)
 
-## Debug link
+## Network
 
-Until WiFi works, the OTG port is a USB device for development. A computer connected to it sees a serial console (`ttyGS0`, a root shell) and a CDC ECM network link. The handheld is `10.55.0.1` and leases `10.55.0.2` to the computer without a route or DNS, so the computer's other connections are unaffected. Dropbear listens on port 22 and accepts only the public keys in `authorized_keys` on the FAT boot partition; there are no passwords. Its host key is kept on the data partition. Dropbear has no SFTP server, so OpenSSH clients copy files with `scp -O`. The port does not supply VBUS in this mode, and USB peripherals need host mode, which returns once ssh runs over WiFi. [Debug link](../../../../boot/debug-link)
+The OTG port is a USB host with VBUS on from boot, as in the stock firmware. V30 boards carry an RTL8188FU WiFi on the same bus, powered from the PMIC's LDO9 (`vcc_wifi`); the kernel drives it with `rtl8xxxu` and built-in firmware. Put the network in `wifi.txt` on the FAT boot partition, and the public keys allowed to log in in `authorized_keys` beside it. At boot `wpa_supplicant` joins the network (WPA2 or WPA3 personal, or open without a `password=` line) and `udhcpc` takes an address, which the LCD shows. `gizlet-net.log` on the boot partition records the address, the association state and the USB devices found. Dropbear listens on port 22 and accepts only those keys; there are no passwords. Its host key is kept on the data partition. Dropbear has no SFTP server, so OpenSSH clients copy files with `scp -O`. `wifi.txt` holds the passphrase in plain text; keep it off shared cards. [Network startup](../../../../boot/gizlet-net)
 
 ```sh
+printf 'ssid=%s\npassword=%s\n' 'NETWORK' 'PASSPHRASE' > /Volumes/GIZLETBOOT/wifi.txt
 cp ~/.ssh/id_ed25519.pub /Volumes/GIZLETBOOT/authorized_keys
-ssh root@10.55.0.1
-scp -O file root@10.55.0.1:/home/
+ssh root@ADDRESS
+scp -O file root@ADDRESS:/home/
 ```

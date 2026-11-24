@@ -44,3 +44,12 @@ use_repo(rocknix_joypad, "rocknix_joypad")
 
 dropbear = use_extension("//third_party/dropbear:repositories.bzl", "dropbear")
 use_repo(dropbear, "dropbear")
+
+hostap = use_extension("//third_party/hostap:repositories.bzl", "hostap")
+use_repo(hostap, "hostap")
+
+libnl = use_extension("//third_party/libnl:repositories.bzl", "libnl")
+use_repo(libnl, "libnl")
+
+linux_firmware = use_extension("//third_party/linux-firmware:repositories.bzl", "linux_firmware")
+use_repo(linux_firmware, "linux_firmware")

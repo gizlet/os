@@ -47,14 +47,9 @@ late_state() {
     for r in /sys/class/regulator/regulator.*; do
         echo "$(cat "$r/name"): state=$(cat "$r/state" 2>/dev/null) uV=$(cat "$r/microvolts" 2>/dev/null) users=$(cat "$r/num_users" 2>/dev/null)"
     done
-    echo '== usb device port'
-    for f in /sys/class/udc/*/state /sys/class/udc/*/current_speed; do
-        [ -e "$f" ] && echo "$f: $(cat "$f")"
-    done
+    echo '== network'
     ip addr 2>&1
-    echo '== usb-watch so far'
-    cat /run/gizlet-usb.log 2>/dev/null
-    cat /run/udhcpd.leases 2>/dev/null | hexdump -C | head -n 4
+    cat /run/gizlet-ip.* 2>/dev/null
     if mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || [ -d /sys/kernel/debug/regulator ]; then
         echo '== regulator summary'
         cat /sys/kernel/debug/regulator/regulator_summary 2>/dev/null

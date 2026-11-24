@@ -89,8 +89,8 @@ def linux_kernel(stage, params):
     # Out-of-tree drivers become built-in objects of their directory, as ROCKNIX adds them.
     # Headers are installed beside them.
     for src, dst in params.get("builtin_sources", []):
-        if not dst.endswith((".c", ".h")):
-            raise ValueError(f"Built-in source must be a C file or header: {dst!r}")
+        if not dst.endswith((".c", ".h")) and not dst.startswith("firmware/"):
+            raise ValueError(f"Built-in source must be a C file, a header or under firmware/: {dst!r}")
         install(stage.work, [(stage.input(src), dst)], 0o644)
         if dst.endswith(".c"):
             makefile = child(stage.work, str(Path(dst).parent / "Makefile"))

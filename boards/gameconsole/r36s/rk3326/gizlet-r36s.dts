@@ -7,33 +7,40 @@
 #include "rk3326-gameconsole-r36s.dts"
 
 /*
- * For now the OTG port is a USB device: a computer connected to it sees a
- * serial console and a network link (g_cdc) for ssh until WiFi works. The port
- * must not source VBUS while the computer powers it, so OTG_SWITCH stays off
- * and the controller has no supply. It returns to host mode afterwards.
+ * The OTG port is a USB host, as in the stock firmware: OTG_SWITCH supplies
+ * VBUS from boot. On V30 boards the on-board RTL8188FU WiFi shares this bus.
  */
 &otg_switch {
-	/delete-property/ regulator-boot-on;
+	regulator-boot-on;
 };
 
 &u2phy_otg {
 	status = "okay";
 };
 
-/*
- * ROCKNIX's rk3326.dtsi declares a role switch that starts as host. Its
- * session override would then mark only the A-session valid, so the device
- * never connects. Starting as a peripheral forces B-session and VBUS valid.
- */
 &usb20_otg {
-	dr_mode = "peripheral";
-	role-switch-default-mode = "peripheral";
-	/delete-property/ vbus-supply;
+	dr_mode = "host";
+};
+
+/*
+ * The stock V30 tree names LDO9 vcc_wifi and keeps it on at 3.3 V; ROCKNIX
+ * leaves it unused. The WiFi does not enumerate without it.
+ */
+&rk817 {
+	regulators {
+		LDO_REG9 {
+			regulator-name = "vcc_wifi";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+	};
 };
 
 /*
  * The host-port PHY is already enabled upstream. Its EHCI/OHCI controllers
- * expose USB devices wired to that port, such as an on-board WiFi module.
+ * expose USB devices wired to that port.
  */
 &usb_host0_ehci {
 	status = "okay";

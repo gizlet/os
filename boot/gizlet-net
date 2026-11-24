@@ -1,0 +1,123 @@
+#!/bin/sh
+# Development network: WiFi from wifi.txt on the FAT boot partition, and
+# Dropbear on port 22 for the public keys in authorized_keys beside it.
+#
+#   ssid=NETWORK
+#   password=PASSPHRASE      (omit for an open network)
+#
+# WiFi comes up in the background. Its address is shown on the LCD and, with
+# the adapter and association state, saved as gizlet-net.log on the boot
+# partition. The ssh host key is kept on the data partition when mounted.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+say() { echo "Gizlet OS: $*"; echo "gizlet-net: $*" >> /run/gizlet-boot.log; }
+lcd() { say "$*"; echo "Gizlet OS: $*" > /dev/tty1 2>/dev/null; }
+
+net=/run/gizlet-net
+mkdir -p -m 0700 "$net"
+ip link set lo up
+
+boot_dev=$(/sbin/gizlet-boot-device) && {
+    fat=/run/gizlet-bootfs-ro
+    mkdir -p "$fat"
+    if mount -t vfat -o ro,nodev,nosuid,noexec "$boot_dev" "$fat"; then
+        for f in authorized_keys wifi.txt; do
+            [ -f "$fat/$f" ] && cp "$fat/$f" "$net/$f"
+        done
+        umount "$fat"
+    fi
+}
+
+# --- ssh
+[ -f "$net/authorized_keys" ] && chmod 0600 "$net/authorized_keys" || say 'no authorized_keys on the boot partition; ssh logins are refused'
+key_dir=$net
+[ -f /run/gizlet-data.ready ] && key_dir=/run/gizlet-data/ssh && mkdir -p -m 0700 "$key_dir"
+key=$key_dir/dropbear_ed25519_host_key
+[ -f "$key" ] || dropbearkey -t ed25519 -f "$key" >/dev/null 2>&1 || say 'cannot create the ssh host key'
+dropbear -r "$key" -D "$net" -p 22 -P /run/dropbear.pid && say 'dropbear listening on port 22'
+
+# --- WiFi
+# Writes the wpa_supplicant network for wifi.txt; fails if it is unusable.
+wpa_config() {
+    cr=$(printf '\r')
+    ssid= password=
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line%"$cr"}
+        case "$line" in
+            ssid=*) ssid=${line#ssid=} ;;
+            password=*) password=${line#password=} ;;
+        esac
+    done < "$net/wifi.txt"
+    [ -n "$ssid" ] || { say 'wifi.txt has no ssid= line'; return 1; }
+    {
+        echo 'ctrl_interface=/run/wpa_supplicant'
+        echo 'network={'
+        # wpa_supplicant ends a quoted string at its last quote.
+        echo "	ssid=\"$ssid\""
+        if [ -n "$password" ]; then
+            echo "	psk=\"$password\""
+            echo '	key_mgmt=WPA-PSK WPA-PSK-SHA256 SAE'
+            echo '	ieee80211w=1'
+        else
+            echo '	key_mgmt=NONE'
+        fi
+        echo '}'
+    } > "$net/wpa_supplicant.conf"
+    chmod 0600 "$net/wpa_supplicant.conf"
+    n=${#password}
+    if [ -n "$password" ] && { [ "$n" -lt 8 ] || [ "$n" -gt 63 ]; }; then
+        say "wifi.txt password must have 8 to 63 characters, not $n"
+        return 1
+    fi
+    echo "$ssid" > "$net/ssid"
+}
+
+report() {
+    echo '== Gizlet OS network'
+    read -r up _ < /proc/uptime; echo "uptime $up"
+    cat "$net/ssid" 2>/dev/null
+    echo '== addresses'; ip addr 2>&1; ip route 2>&1
+    echo '== wpa_cli status'; wpa_cli -p /run/wpa_supplicant -i wlan0 status 2>&1
+    echo '== wpa_supplicant.log'; tail -n 60 /run/wpa_supplicant.log 2>/dev/null
+    echo '== usb devices'
+    for d in /sys/bus/usb/devices/*; do
+        [ -e "$d/idVendor" ] && echo "${d##*/}: $(cat "$d/idVendor"):$(cat "$d/idProduct") $(cat "$d/product" 2>/dev/null)"
+    done
+    echo '== dmesg (usb, wifi)'
+    dmesg | grep -i -E 'usb|rtl8xxxu|wlan|cfg80211|firmware|regulator' | tail -n 80
+}
+
+save_report() {
+    report > /run/gizlet-net.log 2>&1
+    dev=$(/sbin/gizlet-boot-device) || return 0
+    dir=/run/gizlet-netfs
+    mkdir -p "$dir"
+    mount -t vfat -o rw,nodev,nosuid,noexec,flush "$dev" "$dir" || return 0
+    cp /run/gizlet-net.log "$dir/gizlet-net.log.new" && mv "$dir/gizlet-net.log.new" "$dir/gizlet-net.log"
+    sync
+    umount "$dir"
+}
+
+wifi() {
+    wpa_config || { save_report; return; }
+    i=0
+    while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 30 ]; do sleep 1; i=$((i + 1)); done
+    if [ ! -e /sys/class/net/wlan0 ]; then
+        lcd 'no WiFi adapter (wlan0) after 30 s'
+    else
+        say "WiFi adapter wlan0 $(cat /sys/class/net/wlan0/address), joining $(cat "$net/ssid")"
+        wpa_supplicant -B -i wlan0 -c "$net/wpa_supplicant.conf" -P /run/wpa_supplicant.pid -f /run/wpa_supplicant.log
+        udhcpc -i wlan0 -b -t 20 -T 3 -s /etc/udhcpc.script -p /run/udhcpc.wlan0.pid -x hostname:gizlet-r36s >/dev/null 2>&1
+        i=0
+        while [ ! -f /run/gizlet-ip.wlan0 ] && [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done
+        [ -f /run/gizlet-ip.wlan0 ] || lcd "WiFi: no address from $(cat "$net/ssid") after 60 s"
+    fi
+    save_report
+}
+
+if [ -f "$net/wifi.txt" ]; then
+    # Detached, so init continues while the adapter enumerates and associates.
+    ( trap '' HUP; wifi ) </dev/null >/dev/null 2>&1 &
+else
+    say 'no wifi.txt on the boot partition; WiFi stays off'
+fi
+exit 0

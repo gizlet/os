@@ -105,7 +105,7 @@ rockchip_linux_kernel = rule(
         "dts_dirs": attr.label_keyed_string_dict(allow_files = True, doc = "Labels whose files are installed by name into a directory under arch/arm64/boot/dts/."),
         "dtb_target": attr.string(mandatory = True, doc = "Kbuild DTB target relative to arch/arm64/boot/dts/."),
         "extra_dtb_targets": attr.string_list(doc = "Further Kbuild DTB or `.dtbo` overlay targets, built into `extra_dtbs` in order. DTBs keep their symbols for overlays."),
-        "builtin_sources": attr.label_keyed_string_dict(allow_files = True, doc = "C sources and headers mapped to source-tree paths. C files are linked into their directory as obj-y."),
+        "builtin_sources": attr.label_keyed_string_dict(allow_files = True, doc = "C sources, headers and firmware files mapped to source-tree paths. C files are linked into their directory as obj-y; files under firmware/ can be named in CONFIG_EXTRA_FIRMWARE with CONFIG_EXTRA_FIRMWARE_DIR=\"firmware\"."),
         "image": attr.output(mandatory = True),
         "dtb": attr.output(mandatory = True),
         "extra_dtbs": attr.output_list(),
