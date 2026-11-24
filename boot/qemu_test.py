@@ -118,6 +118,17 @@ def check_ssh(private, boot_offset, kernel, root, tools, work):
                 break
             time.sleep(1)
         assert "ssh-ok" in login.stdout and "home" in login.stdout.split(), f"ssh login failed: {login.stderr}"
+        # An interactive login asks for a pseudo-terminal first. The client
+        # gets a terminal of its own, as when a person runs ssh.
+        console.command("grep devpts /proc/mounts")
+        local, remote = os.openpty()
+        try:
+            pty = subprocess.run([client, "-t", "root@127.0.0.1", "readlink /proc/self/fd/0"],
+                                 stdin=remote, capture_output=True, text=True, timeout=30)
+        finally:
+            os.close(local)
+            os.close(remote)
+        assert "/dev/pts/" in pty.stdout, f"ssh got no pseudo-terminal: {pty.stdout!r} {pty.stderr!r}"
         # QEMU has no WiFi adapter; gizlet-net still parses wifi.txt and reports.
         wifi_state = subprocess.run([client, "root@127.0.0.1",
                                      "while [ ! -f /run/gizlet-net.log ]; do sleep 1; done; cat /run/gizlet-net/wpa_supplicant.conf; "
