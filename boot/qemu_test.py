@@ -95,12 +95,17 @@ def scenarios(image, kernel_name, work):
         console.command("printf '%s\\n' '#!/bin/sh' 'echo hello-from-card' > /opt/gizlet/bin/hello && chmod 755 /opt/gizlet/bin/hello")
         console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini")
         console.command("echo persistent-user-file > /home/check")
+        console.command("while [ ! -e /run/gizlet-late.done ]; do sleep 1; done")
         console.stop()
     log = subprocess.run(["mtype", "-i", f"{private}@@{parts['boot'][1]}", "::gizlet.log"],
                          check=True, capture_output=True, text=True).stdout
     for marker in ("== Gizlet OS boot log", "== rcS", "data mounts ready", "rcS exit 0", "Linux version"):
         assert marker in log, f"gizlet.log lacks {marker!r}"
-    print("gizlet.log saved on the boot partition")
+    late = subprocess.run(["mtype", "-i", f"{private}@@{parts['boot'][1]}", "::gizlet-late.log"],
+                          check=True, capture_output=True, text=True).stdout
+    for marker in ("15 s after boot", "== usb devices", "== regulators", "== dmesg"):
+        assert marker in late, f"gizlet-late.log lacks {marker!r}"
+    print("gizlet.log and gizlet-late.log saved on the boot partition")
     with boot(private, kernel, root) as console:
         console.expect(b"starting /opt/gizlet/bin/hello")
         console.expect(b"\r\nhello-from-card\r\n")
