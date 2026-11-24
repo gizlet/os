@@ -1,0 +1,12 @@
+[Unit]
+Description=Start the services turned on in the launcher (Wi-Fi, ssh)
+After=gizlet-data.service
+Requires=gizlet-data.service
+ConditionPathExists=/run/gizlet-data.ready
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/gizlet/gizlet-switch boot
+
+[Install]
+WantedBy=multi-user.target

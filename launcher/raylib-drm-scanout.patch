@@ -1,0 +1,28 @@
+raylib's software renderer hands DRM packed RGBA rows of `width` pixels, but a
+KMS dumb buffer is XRGB8888 (BGRX bytes on little-endian machines) with a
+driver-chosen pitch. Convert each row in place, last row first, so widening the
+stride never overwrites pixels not yet read.
+
+--- a/src/platforms/rcore_drm.c
++++ b/src/platforms/rcore_drm.c
+@@ -891,9 +891,18 @@
+         return;
+     }
+ 
+-    // Copy the software rendered buffer to the dumb buffer with scaling if needed
+-    // NOTE: RLSW will make a simple copy if the dimensions match
++    // Copy the RGBA frame, then convert it to XRGB8888 rows of the buffer's pitch
+     swBlitPixels(0, 0, width, height, 0, 0, width, height, SW_RGBA, SW_UNSIGNED_BYTE, dumbBuffer);
++    for (uint32_t y = height; y-- > 0;)
++    {
++        const uint32_t *src = (const uint32_t *)dumbBuffer + (size_t)y*width;
++        uint32_t *dst = (uint32_t *)((uint8_t *)dumbBuffer + (size_t)y*creq.pitch);
++        for (uint32_t x = width; x-- > 0;)
++        {
++            uint32_t rgba = src[x];
++            dst[x] = ((rgba & 0x000000ffu) << 16) | (rgba & 0x0000ff00u) | ((rgba & 0x00ff0000u) >> 16);
++        }
++    }
+ 
+     // Unmap the buffer
+     munmap(dumbBuffer, creq.size);

@@ -102,11 +102,11 @@ def check_ssh(private, boot_offset, kernel, root, work):
     with boot(private, kernel, root, ssh_port=port) as console:
         console.expect(PROMPT)
         console.command("ip addr add 10.0.2.15/24 dev eth0 && ip link set eth0 up")
-        # sshd does not start at boot.
+        # sshd does not start at boot until the launcher turns it on.
         console.enter("systemctl is-active ssh")
         console.expect(b"\r\ninactive\r\n")
         console.expect(PROMPT)
-        console.command("systemctl start ssh")
+        console.command("/usr/lib/gizlet/gizlet-switch ssh on")
         deadline = time.monotonic() + 60
         while True:
             login = subprocess.run([client, "root@127.0.0.1", "ls /; echo ssh-ok"],
@@ -125,8 +125,8 @@ def check_ssh(private, boot_offset, kernel, root, work):
             os.close(local)
             os.close(remote)
         assert "/dev/pts/" in pty.stdout, f"ssh got no pseudo-terminal: {pty.stdout!r} {pty.stderr!r}"
-        # iwd is off at boot; the launcher starts it. It must stay up without a WiFi adapter.
-        iwd = subprocess.run([client, "root@127.0.0.1", "systemctl start iwd; sleep 3; systemctl is-active iwd; "
+        # iwd is off at boot; the launcher turns it on. It must stay up without a WiFi adapter.
+        iwd = subprocess.run([client, "root@127.0.0.1", "/usr/lib/gizlet/gizlet-switch wifi on; sleep 3; systemctl is-active iwd; "
                               "journalctl -b --no-pager -u iwd | tail -n 20"],
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60).stdout
         assert iwd.startswith("active\n"), f"iwd did not stay up: {iwd}"
@@ -139,8 +139,24 @@ def check_ssh(private, boot_offset, kernel, root, work):
                        stdin=subprocess.DEVNULL, check=True, timeout=30)
         assert back.read_bytes() == payload.read_bytes(), "scp round trip changed the file"
         console.command("rm /home/payload")
+        console.enter("/opt/gizlet/launcher/gizlet-launcher --probe")
+        console.expect(b"wifi: Ok(WifiState { on: true")
+        console.expect(b"ssh: Ok(SshState { on: true, running: true, keys: Some(1) })")
+        console.expect(PROMPT)
         console.stop()
-    print("sshd starts on demand; ssh login and scp in both directions work")
+    # Both switches survive a reboot, and turning them off stops the services.
+    with boot(private, kernel, root) as console:
+        console.expect(PROMPT)
+        # gizlet-switches.service starts them without holding up boot; wait for both.
+        console.enter("for i in $(seq 60); do systemctl -q is-active ssh && systemctl -q is-active iwd && break; sleep 1; done; systemctl is-active ssh iwd")
+        console.expect(b"\r\nactive\r\nactive\r\n")
+        console.expect(PROMPT)
+        console.command("/usr/lib/gizlet/gizlet-switch ssh off && /usr/lib/gizlet/gizlet-switch wifi off")
+        console.enter("systemctl is-active ssh iwd; /usr/lib/gizlet/gizlet-switch ssh")
+        console.expect(b"\r\ninactive\r\ninactive\r\noff\r\n")
+        console.expect(PROMPT)
+        console.stop()
+    print("The launcher's switches start sshd and iwd, also after a reboot; ssh login and scp in both directions work")
 
 
 def scenarios(image, kernel_name, work):
@@ -153,21 +169,32 @@ def scenarios(image, kernel_name, work):
     # A larger card than the image: first boot grows the data partition to its end.
     os.truncate(private, 1 << 30)
     with boot(private, kernel, root) as console:
-        # A fresh card starts the factory launcher; q on its console ends it.
+        # A fresh card starts the factory launcher. QEMU's machine has no
+        # display, so it says so and the recovery shell opens.
         console.expect(b"installed the factory launcher as the boot entry")
         console.expect(b"starting /opt/gizlet/launcher/gizlet-launcher")
-        console.expect(b"Gizlet launcher: button test")
-        console.expect(b"none found")
-        console.enter("q")
-        console.expect(b"Leaving the launcher.")
-        console.expect(b"boot entry finished with status 0")
+        console.expect(b"Gizlet launcher 0.")
+        console.expect(b"Gizlet launcher: no display")
+        console.expect(b"boot entry finished with status 1")
+        console.expect(PROMPT)
+        # Its device probe runs without a display: no battery, backlight, sound or WiFi adapter here.
+        console.enter("/opt/gizlet/launcher/gizlet-launcher --probe")
+        for line in (b"battery: Err(NoHardware)", b"brightness: Err(NoHardware)", b"volume: Err(NoHardware)",
+                     b"wifi: Ok(WifiState { on: false, adapter: false", b"ssh: Ok(SshState { on: false, running: false",
+                     b"power: [Reboot, PowerOff]"):
+            console.expect(line)
         console.expect(PROMPT)
         console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 600000 ] && echo data-grown")
         console.expect(b"\r\ndata-grown\r\n")
         console.expect(PROMPT)
         console.enter("cat /proc/mounts")
-        for mount in (b" / squashfs ro,", b" /opt/gizlet ext4 rw,", b" /home ext4 rw,"):
+        for mount in (b" / squashfs ro,", b" /opt/gizlet ext4 rw,", b" /home ext4 rw,", b" /opt/gizlet/runtime/1 squashfs ro,"):
             console.expect(mount)
+        console.expect(PROMPT)
+        # Gizlet runtime 1 renders with its own glibc and Mesa; QEMU has no GPU, so llvmpipe.
+        console.enter("/opt/gizlet/runtime/1/bin/gizlet-run /opt/gizlet/runtime/1/bin/gizlet-gl-info")
+        for line in (b"platform: surfaceless", b"renderer: llvmpipe", b"render: ok"):
+            console.expect(line)
         console.expect(PROMPT)
         console.command("mkdir /opt/gizlet/bin")
         console.command("printf '%s\\n' '#!/bin/sh' 'echo hello-from-card' > /opt/gizlet/bin/hello && chmod 755 /opt/gizlet/bin/hello")

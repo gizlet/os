@@ -9,6 +9,7 @@ under /usr/share/licenses.
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -41,10 +42,20 @@ def main():
     extract(image, *parts["data"][1:], data)
     run("e2fsck", "-nf", data)
     assert output("blkid", "-p", "-s", "UUID", "-o", "value", data).strip() == config["data_uuid"], "data UUID"
-    for directory in ("/gizlet", "/home"):
+    def names(directory):
+        return {line.split("/")[5] for line in output("debugfs", "-R", f"ls -p {directory}", data).splitlines() if line.count("/") >= 5}
+    # A fresh card holds only Gizlet runtime 1, a SquashFS file mounted at boot.
+    expected = {"/gizlet": {"runtime"}, "/gizlet/runtime": {"1.sqfs"}, "/home": set()}
+    for directory, entries in expected.items():
         assert "Type: directory" in output("debugfs", "-R", f"stat {directory}", data), directory
-        names = [line.split("/")[5] for line in output("debugfs", "-R", f"ls -p {directory}", data).splitlines() if line.count("/") >= 5]
-        assert set(names) <= {".", ".."}, f"{directory} is not empty: {names}"
+        assert names(directory) - {".", ".."} == entries, f"{directory} holds {sorted(names(directory))}"
+    runtime = work / "runtime-1.sqfs"
+    run("debugfs", "-R", f"dump /gizlet/runtime/1.sqfs {runtime}", data)
+    listing = output("unsquashfs", "-l", runtime)
+    for path in ("lib/ld-linux-aarch64.so.1", "lib/libEGL.so.1", "lib/libGLESv2.so.2", "lib/libgbm.so.1",
+                 "share/glvnd/egl_vendor.d/50_mesa.json", "bin/gizlet-run", "bin/gizlet-gl-info"):
+        assert f"squashfs-root/{path}\n" in listing, f"runtime 1 lacks {path}"
+    assert any("_dri.so" in line and "panfrost" in line for line in listing.splitlines()), "runtime 1 lacks Panfrost"
 
     squashfs = work / "root.sqfs"
     extract(image, *parts["root"][1:], squashfs)
@@ -55,9 +66,10 @@ def main():
     systemd = root / "etc/systemd/system"
     for wants in ("local-fs.target.wants/gizlet-var.service", "local-fs.target.wants/gizlet-data.service",
                   "multi-user.target.wants/gizlet-session.service", "multi-user.target.wants/gizlet-boot-log.service",
+                  "multi-user.target.wants/gizlet-switches.service",
                   "timers.target.wants/gizlet-late-log.timer"):
         assert (systemd / wants).is_symlink(), f"{wants} is enabled"
-    # WiFi and ssh are installed for the launcher to start, not started at boot.
+    # WiFi and ssh start at boot only when turned on in the launcher (gizlet-switch).
     for wants in ("multi-user.target.wants/ssh.service", "multi-user.target.wants/iwd.service"):
         assert not (systemd / wants).is_symlink(), f"{wants} starts at boot"
     assert (root / "usr/lib/systemd/system/ssh.service.d/gizlet.conf").is_file(), "ssh.service uses gizlet-ssh"
@@ -66,7 +78,7 @@ def main():
     # Each card creates its own identity at boot.
     assert not list((root / "etc/ssh").glob("ssh_host_*")), "the image carries ssh host keys"
     assert (root / "etc/machine-id").read_text() == "", "the image carries a machine ID"
-    for script in ("boot-session", "gizlet-boot-device", "gizlet-mount-data", "gizlet-ssh",
+    for script in ("boot-session", "gizlet-boot-device", "gizlet-mount-data", "gizlet-ssh", "gizlet-switch",
                    "gizlet-var", "save-boot-log", "gizlet-booter", "gizlet-launcher"):
         assert (root / "usr/lib/gizlet" / script).stat().st_mode & 0o111, f"/usr/lib/gizlet/{script} is executable"
     # First boot grows the data partition and its filesystem.
@@ -81,7 +93,13 @@ def main():
     assert (root / "usr/lib/gizlet/gizlet-booter").read_bytes() == booter.read_bytes(), "installed Booter differs from the build"
     for executable in ("usr/lib/gizlet/gizlet-booter", "usr/lib/gizlet/gizlet-launcher"):
         assert "AArch64" in output("readelf", "-h", root / executable), f"/{executable} is AArch64"
-        assert "INTERP" not in output("readelf", "-lW", root / executable), f"/{executable} requires a dynamic loader"
+    booter_path = "usr/lib/gizlet/gizlet-booter"
+    assert "INTERP" not in output("readelf", "-lW", root / booter_path), f"/{booter_path} requires a dynamic loader"
+    # The launcher links the base's glibc and libdrm; every library it needs is installed.
+    needed = re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", output("readelf", "-dW", root / "usr/lib/gizlet/gizlet-launcher"))
+    assert "libdrm.so.2" in needed, needed
+    for library in needed:
+        assert list(root.glob(f"usr/lib/aarch64-linux-gnu/{library}")), f"the base lacks {library} for the launcher"
     run("sha256sum", image, root / "usr/lib/gizlet/gizlet-booter")
     print("Root and data filesystems match the Gizlet OS layout")
 

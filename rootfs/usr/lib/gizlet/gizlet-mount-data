@@ -82,4 +82,11 @@ mount -o bind "$store/home" /home || { umount /opt/gizlet; umount "$store"; exit
 mkdir -p -m 0700 "$store/system/ssh" "$store/system/iwd"
 mkdir -p /var/lib/iwd
 mount -o bind "$store/system/iwd" /var/lib/iwd
+# Gizlet runtimes are read-only SquashFS images, each mounted beside its file:
+# runtime/1.sqfs at runtime/1. A runtime that fails to mount is left out.
+for image in /opt/gizlet/runtime/*.sqfs; do
+    [ -f "$image" ] || continue
+    mkdir -p "${image%.sqfs}"
+    mount -t squashfs -o ro,nodev,nosuid "$image" "${image%.sqfs}" || say "cannot mount ${image##*/}"
+done
 : > /run/gizlet-data.ready

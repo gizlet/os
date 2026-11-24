@@ -24,12 +24,12 @@ R36S_UBOOT_DTB_NAMES = [
 # Layout and boot chain, matching sdcard.cfg and the pinned ROCKNIX 20261101-a IDB.
 _R36S_LAYOUT = {
     "disk_signature": "36335030",
-    "size_mib": 400,
+    "size_mib": 464,
     # [boot flag, MBR type, first sector, sectors]
     "partitions": [
         [0x80, 0x0e, 32768, 131072],
         [0x00, 0x83, 163840, 524288],
-        [0x00, 0x83, 688128, 131072],
+        [0x00, 0x83, 688128, 262144],
     ],
     # LBA 64 through the last byte of the pinned miniloader.
     "idbloader": {"sha256": "2fc42ada721b84d8bd40a9a3486abde92d869a5124cad14789743205b1168384", "size": 176452},

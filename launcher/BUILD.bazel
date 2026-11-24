@@ -1,17 +1,25 @@
-load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
+load(":defs.bzl", "gizlet_launcher")
 
 package(default_visibility = ["//visibility:public"])
 
-# The Gizlet launcher. This first version is a button test; the card installs
-# it as the boot entry of a fresh data partition (see session/boot-session).
-debian_cc_binary(
+exports_files([
+    "Cargo.lock",
+    "build_card.sh",
+] + glob(["fonts/*.txt"]))
+
+# The Gizlet launcher for the card: home, settings and the button test. The
+# card installs it as the boot entry of a fresh data partition (see
+# rootfs/usr/lib/gizlet/boot-session). On a computer, `cargo run` in this
+# directory opens it in a window.
+gizlet_launcher(
     name = "gizlet-launcher",
-    srcs = ["main.c"],
-    copts = [
-        "-std=c11",
-        "-O2",
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-    ],
+    srcs = [
+        "Cargo.lock",
+        "Cargo.toml",
+        "build.rs",
+        "raylib-drm-scanout.patch",
+    ] + glob([
+        "fonts/**",
+        "src/**",
+    ]),
 )

@@ -11,6 +11,7 @@
   "iwd",
   "kmod",
   "less",
+  "libdrm2",
   "openssh-server",
   "procps",
   "systemd",

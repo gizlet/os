@@ -1,4 +1,4 @@
-"""Debian packages pinned by snapshot lock files: the build VM and the Gizlet OS base."""
+"""Debian packages pinned by snapshot lock files: the build VM, the Gizlet OS base and the Gizlet runtime."""
 
 _SNAPSHOT = "https://snapshot.debian.org/archive/debian/{snapshot}/{path}"
 
@@ -63,9 +63,10 @@ debian_packages = repository_rule(
 def _debian_impl(module_ctx):
     debian_packages(name = "debian_bookworm_arm64", bootstrap = True, lock = Label("//tools/bazel/debian:packages.lock.json"))
     debian_packages(name = "debian_trixie_arm64_base", lock = Label("//rootfs:packages.lock.json"))
+    debian_packages(name = "debian_trixie_arm64_runtime", lock = Label("//runtime:packages.lock.json"))
     return module_ctx.extension_metadata(reproducible = True)
 
 debian = module_extension(
     implementation = _debian_impl,
-    doc = "Provides the build VM's locked bookworm packages with its bootstrap root, and the Gizlet OS base's locked trixie packages.",
+    doc = "Provides the build VM's locked bookworm packages with its bootstrap root, and the locked trixie packages of the Gizlet OS base and the Gizlet runtime.",
 )

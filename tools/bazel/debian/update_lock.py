@@ -7,6 +7,8 @@ input and rewrites packages.lock.json beside it. The closure contains every
 Priority: required package and the Depends/Pre-Depends of the requested
 packages. Recommends are not followed. For alternatives and virtual packages
 the first resolvable choice in Debian's order wins unless `prefer` names one.
+`"required": false` leaves out the Priority: required packages, for a set of
+libraries that is not a bootable system.
 """
 
 import json
@@ -77,7 +79,9 @@ def main():
                 return next((p for p in candidates if p in selected), sorted(candidates)[0])
         raise SystemExit(f"Unresolvable dependency: {' | '.join(alternatives)}")
 
-    roots = [n for n, f in packages.items() if f.get("Priority") == "required" and n not in exclude]
+    roots = []
+    if spec.get("required", True):
+        roots = [n for n, f in packages.items() if f.get("Priority") == "required" and n not in exclude]
     roots += spec["packages"]
     selected, queue = set(), list(roots)
     while queue:

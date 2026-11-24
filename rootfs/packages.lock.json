@@ -366,6 +366,20 @@
    "version": "0.280"
   },
   {
+   "name": "libdrm-common",
+   "path": "pool/main/libd/libdrm/libdrm-common_2.4.124-2_all.deb",
+   "sha256": "9a8a6c65c165e9964f106fb4ac710959b5d33e0790227e3ab6b27c4742d1254a",
+   "size": 8288,
+   "version": "2.4.124-2"
+  },
+  {
+   "name": "libdrm2",
+   "path": "pool/main/libd/libdrm/libdrm2_2.4.124-2_arm64.deb",
+   "sha256": "b535506630bb6a9a616bc07caf3b29915f980d8c3437852fb96ea64fb1a8a3f8",
+   "size": 38304,
+   "version": "2.4.124-2"
+  },
+  {
    "name": "libedit2",
    "path": "pool/main/libe/libedit/libedit2_3.1-20250104-1_arm64.deb",
    "sha256": "496c31df89fac9cb7e98102fcc21daf887376dcd9914f6322c86dd5bd4360ff1",

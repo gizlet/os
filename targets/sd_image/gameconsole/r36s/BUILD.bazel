@@ -54,6 +54,7 @@ _CARD_FILES = {
     _BOARD + "Image": "Image",
     _BOARD + "r36s.dtb": "r36s.dtb",
     ":parts/rootfs.sqfs": "rootfs.sqfs",
+    "//runtime:gizlet-runtime-1": "gizlet-runtime-1.sqfs",
 } | {
     ":parts/" + dtb_name: dtb_name
     for dtb_name in R36S_UBOOT_DTB_NAMES

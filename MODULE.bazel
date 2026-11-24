@@ -19,9 +19,14 @@ register_toolchains("@rust_toolchains//:all")
 krun = use_extension("//tools/bazel/krun:repositories.bzl", "krun_repositories")
 use_repo(krun, "libkrun", "libkrunfw", "rust_std_aarch64_unknown_linux_musl")
 
+# The launcher's crates, vendored by checksum, and the build VM's Rust toolchain.
+cargo = use_extension("//tools/bazel/cargo:repositories.bzl", "cargo")
+use_repo(cargo, "launcher_crates", "rust_aarch64_linux")
+
 # Debian bookworm arm64 tools for the build VM, pinned by snapshot and SHA-256.
 debian = use_extension("//tools/bazel/debian:repositories.bzl", "debian")
-use_repo(debian, "debian_bookworm_arm64", "debian_trixie_arm64_base")
+use_repo(debian, "debian_bookworm_arm64", "debian_trixie_arm64_base", "debian_trixie_arm64_runtime")
+
 
 # Pinned upstream sources, one repository per upstream. Boards select from them.
 linux = use_extension("//third_party/linux:repositories.bzl", "linux")

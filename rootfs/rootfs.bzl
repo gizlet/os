@@ -25,8 +25,13 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/systemd/system/gizlet-late-log.timer": "usr/lib/systemd/system/gizlet-late-log.timer",
     "//rootfs:usr/lib/systemd/system/gizlet-session.service": "usr/lib/systemd/system/gizlet-session.service",
     "//rootfs:usr/lib/systemd/system/gizlet-ssh.service": "usr/lib/systemd/system/gizlet-ssh.service",
+    "//rootfs:usr/lib/systemd/system/gizlet-switches.service": "usr/lib/systemd/system/gizlet-switches.service",
     "//rootfs:usr/lib/systemd/system/gizlet-var.service": "usr/lib/systemd/system/gizlet-var.service",
     "//third_party/glibc:LGPL-2.1": "usr/share/licenses/glibc-LGPL-2.1",
+    # Fonts built into the launcher.
+    "//launcher:fonts/DroidSansFallback-LICENSE.txt": "usr/share/licenses/gizlet-launcher/DroidSansFallback-LICENSE.txt",
+    "//launcher:fonts/Inter-OFL.txt": "usr/share/licenses/gizlet-launcher/Inter-OFL.txt",
+    "//launcher:fonts/SpaceGrotesk-OFL.txt": "usr/share/licenses/gizlet-launcher/SpaceGrotesk-OFL.txt",
 }
 
 ROOTFS_EXECUTABLES = {
@@ -34,9 +39,10 @@ ROOTFS_EXECUTABLES = {
     "//rootfs:usr/lib/gizlet/gizlet-boot-device": "usr/lib/gizlet/gizlet-boot-device",
     "//rootfs:usr/lib/gizlet/gizlet-mount-data": "usr/lib/gizlet/gizlet-mount-data",
     "//rootfs:usr/lib/gizlet/gizlet-ssh": "usr/lib/gizlet/gizlet-ssh",
+    "//rootfs:usr/lib/gizlet/gizlet-switch": "usr/lib/gizlet/gizlet-switch",
     "//rootfs:usr/lib/gizlet/gizlet-var": "usr/lib/gizlet/gizlet-var",
     "//rootfs:usr/lib/gizlet/save-boot-log": "usr/lib/gizlet/save-boot-log",
-    # Static glibc programs from the build VM, covered by the glibc notice above.
+    # The launcher links glibc and libdrm from the base; the Booter is static.
     "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",
     "//session:booter": "usr/lib/gizlet/gizlet-booter",
 }
@@ -46,10 +52,12 @@ ROOTFS_ENABLE = [
     "gizlet-data.service",
     "gizlet-late-log.timer",
     "gizlet-session.service",
+    "gizlet-switches.service",
     "gizlet-var.service",
 ]
 
-# Installed for the launcher to start later, not at boot. Debian enables sshd.
+# Started by gizlet-switches.service when turned on in the launcher, not by
+# default. Debian enables sshd.
 ROOTFS_DISABLE = ["ssh.service"]
 
 # The session owns the console and the launcher the LCD, so no getty runs.
@@ -64,4 +72,9 @@ ROOTFS_MASK = [
 ]
 
 # Notices under /usr/share/licenses besides each Debian package's copyright file.
-ROOTFS_LICENSES = ["glibc-LGPL-2.1"]
+ROOTFS_LICENSES = [
+    "glibc-LGPL-2.1",
+    "gizlet-launcher/DroidSansFallback-LICENSE.txt",
+    "gizlet-launcher/Inter-OFL.txt",
+    "gizlet-launcher/SpaceGrotesk-OFL.txt",
+]

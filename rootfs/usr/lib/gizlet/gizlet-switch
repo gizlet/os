@@ -1,0 +1,40 @@
+#!/bin/sh
+# gizlet-switch wifi|ssh [on|off]: shows or changes a service the launcher
+# turns on and off: wifi is iwd, ssh is sshd. The read-only base cannot
+# enable units, so the choice is a file on the data partition, and
+# gizlet-switches.service starts what is on at boot (gizlet-switch boot).
+set -eu
+dir=/run/gizlet-data/system/switches
+usage() { echo 'usage: gizlet-switch wifi|ssh [on|off] | gizlet-switch boot' >&2; exit 2; }
+unit_of() {
+    case "$1" in
+        wifi) echo iwd.service ;;
+        ssh) echo ssh.service ;;
+        *) usage ;;
+    esac
+}
+
+if [ "${1:-}" = boot ]; then
+    for name in wifi ssh; do
+        [ -e "$dir/$name" ] && systemctl --no-block start "$(unit_of "$name")"
+    done
+    exit 0
+fi
+[ $# -ge 1 ] && [ $# -le 2 ] || usage
+unit=$(unit_of "$1")
+case "${2:-}" in
+    '') if [ -e "$dir/$1" ]; then echo on; else echo off; fi ;;
+    on)
+        [ -f /run/gizlet-data.ready ] || { echo 'gizlet-switch: the data partition is not mounted' >&2; exit 1; }
+        mkdir -p "$dir"
+        : > "$dir/$1"
+        sync
+        systemctl start "$unit"
+        ;;
+    off)
+        rm -f "$dir/$1"
+        sync
+        systemctl stop "$unit"
+        ;;
+    *) usage ;;
+esac
