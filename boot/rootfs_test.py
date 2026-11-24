@@ -53,16 +53,16 @@ def main():
     for link in ("sbin/init", "bin/sh", "bin/cttyhack"):
         assert (root / link).resolve() == busybox, f"/{link} is BusyBox"
     inittab = (root / "etc/inittab").read_text().splitlines()
-    for line in ("::sysinit:/etc/rcS", "::sysinit:/sbin/save-boot-log", "::respawn:/bin/cttyhack /sbin/boot-session", "tty1::askfirst:-/bin/sh"):
+    for line in ("::sysinit:/etc/rcS", "::sysinit:/sbin/debug-link", "::sysinit:/sbin/save-boot-log", "ttyGS0::respawn:-/bin/sh", "::respawn:/bin/cttyhack /sbin/boot-session", "tty1::askfirst:-/bin/sh"):
         assert line in inittab, line
-    for executable in ("etc/rcS", "sbin/boot-session", "sbin/save-boot-log", "sbin/gizlet-booter"):
+    for executable in ("etc/rcS", "sbin/boot-session", "sbin/save-boot-log", "sbin/debug-link", "sbin/gizlet-booter", "usr/sbin/dropbear", "usr/bin/scp"):
         assert (root / executable).stat().st_mode & 0o111, f"/{executable} is executable"
     for directory in ("opt/gizlet", "home"):
         assert (root / directory).is_dir(), f"/{directory}"
     for notice in config["licenses"]:
         assert (root / "usr/share/licenses" / notice).stat().st_size > 0, f"license notice {notice}"
     assert (root / "sbin/gizlet-booter").read_bytes() == booter.read_bytes(), "installed Booter differs from the build"
-    for executable in ("sbin/gizlet-booter", "bin/busybox"):
+    for executable in ("sbin/gizlet-booter", "bin/busybox", "usr/sbin/dropbear", "usr/bin/dropbearkey", "usr/bin/scp"):
         assert "AArch64" in output("readelf", "-h", root / executable), f"/{executable} is AArch64"
         assert "INTERP" not in output("readelf", "-lW", root / executable), f"/{executable} requires a dynamic loader"
     run("sha256sum", image, root / "bin/busybox", root / "sbin/gizlet-booter")

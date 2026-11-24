@@ -6,9 +6,14 @@
  */
 #include "rk3326-gameconsole-r36s.dts"
 
-/* The OTG port runs as a USB host powered from BOOST through OTG_SWITCH. */
+/*
+ * For now the OTG port is a USB device: a computer connected to it sees a
+ * serial console and a network link (g_cdc) for ssh until WiFi works. The port
+ * must not source VBUS while the computer powers it, so OTG_SWITCH stays off
+ * and the controller has no supply. It returns to host mode afterwards.
+ */
 &otg_switch {
-	regulator-boot-on;
+	/delete-property/ regulator-boot-on;
 };
 
 &u2phy_otg {
@@ -16,7 +21,8 @@
 };
 
 &usb20_otg {
-	dr_mode = "host";
+	dr_mode = "peripheral";
+	/delete-property/ vbus-supply;
 };
 
 /*

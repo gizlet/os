@@ -41,3 +41,6 @@ use_repo(rocknix, "rocknix")
 
 rocknix_joypad = use_extension("//third_party/rocknix-joypad:repositories.bzl", "rocknix_joypad")
 use_repo(rocknix_joypad, "rocknix_joypad")
+
+dropbear = use_extension("//third_party/dropbear:repositories.bzl", "dropbear")
+use_repo(dropbear, "dropbear")

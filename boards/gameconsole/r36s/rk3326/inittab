@@ -1,5 +1,7 @@
 ::sysinit:/etc/rcS
+::sysinit:/sbin/debug-link
 ::sysinit:/sbin/save-boot-log
+ttyGS0::respawn:-/bin/sh
 ::respawn:/bin/cttyhack /sbin/boot-session
 tty1::askfirst:-/bin/sh
 ::ctrlaltdel:/sbin/reboot

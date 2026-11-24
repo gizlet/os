@@ -1,0 +1,14 @@
+#!/bin/sh
+# Print the FAT boot partition (partition 1 of the disk that holds the root).
+root_device=
+while read -r id parent device fsroot target rest; do
+    if [ "$target" = / ]; then root_device=$device; break; fi
+done < /proc/self/mountinfo
+sysroot=$(readlink -f "/sys/dev/block/$root_device") || exit 1
+for sibling in "${sysroot%/*}"/*; do
+    if [ -f "$sibling/partition" ] && [ "$(cat "$sibling/partition")" = 1 ]; then
+        echo "/dev/${sibling##*/}"
+        exit 0
+    fi
+done
+exit 1

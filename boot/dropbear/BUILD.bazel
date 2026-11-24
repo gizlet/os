@@ -1,0 +1,34 @@
+load("//tools/bazel/debian:defs.bzl", "debian_configure_make")
+
+package(default_visibility = ["//visibility:public"])
+
+# Static Dropbear for the debug link. Clients use `scp -O`; there is no SFTP.
+debian_configure_make(
+    name = "dropbear",
+    archive = "@dropbear//:dropbear-2026.94.tar.bz2",
+    configure_args = [
+        "--enable-static",
+        "--disable-zlib",
+        "--disable-lastlog",
+        "--disable-utmp",
+        "--disable-utmpx",
+        "--disable-wtmp",
+        "--disable-wtmpx",
+        "--disable-pututline",
+        "--disable-pututxline",
+        "--disable-syslog",
+    ],
+    make_args = [
+        "PROGRAMS=dropbear dbclient dropbearkey scp",
+        "STATIC=1",
+    ],
+    outs = {
+        "dropbear": "dropbear-bin",
+        # The client is only for the QEMU test, which logs in over virtio-net.
+        "dbclient": "dbclient-bin",
+        "dropbearkey": "dropbearkey-bin",
+        "scp": "scp-bin",
+        "LICENSE": "LICENSE",
+    },
+    overlay_files = {"localoptions.h": "localoptions.h"},
+)

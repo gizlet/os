@@ -90,8 +90,7 @@ filegroup(
         _ROCKNIX_RK3326 + "035-dwc2-release-vbus-supply-on-role-switch.patch",
         _ROCKNIX_RK3326 + "036-px30-dmc-devfreq.patch",
         _ROCKNIX_RK3326 + "037-px30-dmc-pass-dram-settings-to-bl31.patch",
-        # 038-dwc2-no-pullup-on-id-change-without-gadget.patch is left out: it
-        # only concerns the gadget side, and it needs a dual-role DWC2 build.
+        _ROCKNIX_RK3326 + "038-dwc2-no-pullup-on-id-change-without-gadget.patch",
         _ROCKNIX_RK3326 + "039-drm-rockchip-vop-add-afbc-support-for-px30.patch",
     ],
 )

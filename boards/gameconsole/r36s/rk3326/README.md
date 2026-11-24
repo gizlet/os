@@ -46,4 +46,14 @@ sync
 exit
 ```
 
-The active kernel console owns the configured application session. On this board it is UART2, 1500000 8N1. The LCD's `tty1` offers a local shell on Enter. A missing or invalid `boot.ini`, a failed exec or an application return prints a diagnostic and opens the local `recovery#` shell. Exiting that shell retries the configuration. The base starts no network service. Treat these root consoles as trusted physical development access. [BusyBox init table](inittab) · [Boot session](../../../../boot/boot-session)
+The active kernel console owns the configured application session. On this board it is UART2, 1500000 8N1. The LCD's `tty1` offers a local shell on Enter. A missing or invalid `boot.ini`, a failed exec or an application return prints a diagnostic and opens the local `recovery#` shell. Exiting that shell retries the configuration. Treat these root consoles, and the debug link below, as trusted physical development access. [BusyBox init table](inittab) · [Boot session](../../../../boot/boot-session)
+
+## Debug link
+
+Until WiFi works, the OTG port is a USB device for development. A computer connected to it sees a serial console (`ttyGS0`, a root shell) and a CDC ECM network link. The handheld is `10.55.0.1` and leases `10.55.0.2` to the computer without a route or DNS, so the computer's other connections are unaffected. Dropbear listens on port 22 and accepts only the public keys in `authorized_keys` on the FAT boot partition; there are no passwords. Its host key is kept on the data partition. Dropbear has no SFTP server, so OpenSSH clients copy files with `scp -O`. The port does not supply VBUS in this mode, and USB peripherals need host mode, which returns once ssh runs over WiFi. [Debug link](../../../../boot/debug-link)
+
+```sh
+cp ~/.ssh/id_ed25519.pub /Volumes/GIZLETBOOT/authorized_keys
+ssh root@10.55.0.1
+scp -O file root@10.55.0.1:/home/
+```

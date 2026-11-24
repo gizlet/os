@@ -1,0 +1,35 @@
+#!/bin/sh
+# Debug access over the USB device port: the computer sees a serial console
+# (respawned by inittab on ttyGS0) and a network link. This script gives the
+# link 10.55.0.1, leases 10.55.0.2 to the computer and starts Dropbear.
+#
+# Logins use the public keys in authorized_keys on the FAT boot partition.
+# The host key is kept on the data partition when it is mounted.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+say() { echo "Gizlet OS: $*"; echo "debug-link: $*" >> /run/gizlet-boot.log; }
+
+ssh_dir=/run/gizlet-ssh
+mkdir -p -m 0700 "$ssh_dir"
+boot_dev=$(/sbin/gizlet-boot-device) && {
+    fat=/run/gizlet-bootfs-ro
+    mkdir -p "$fat"
+    if mount -t vfat -o ro,nodev,nosuid,noexec "$boot_dev" "$fat"; then
+        [ -f "$fat/authorized_keys" ] && cp "$fat/authorized_keys" "$ssh_dir/authorized_keys"
+        umount "$fat"
+    fi
+}
+[ -f "$ssh_dir/authorized_keys" ] && chmod 0600 "$ssh_dir/authorized_keys" || say 'no authorized_keys on the boot partition; ssh logins are refused'
+
+key_dir=/run/gizlet-ssh
+[ -f /run/gizlet-data.ready ] && key_dir=/run/gizlet-data/ssh && mkdir -p -m 0700 "$key_dir"
+key=$key_dir/dropbear_ed25519_host_key
+[ -f "$key" ] || dropbearkey -t ed25519 -f "$key" >/dev/null 2>&1 || say 'cannot create the ssh host key'
+dropbear -r "$key" -D "$ssh_dir" -p 22 -P /run/dropbear.pid && say 'dropbear listening on port 22'
+
+if ip link show usb0 >/dev/null 2>&1; then
+    ip addr add 10.55.0.1/24 dev usb0 && ip link set usb0 up && say 'usb0 at 10.55.0.1'
+    udhcpd /etc/udhcpd.conf
+else
+    say 'usb0 missing, no USB network link'
+fi
+exit 0

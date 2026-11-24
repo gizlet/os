@@ -5,7 +5,14 @@ exports_files([
     "card.py",
     "qemu_test.py",
     "rootfs_test.py",
+    "debug-link",
+    "gizlet-boot-device",
+    "group",
+    "nsswitch.conf",
+    "passwd",
     "save-boot-log",
+    "shells",
+    "udhcpd.conf",
 ])
 
 # Built with the build VM's Debian GCC as a static AArch64 glibc executable,

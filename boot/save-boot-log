@@ -3,18 +3,7 @@
 # system disk) as gizlet.log, so a card can be diagnosed on any computer
 # without a serial cable. Failure here never stops the boot.
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
-root_device=
-while read -r id parent device fsroot target rest; do
-    if [ "$target" = / ]; then root_device=$device; break; fi
-done < /proc/self/mountinfo
-sysroot=$(readlink -f "/sys/dev/block/$root_device") || exit 0
-boot_dev=
-for sibling in "${sysroot%/*}"/*; do
-    if [ -f "$sibling/partition" ] && [ "$(cat "$sibling/partition")" = 1 ]; then
-        boot_dev=/dev/${sibling##*/}
-        break
-    fi
-done
+boot_dev=$(/sbin/gizlet-boot-device)
 [ -b "$boot_dev" ] || { echo 'Gizlet OS: boot partition missing, no gizlet.log'; exit 0; }
 dir=/run/gizlet-bootfs
 mkdir -p "$dir"
@@ -58,14 +47,15 @@ late_state() {
     for r in /sys/class/regulator/regulator.*; do
         echo "$(cat "$r/name"): state=$(cat "$r/state" 2>/dev/null) uV=$(cat "$r/microvolts" 2>/dev/null) users=$(cat "$r/num_users" 2>/dev/null)"
     done
-    if mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || [ -d /sys/kernel/debug/usb ]; then
+    echo '== usb device port'
+    for f in /sys/class/udc/*/state /sys/class/udc/*/current_speed; do
+        [ -e "$f" ] && echo "$f: $(cat "$f")"
+    done
+    ip addr 2>&1
+    cat /run/udhcpd.leases 2>/dev/null | hexdump -C | head -4
+    if mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || [ -d /sys/kernel/debug/regulator ]; then
         echo '== regulator summary'
         cat /sys/kernel/debug/regulator/regulator_summary 2>/dev/null
-        for f in /sys/kernel/debug/usb/ff300000.usb/state /sys/kernel/debug/usb/ff300000.usb/params /sys/kernel/debug/usb/ff300000.usb/hw_params /sys/kernel/debug/usb/ff300000.usb/dr_mode /sys/kernel/debug/usb/ff300000.usb/regdump; do
-            [ -e "$f" ] && { echo "== $f"; cat "$f"; }
-        done
-        echo '== /sys/kernel/debug/usb/devices'
-        cat /sys/kernel/debug/usb/devices 2>/dev/null
     fi
     echo '== dmesg'
     dmesg

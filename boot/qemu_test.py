@@ -1,9 +1,10 @@
 """Boot a Gizlet OS card image on QEMU virt and exercise installation and recovery.
 
-Usage: qemu_test.py IMAGE KERNEL_NAME
+Usage: qemu_test.py IMAGE KERNEL_NAME DBCLIENT DROPBEARKEY SCP
 
 KERNEL_NAME is the kernel file on the card's boot partition. The kernel boots
-the card's SquashFS partition, which the test finds through the MBR.
+the card's SquashFS partition, which the test finds through the MBR. The
+Dropbear tools log in to the guest's sshd over a forwarded virtio-net port.
 """
 
 from contextlib import contextmanager
@@ -12,6 +13,7 @@ import os
 from pathlib import Path
 import selectors
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -59,10 +61,14 @@ class Console:
 
 
 @contextmanager
-def boot(disk, kernel, root, other=None):
+def boot(disk, kernel, root, other=None, ssh_port=None):
     args = ["qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a35", "-m", "512",
-            "-display", "none", "-monitor", "none", "-serial", "stdio", "-nic", "none", "-no-reboot",
+            "-display", "none", "-monitor", "none", "-serial", "stdio", "-no-reboot",
             "-kernel", str(kernel), "-append", f"console=ttyAMA0 root={root} rootfstype=squashfs rootwait ro"]
+    if ssh_port is None:
+        args += ["-nic", "none"]
+    else:
+        args += ["-netdev", f"user,id=n0,hostfwd=tcp:127.0.0.1:{ssh_port}-:22", "-device", "virtio-net-device,netdev=n0"]
     for index, drive in enumerate([disk] if other is None else [disk, other]):
         args += ["-drive", f"if=none,id=d{index},format=raw,file={str(drive).replace(',', ',,')}",
                  "-device", f"virtio-blk-device,drive=d{index}"]
@@ -77,7 +83,51 @@ def boot(disk, kernel, root, other=None):
                 guest.wait()
 
 
-def scenarios(image, kernel_name, work):
+def free_port():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def check_ssh(private, boot_offset, kernel, root, tools, work):
+    """Logs in with a key from authorized_keys on the boot partition, runs ls and copies a file both ways."""
+    dbclient, dropbearkey, scp = tools
+    key = work / "client_key"
+    subprocess.run([dropbearkey, "-t", "ed25519", "-f", key], check=True, capture_output=True)
+    public = subprocess.run([dropbearkey, "-y", "-f", key], check=True, capture_output=True, text=True).stdout
+    keys = work / "authorized_keys"
+    keys.write_text("".join(line + "\n" for line in public.splitlines() if line.startswith("ssh-ed25519 ")))
+    subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", keys, "::authorized_keys"], check=True)
+    port = free_port()
+    client = work / "ssh"
+    client.write_text(f'#!/bin/sh\nexec "{dbclient}" -y -y -i "{key}" -p {port} "$@"\n')
+    client.chmod(0o755)
+    with boot(private, kernel, root, ssh_port=port) as console:
+        console.expect(b"dropbear listening on port 22")
+        console.expect(PROMPT)
+        console.command("ip addr add 10.0.2.15/24 dev eth0 && ip link set eth0 up")
+        deadline = time.monotonic() + 30
+        while True:
+            login = subprocess.run([client, "root@127.0.0.1", "ls /; echo ssh-ok"],
+                                   stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+            if "ssh-ok" in login.stdout or time.monotonic() > deadline:
+                break
+            time.sleep(1)
+        assert "ssh-ok" in login.stdout and "home" in login.stdout.split(), f"ssh login failed: {login.stderr}"
+        payload = work / "payload"
+        payload.write_bytes(os.urandom(65536))
+        subprocess.run([scp, "-S", client, payload, "root@127.0.0.1:/home/payload"],
+                       stdin=subprocess.DEVNULL, check=True, timeout=30)
+        back = work / "back"
+        subprocess.run([scp, "-S", client, "root@127.0.0.1:/home/payload", back],
+                       stdin=subprocess.DEVNULL, check=True, timeout=30)
+        assert back.read_bytes() == payload.read_bytes(), "scp round trip changed the file"
+        console.command("rm /home/payload")
+        console.stop()
+    print("ssh login and scp in both directions work")
+
+
+def scenarios(image, kernel_name, work, tools):
     parts, signature = card.partitions(image)
     root = f"PARTUUID={signature:08x}-{parts['root'][0]:02x}"
     kernel = work / "kernel"
@@ -137,6 +187,7 @@ def scenarios(image, kernel_name, work):
         console.expect(b"\r\npersistent-user-file\r\n")
         console.expect(PROMPT)
         console.stop()
+    check_ssh(private, parts["boot"][1], kernel, root, tools, work)
     # A card missing its data partition must not pick a valid data volume on another disk.
     # The second disk is the real, populated data partition as a standalone virtual disk.
     index, offset, size = parts["data"]
@@ -158,4 +209,5 @@ def scenarios(image, kernel_name, work):
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(dir=os.environ.get("TEST_TMPDIR")) as temp:
-        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], Path(temp))
+        tools = [Path(tool).resolve() for tool in sys.argv[3:6]]
+        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], Path(temp), tools)
