@@ -20,9 +20,20 @@ if [ -f /run/gizlet-data.ready ] && [ ! -e /opt/gizlet/boot.ini ] && [ -x "$fact
 fi
 if [ -f /run/gizlet-data.ready ]; then
     # script keeps the entry on the console through a pty and copies what it
-    # prints to /run/gizlet-session.log, which gizlet-late.log includes.
-    script -q -f -e -a -c /usr/lib/gizlet/gizlet-booter /run/gizlet-session.log
+    # prints to /run/gizlet-session.log, which gizlet-late.log includes. Only
+    # the first 256 KiB of each run is kept, as a diagnostic of how the entry
+    # started: an app that logs for hours must not fill /run. The rest of the
+    # copy is read and dropped, so script never blocks on it.
+    log=/run/gizlet-session.log
+    fifo=/run/gizlet-session.fifo
+    rm -f "$fifo"
+    mkfifo -m 0600 "$fifo"
+    { head -c 262144 > "$log"; cat > /dev/null; } < "$fifo" &
+    keeper=$!
+    script -q -f -e -c /usr/lib/gizlet/gizlet-booter "$fifo"
     status=$?
+    wait "$keeper" || :
+    rm -f "$fifo"
     printf 'Gizlet OS: boot entry finished with status %d\n' "$status" | tee -a /run/gizlet-session.log
 else
     echo 'Gizlet OS: data mounts unavailable'
