@@ -1,0 +1,129 @@
+name: Build
+
+# Pull requests reach this workflow through triage.yml (branches in this
+# repository) or a writer's `/test` comment. Both run this file from main and
+# report the required `Bazel build and test (R36S)` check on the PR head.
+# Do not add a pull_request trigger: the PR could then rewrite its own check.
+
+on:
+  push:
+    branches: [main]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Pull request to build; leave empty to build the selected branch.
+        required: false
+        default: ''
+        type: string
+      head_sha:
+        description: Expected pull-request head, set by automatic triggers.
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  start:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.pull_request_number != '')
+      || (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/test'))
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: write
+    uses: gizlet/.github/.github/workflows/pr-check-start.yml@latest
+    with:
+      check-name: Bazel build and test (R36S)
+      command: /test
+      pull_request_number: ${{ inputs.pull_request_number }}
+      head_sha: ${{ inputs.head_sha }}
+
+  r36s:
+    name: Bazel (R36S)
+    needs: start
+    if: >-
+      !cancelled() && (
+        needs.start.outputs.run == 'true'
+        || (needs.start.result == 'skipped' && github.event_name != 'issue_comment'))
+    # Compilation runs on the self-hosted ARM64 Linux runner named by the
+    # BUILD_RUNNER repository variable (the ARC scale set name), falling back to
+    # GitHub's ARM64 runner. Triggers, checks, and Codex review stay on
+    # GitHub-hosted runners in the shared workflows.
+    runs-on: ${{ vars.BUILD_RUNNER || 'ubuntu-24.04-arm' }}
+    timeout-minutes: 120
+    # The job builds pull-request code: read-only token and no secrets.
+    permissions:
+      contents: read
+    concurrency:
+      group: build-${{ needs.start.outputs.number || github.ref }}
+      cancel-in-progress: ${{ needs.start.outputs.number != '' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.start.outputs.head_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install build and verification tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev pkg-config xz-utils bzip2 patch \
+            device-tree-compiler genimage dosfstools mtools squashfs-tools e2fsprogs faketime fdisk \
+            u-boot-tools python3 qemu-system-arm
+
+      # GitHub-hosted runs use the Actions cache; only main writes it, so
+      # pull-request builds only restore. Self-hosted runs keep Bazel caches on
+      # the runner's persistent BAZEL_CACHE_DIR volume instead.
+      - uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
+        with:
+          bazelisk-cache: ${{ runner.environment == 'github-hosted' }}
+          repository-cache: ${{ runner.environment == 'github-hosted' }}
+          disk-cache: ${{ runner.environment == 'github-hosted' && github.workflow || 'false' }}
+          cache-save: ${{ runner.environment == 'github-hosted' && github.event_name == 'push' }}
+
+      - name: Select persistent Bazel caches
+        env:
+          BAZEL_CACHE_DIR: ${{ vars.BAZEL_CACHE_DIR }}
+        if: runner.environment == 'self-hosted' && vars.BAZEL_CACHE_DIR != ''
+        run: |
+          set -eu
+          mkdir -p "$BAZEL_CACHE_DIR/disk" "$BAZEL_CACHE_DIR/repository"
+          {
+            printf 'common --disk_cache="%s/disk"\n' "$BAZEL_CACHE_DIR"
+            printf 'common --repository_cache="%s/repository"\n' "$BAZEL_CACHE_DIR"
+          } >> "$HOME/.bazelrc"
+
+      - name: Build the system card image
+        run: bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-panel0
+
+      - name: Test the image and boot it in QEMU
+        run: >-
+          bazel test --config=r36s --test_output=errors
+          //targets/sd_image/gameconsole/r36s:image_test
+          //targets/sd_image/gameconsole/r36s:boot_test
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bazel-testlogs
+          path: bazel-testlogs/targets/sd_image/gameconsole/r36s/*/test.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  finish:
+    needs: [start, r36s]
+    if: always() && needs.start.outputs.run == 'true'
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: write
+    uses: gizlet/.github/.github/workflows/pr-check-finish.yml@latest
+    with:
+      check_run_id: ${{ needs.start.outputs.check_run_id }}
+      comment_id: ${{ needs.start.outputs.comment_id }}
+      result: ${{ needs.r36s.result }}

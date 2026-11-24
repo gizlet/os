@@ -17,6 +17,11 @@ The unprivileged build writes `bazel-bin/targets/sd_image/gameconsole/r36s/gizle
 
 The board guide covers the storage contract, local recovery and application setup. Keep the original TF1 and back up an existing data partition before writing a full image. A whole-card write replaces all three partitions. Qualification of DDR, TF1, Panel 0, UART and physical controls requires a matching handheld. [R36S guide](boards/gameconsole/r36s/rk3326/README.md) · [Sources and licensing](third_party/r36s/README.md)
 
-## Code review
+## CI and code review
 
-Pull requests to `main` must pass the `Codex Code Review` check. A user with write access starts a review by commenting `@codex review` on its own line; every new push needs a new request. The workflow is `.github/workflows/codex-review.yml` and uses the shared [Gizlet reviewer](https://github.com/gizlet/github-workflows#codex-code-review).
+Pull requests to `main` must pass two checks. For every push to a pull request whose branch is in this repository, `.github/workflows/triage.yml` starts both. Fork pull requests start neither automatically and are never built.
+
+- `Bazel build and test (R36S)` runs the build and both tests above (`.github/workflows/build.yml`). Compilation runs on the self-hosted ARM64 Linux runner named by the `BUILD_RUNNER` repository variable, with Bazel caches in `BAZEL_CACHE_DIR` on that runner; without the variable it falls back to GitHub's Ubuntu 24.04 ARM64 runner. Triggers, checks and Codex review run on GitHub-hosted runners. A user with write access can rerun it by commenting `/test`.
+- `Codex Code Review` reviews the diff (`.github/workflows/codex-review.yml`). A user with write access can rerun it by commenting `/codex-review`.
+
+Both workflows run from `main` and use the shared [Gizlet workflows](https://github.com/gizlet/.github). Pushes to `main` build directly and refresh the Bazel caches.
