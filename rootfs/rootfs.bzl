@@ -19,6 +19,7 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/systemd/system/ssh.service.d/gizlet.conf": "usr/lib/systemd/system/ssh.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/journald.conf.d/gizlet.conf": "usr/lib/systemd/journald.conf.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system.conf.d/gizlet.conf": "usr/lib/systemd/system.conf.d/gizlet.conf",
+    "//rootfs:usr/lib/systemd/system/gizlet-audio-jack.service": "usr/lib/systemd/system/gizlet-audio-jack.service",
     "//rootfs:usr/lib/systemd/system/gizlet-boot-log.service": "usr/lib/systemd/system/gizlet-boot-log.service",
     "//rootfs:usr/lib/systemd/system/gizlet-data.service": "usr/lib/systemd/system/gizlet-data.service",
     "//rootfs:usr/lib/systemd/system/gizlet-late-log.service": "usr/lib/systemd/system/gizlet-late-log.service",
@@ -49,9 +50,12 @@ ROOTFS_EXECUTABLES = {
     "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",
     "//launcher:start.sh": "usr/lib/gizlet/gizlet-launcher-start",
     "//session:booter": "usr/lib/gizlet/gizlet-booter",
+    # Follows the headphone jack; static, like the Booter.
+    "//audio:audio-jack": "usr/lib/gizlet/gizlet-audio-jack",
 }
 
 ROOTFS_ENABLE = [
+    "gizlet-audio-jack.service",
     "gizlet-boot-log.service",
     "gizlet-data.service",
     "gizlet-late-log.timer",
