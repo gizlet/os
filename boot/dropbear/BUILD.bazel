@@ -1,34 +1,30 @@
-load("//tools/bazel/debian:defs.bzl", "debian_configure_make")
+load("//tools/bazel/debian:defs.bzl", "debian_build")
 
 package(default_visibility = ["//visibility:public"])
 
-# Static Dropbear for the debug link. Clients use `scp -O`; there is no SFTP.
-debian_configure_make(
+# Static Dropbear sshd for ssh over WiFi. Clients use `scp -O`; there is no
+# SFTP. dbclient is only for the QEMU test, which logs in over virtio-net.
+debian_build(
     name = "dropbear",
-    archive = "@dropbear//:dropbear-2026.94.tar.bz2",
-    configure_args = [
-        "--enable-static",
-        "--disable-zlib",
-        "--disable-lastlog",
-        "--disable-utmp",
-        "--disable-utmpx",
-        "--disable-wtmp",
-        "--disable-wtmpx",
-        "--disable-pututline",
-        "--disable-pututxline",
-        "--disable-syslog",
-    ],
-    make_args = [
-        "PROGRAMS=dropbear dbclient dropbearkey scp",
-        "STATIC=1",
-    ],
-    outs = {
-        "dropbear": "dropbear-bin",
-        # The client is only for the QEMU test, which logs in over virtio-net.
-        "dbclient": "dbclient-bin",
-        "dropbearkey": "dropbearkey-bin",
-        "scp": "scp-bin",
-        "LICENSE": "LICENSE",
+    srcs = {
+        "@dropbear//:dropbear-2026.94.tar.bz2": "dropbear.tar.bz2",
+        ":localoptions.h": "localoptions.h",
     },
-    overlay_files = {"localoptions.h": "localoptions.h"},
+    cmd = """
+mkdir src
+tar -xf /in/src/dropbear.tar.bz2 -C src --strip-components=1
+cp /in/src/localoptions.h src/
+cd src
+./configure --enable-static --disable-zlib --disable-lastlog --disable-utmp \\
+    --disable-utmpx --disable-wtmp --disable-wtmpx --disable-pututline \\
+    --disable-pututxline --disable-syslog >/dev/null
+make -j4 PROGRAMS="dropbear dbclient dropbearkey scp" STATIC=1
+""",
+    outs = {
+        "src/dropbear": "dropbear-bin",
+        "src/dbclient": "dbclient-bin",
+        "src/dropbearkey": "dropbearkey-bin",
+        "src/scp": "scp-bin",
+        "src/LICENSE": "LICENSE",
+    },
 )

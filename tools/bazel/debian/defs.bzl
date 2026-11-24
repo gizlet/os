@@ -71,75 +71,8 @@ debian_cc_binary = rule(
     },
 )
 
-def _sh_quote(value):
-    return "'" + value.replace("'", "'\\''") + "'"
-
-def _debian_configure_make_impl(ctx):
-    outputs = []
-    copies = []
-    out_root = ctx.bin_dir.path + "/" + ctx.label.package + "/"
-    for source, out in zip(ctx.attr.built_paths, ctx.outputs.outs):
-        outputs.append(out)
-        copies.append('cp \"%s\" \"/out/%s\"' % (source, out.path.removeprefix(out_root)))
-    inputs = {ctx.file.archive: "src.archive"}
-    for target, name in ctx.attr.overlay_files.items():
-        files = target.files.to_list()
-        if len(files) != 1:
-            fail("%s must provide exactly one file for %s" % (target.label, name))
-        inputs[files[0]] = "overlay/" + name
-    script = "\n".join([
-        "set -eu",
-        "mkdir /tmp/src && tar -xf /in/src.archive -C /tmp/src --strip-components=1",
-        "if [ -d /in/overlay ]; then cp -R /in/overlay/. /tmp/src/; fi",
-        "cd /tmp/src",
-        "./configure \"$@\"",
-        "make -j4 " + " ".join([_sh_quote(arg) for arg in ctx.attr.make_args]),
-    ] + copies)
-    krun_action(
-        ctx,
-        root_disk = ctx.file._rootfs,
-        inputs = inputs,
-        outputs = outputs,
-        command = ["/bin/sh", "-c", script, "configure"] + ctx.attr.configure_args,
-        env = {"LC_ALL": "C", "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch), "TZ": "UTC"},
-        cpus = 4,
-        mem = 2048,
-        mnemonic = "DebianConfigureMake",
-        progress_message = "Building %{label} in the build VM",
-    )
-    return [DefaultInfo(files = depset(outputs))]
-
-_debian_configure_make = rule(
-    implementation = _debian_configure_make_impl,
-    doc = """Builds an autotools source archive with the build VM's Debian toolchain.
-
-The archive is unpacked in /tmp/src, `overlay_files` are copied into the tree,
-then `./configure` and `make` run. `outs` maps built paths in the tree to
-declared outputs.
-""",
-    attrs = KRUN_ATTRS | {
-        "archive": attr.label(mandatory = True, allow_single_file = True),
-        "configure_args": attr.string_list(),
-        "make_args": attr.string_list(),
-        "overlay_files": attr.label_keyed_string_dict(allow_files = True, doc = "Files copied into the source tree at the given relative paths."),
-        "built_paths": attr.string_list(mandatory = True),
-        "outs": attr.output_list(mandatory = True),
-        "source_date_epoch": attr.int(default = 1704067200),
-        "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
-    },
-)
-
-def debian_configure_make(name, outs, **kwargs):
-    """`outs` maps paths in the built tree to output file names, which become targets."""
-    _debian_configure_make(
-        name = name,
-        built_paths = list(outs.keys()),
-        outs = list(outs.values()),
-        **kwargs
-    )
-
-def _debian_script_build_impl(ctx):
-    inputs = {ctx.file.script: "build.sh"}
+def _debian_build_impl(ctx):
+    inputs = {}
     for target, name in ctx.attr.srcs.items():
         files = target.files.to_list()
         if len(files) != 1:
@@ -152,39 +85,38 @@ def _debian_script_build_impl(ctx):
         root_disk = ctx.file._rootfs,
         inputs = inputs,
         outputs = ctx.outputs.outs,
-        command = ["/bin/sh", "-c", "\n".join(["set -eu", "mkdir /tmp/build && cd /tmp/build", "sh /in/build.sh"] + copies)],
+        command = ["/bin/sh", "-c", "\n".join(["set -eu", "mkdir /tmp/build && cd /tmp/build", "(", ctx.attr.cmd, ")"] + copies)],
         env = {"LC_ALL": "C", "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch), "TZ": "UTC"},
         cpus = 4,
         mem = 2048,
-        mnemonic = "DebianScriptBuild",
+        mnemonic = "DebianBuild",
         progress_message = "Building %{label} in the build VM",
     )
     return [DefaultInfo(files = depset(ctx.outputs.outs))]
 
-_debian_script_build = rule(
-    implementation = _debian_script_build_impl,
+_debian_build = rule(
+    implementation = _debian_build_impl,
     attrs = KRUN_ATTRS | {
         "built_paths": attr.string_list(mandatory = True),
+        "cmd": attr.string(mandatory = True),
         "outs": attr.output_list(mandatory = True),
-        "script": attr.label(mandatory = True, allow_single_file = True),
         "source_date_epoch": attr.int(default = 1704067200),
         "srcs": attr.label_keyed_string_dict(allow_files = True),
         "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
     },
 )
 
-def debian_script_build(name, script, srcs, outs, **kwargs):
-    """Runs `script` with sh in an empty /tmp/build in the build VM.
+def debian_build(name, srcs, cmd, outs, **kwargs):
+    """Runs the shell commands `cmd` (set -eu) in an empty /tmp/build in the build VM.
 
     Each `srcs` label is available as /in/src/<name>. `outs` maps paths relative
-    to /tmp/build after the script to output file names, which become targets.
+    to /tmp/build after `cmd` to output file names, which become targets.
     """
-    _debian_script_build(
+    _debian_build(
         name = name,
-        script = script,
         srcs = srcs,
+        cmd = cmd,
         built_paths = list(outs.keys()),
         outs = list(outs.values()),
         **kwargs
     )
-

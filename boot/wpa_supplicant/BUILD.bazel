@@ -1,18 +1,33 @@
-load("//tools/bazel/debian:defs.bzl", "debian_script_build")
+load("//tools/bazel/debian:defs.bzl", "debian_build")
 
 package(default_visibility = ["//visibility:public"])
 
 # Static wpa_supplicant and wpa_cli for WPA2/WPA3 personal networks, linked
 # with a static libnl built from source (Debian ships libnl only as shared
 # libraries) and the build VM's static OpenSSL.
-debian_script_build(
+debian_build(
     name = "wpa_supplicant",
     srcs = {
         "@hostap//:wpa_supplicant-2.12.tar.gz": "wpa_supplicant.tar.gz",
         "@libnl//:libnl-3.12.0.tar.gz": "libnl.tar.gz",
         ":wpa_supplicant.config": "wpa_supplicant.config",
     },
-    script = "build.sh",
+    # drivers.mak lists -lnl-3 before -lnl-genl-3; a static link needs it again after.
+    cmd = """
+top=$PWD
+mkdir libnl wpa
+tar -xf /in/src/libnl.tar.gz -C libnl --strip-components=1
+tar -xf /in/src/wpa_supplicant.tar.gz -C wpa --strip-components=1
+cd libnl
+./configure --prefix="$top/sysroot" --disable-shared --enable-static --disable-cli --disable-debug >/dev/null
+make -j4 >/dev/null
+make install >/dev/null
+cd "$top/wpa/wpa_supplicant"
+cp /in/src/wpa_supplicant.config .config
+make -j4 LIBNL_INC="$top/sysroot/include/libnl3" LDFLAGS="-static -L$top/sysroot/lib" \\
+    EXTRALIBS="-lnl-3 -lpthread -lm" wpa_supplicant wpa_cli
+strip wpa_supplicant wpa_cli
+""",
     outs = {
         "wpa/wpa_supplicant/wpa_supplicant": "wpa_supplicant-bin",
         "wpa/wpa_supplicant/wpa_cli": "wpa_cli-bin",

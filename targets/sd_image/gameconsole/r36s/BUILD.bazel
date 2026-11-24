@@ -1,10 +1,10 @@
-load("//boards/gameconsole/r36s/rk3326:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_PANELS", "R36S_UBOOT_DTB_NAMES")
+load("//boards/gameconsole/r36s:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_PANELS", "R36S_UBOOT_DTB_NAMES")
 load("//boot:defs.bzl", "gizlet_qemu_test", "gizlet_rootfs_test")
 load("//tools/bazel/rockchip:defs.bzl", "busybox_squashfs", "rockchip_card_test", "rockchip_legacy_uboot", "rockchip_linux_kernel", "rockchip_sd_image")
 
 package(default_visibility = ["//visibility:public"])
 
-_BOARD = "//boards/gameconsole/r36s/rk3326:"
+_BOARD = "//boards/gameconsole/r36s:"
 
 _EPOCH = 1704067200
 
