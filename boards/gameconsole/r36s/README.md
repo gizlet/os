@@ -2,6 +2,22 @@
 
 This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts`, which describes the R36S with its original ST7703 panel. [Board tree](kernel/gizlet-r36s.dts) [Board and display reference](https://github.com/southoz/dArkOSRE-R36/tree/3f372c85aa53a26b265c3dc0c2661ec0fae5faf0/files/BOOT/dtb/r36s/R36S-V12%202023-08-18%20Panel%200)
 
+## Writing a card
+
+The writers ask for a language (English or 中文), the panel and the card's disk, download the matching `.img.gz` from the latest release, check it against `SHA256SUMS` and write the whole card. They list every external disk and flag those over 256 GB, then erase only after three confirmations: the disk's number, `y`, and the disk's name typed out. Everything on the card is lost; keep the stock card as a backup. The first boot grows the data partition to the end of the card. [macOS and Linux](flash.sh) · [Windows](flash.ps1)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.sh | bash
+```
+
+In PowerShell opened as Administrator:
+
+```powershell
+irm https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.ps1 | iex
+```
+
+`flash.sh --image FILE` writes a local `.img` or `.img.gz`, such as one from `bazel build --config=r36s //targets/sd_image/gameconsole/r36s:release`; `GIZLET_IMAGE` does the same for `flash.ps1`.
+
 ## Display variants
 
 R36S units ship with different LCD panels. As in ROCKNIX, the device tree describes the original ST7703 panel and `boot.scr` applies `mipi-panel.dtbo` from the FAT boot partition when it is present. Each card carries the known panel overlays beside the tree; copy the one for your unit to `mipi-panel.dtbo`, or flash a card that already has it. `r36s-v30-panel4.dtbo` drives V30 boards with Panel 4 through ROCKNIX's generic DSI driver, with the init sequence converted from the stock dtb. A wrong panel boots with the backlight on and a blank screen; the stock card's `boot.ini` names the dtb that identifies the unit. `uboot.log` records which overlay was applied. [V30 Panel 4](kernel/panels/r36s-v30-panel4.dtso)

@@ -148,3 +148,23 @@ gizlet_qemu_test(
     tags = ["manual"],
     target_compatible_with = _R36S,
 )
+
+# Release downloads for boards/gameconsole/r36s/flash.sh and flash.ps1: the
+# compressed cards and their SHA256SUMS.
+_RELEASE_IMAGES = ["gizlet-os-r36s"] + ["gizlet-os-" + panel for panel in R36S_PANELS]
+
+[genrule(
+    name = image + "_gz",
+    srcs = [":" + image],
+    outs = ["release/%s.img.gz" % image],
+    cmd = "gzip -9 -n -c $< > $@",
+    target_compatible_with = _R36S,
+) for image in _RELEASE_IMAGES]
+
+genrule(
+    name = "release",
+    srcs = [":%s_gz" % image for image in _RELEASE_IMAGES],
+    outs = ["release/SHA256SUMS"],
+    cmd = "for f in $(SRCS); do (cd $$(dirname $$f) && shasum -a 256 $$(basename $$f)); done > $@",
+    target_compatible_with = _R36S,
+)
