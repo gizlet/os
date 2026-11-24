@@ -3,7 +3,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Runs `program args` and returns its stdout when it exits successfully
-/// within `limit`; a hung tool is killed.
+/// within `limit`; a hung tool is killed. Both pipes are read while it runs,
+/// so a tool that prints more than a pipe holds does not stall.
 pub fn run_for(limit: Duration, program: &str, args: &[&str]) -> Result<String, String> {
     let mut child = Command::new(program)
         .args(args)
@@ -12,6 +13,19 @@ pub fn run_for(limit: Duration, program: &str, args: &[&str]) -> Result<String, 
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("{program}: {e}"))?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            if let Some(mut p) = pipe {
+                let mut bytes = Vec::new();
+                let _ = p.read_to_end(&mut bytes);
+                text = String::from_utf8_lossy(&bytes).into_owned();
+            }
+            text
+        })
+    };
+    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     let start = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -25,14 +39,8 @@ pub fn run_for(limit: Duration, program: &str, args: &[&str]) -> Result<String, 
             Err(e) => return Err(format!("{program}: {e}")),
         }
     };
-    let mut out = String::new();
-    let mut err = String::new();
-    if let Some(mut s) = child.stdout.take() {
-        let _ = s.read_to_string(&mut out);
-    }
-    if let Some(mut s) = child.stderr.take() {
-        let _ = s.read_to_string(&mut err);
-    }
+    let out = out.join().unwrap_or_default();
+    let err = err.join().unwrap_or_default();
     if status.success() {
         return Ok(out);
     }
@@ -86,6 +94,15 @@ mod tests {
     fn strips_ansi_and_splits_columns() {
         assert_eq!(strip_ansi("\u{1b}[1;90m>\u{1b}[0m Home"), "> Home");
         assert_eq!(columns("    Home Net        psk      ****"), ["Home Net", "psk", "****"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_output_larger_than_a_pipe() {
+        // 1 MiB on stdout and on stderr, far over a 64 KiB pipe buffer.
+        let script = "head -c 1048576 /dev/zero; head -c 1048576 /dev/zero >&2";
+        let out = run_for(Duration::from_secs(10), "sh", &["-c", script]).unwrap();
+        assert_eq!(out.len(), 1 << 20);
     }
 
     #[cfg(unix)]
