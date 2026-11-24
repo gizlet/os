@@ -33,6 +33,7 @@ class Console:
         self.pending = bytearray()
 
     def expect(self, marker):
+        """Waits for MARKER and returns what came before it."""
         deadline = time.monotonic() + 120
         while marker not in self.pending:
             remaining = deadline - time.monotonic()
@@ -44,7 +45,10 @@ class Console:
             sys.stdout.buffer.write(chunk)
             sys.stdout.buffer.flush()
             self.pending.extend(chunk)
-        del self.pending[:self.pending.index(marker) + len(marker)]
+        at = self.pending.index(marker)
+        before = bytes(self.pending[:at])
+        del self.pending[:at + len(marker)]
+        return before
 
     def enter(self, line):
         self.guest.stdin.write((line + "\n").encode())
@@ -206,8 +210,14 @@ def scenarios(image, kernel_name, work):
     subprocess.run(["mcopy", "-i", f"{image}@@{parts['boot'][1]}", "::" + kernel_name, kernel], check=True)
     private = work / "private.img"
     shutil.copyfile(image, private)
-    # A larger card than the image: first boot grows the data partition to its end.
-    os.truncate(private, 1 << 30)
+    # A larger card than the image, written as flash.sh and flash.ps1 write it:
+    # partition 3 extended to the card's end. First boot grows the filesystem.
+    card_bytes = 16 << 30
+    os.truncate(private, card_bytes)
+    with open(private, "r+b") as f:
+        f.seek(478 + 8)
+        start = int.from_bytes(f.read(4), "little")
+        f.write((card_bytes // 512 // 2048 * 2048 - start).to_bytes(4, "little"))
     with boot(private, kernel, root) as console:
         # A fresh card starts the factory launcher. QEMU's machine has no
         # display, so it says so and the recovery shell opens.
@@ -224,9 +234,16 @@ def scenarios(image, kernel_name, work):
                      b"power: [Reboot, PowerOff]"):
             console.expect(line)
         console.expect(PROMPT)
-        console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 600000 ] && echo data-grown")
+        console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 15000000 ] && echo data-grown")
         console.expect(b"\r\ndata-grown\r\n")
         console.expect(PROMPT)
+        # Growing writes no inode tables: the whole first boot writes little to the card.
+        console.enter("echo written-$(( $(awk '{print $7}' /sys/block/vda/stat) / 2048 ))-MiB")
+        console.expect(b"\r\nwritten-")  # the output line, not the echoed command
+        written = int(console.expect(b"-MiB\r\n"))
+        console.expect(PROMPT)
+        print(f"first boot wrote {written} MiB to a 16 GiB card")
+        assert written < 64, f"first boot wrote {written} MiB"
         console.enter("cat /proc/mounts")
         for mount in (b" / squashfs ro,", b" /opt/gizlet ext4 rw,", b" /home ext4 rw,", b" /opt/gizlet/runtime/1 squashfs ro,"):
             console.expect(mount)

@@ -258,18 +258,37 @@ write_card() {
             [ -z "${mountpoint}" ] || ${sudo} umount "${part}"
         done
     fi
+    grown_mbr "${raw}" "${bytes}" > "${work}/mbr"
     say "$(m "Writing ${target}, about a minute ..." "正在写入 ${target}，大约一分钟……")"
     if [ "${os}" = mac ]; then
         ${sudo} dd if="${raw}" of="${target}" bs=4194304
+        ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 2>/dev/null
     else
         ${sudo} dd if="${raw}" of="${target}" bs=4194304 conv=fsync status=progress
+        ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 conv=fsync 2>/dev/null
         ${sudo} blockdev --rereadpt "${target}" 2>/dev/null || true
     fi
     sync
     [ "${os}" != mac ] || diskutil eject "${disk}" >/dev/null 2>&1 || true
     say ''
     say "$(m 'Done. Put the card in the R36S and switch it on.' '完成。把卡插进 R36S 开机。')"
-    say "$(m 'The first boot grows the data partition to the whole card and opens the launcher.' '第一次开机会把数据分区扩展到整张卡，然后进入 launcher。')"
+}
+
+# grown_mbr IMAGE DISK_BYTES: the image's first sector with partition 3, the
+# data partition and the last one, extended to the end of the disk (aligned
+# down to 1 MiB; MBR sizes stop at 2 TiB). The card's first boot then only
+# grows the filesystem inside it, in a few seconds.
+grown_mbr() {
+    entry=478 # partition 3 of the four at byte 446
+    start=$(od -An -tu4 -j $((entry + 8)) -N 4 "$1" | tr -d ' ')
+    type=$(od -An -tu1 -j $((entry + 4)) -N 1 "$1" | tr -d ' ')
+    sectors=$(( ($2 / 512) / 2048 * 2048 - start ))
+    [ $((start + sectors)) -le 4294967295 ] || sectors=$((4294967295 - start))
+    [ "${type}" = 131 ] && [ "${start}" -gt 0 ] && [ "${sectors}" -gt 0 ] || die "$(m 'unexpected partition table in the image' '镜像的分区表不符合预期')"
+    head -c $((entry + 12)) "$1"
+    # The 32-bit little-endian sector count.
+    printf "\\$(printf %03o $((sectors & 255)))\\$(printf %03o $((sectors >> 8 & 255)))\\$(printf %03o $((sectors >> 16 & 255)))\\$(printf %03o $((sectors >> 24 & 255)))"
+    tail -c +$((entry + 17)) "$1" | head -c $((512 - entry - 16))
 }
 
 main "$@"

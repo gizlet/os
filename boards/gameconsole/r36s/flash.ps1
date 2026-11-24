@@ -14,6 +14,21 @@
 #   GIZLET_IMAGE     a local .img or .img.gz to write instead of downloading
 #   GIZLET_RELEASE   another release download URL
 
+# Extends partition 3 of the image's MBR in $mbr, the data partition and the
+# last one, to the end of a disk of $diskBytes (aligned down to 1 MiB; MBR
+# sizes stop at 2 TiB). The card's first boot then only grows the filesystem
+# inside it, in a few seconds.
+function Grow-DataPartition([byte[]]$mbr, [long]$diskBytes) {
+    $entry = 478 # partition 3 of the four at byte 446
+    $start = [long][BitConverter]::ToUInt32($mbr, $entry + 8)
+    $sectors = [long][math]::Floor($diskBytes / 512 / 2048) * 2048 - $start
+    if ($start + $sectors -gt 4294967295) { $sectors = 4294967295 - $start }
+    if ($mbr[$entry + 4] -ne 0x83 -or $start -le 0 -or $sectors -le 0) {
+        throw 'Unexpected partition table in the image. / 镜像的分区表不符合预期。'
+    }
+    [Array]::Copy([BitConverter]::GetBytes([uint32]$sectors), 0, $mbr, $entry + 12, 4)
+}
+
 & {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
@@ -184,6 +199,7 @@ public static class GizletRawDisk {
                     $filled += $n
                 }
                 if ($filled -eq 0) { break }
+                if ($written -eq 0) { Grow-DataPartition $buffer $disk.Size }
                 $length = [int]([math]::Ceiling($filled / 512) * 512)
                 if ($length -gt $filled) { [Array]::Clear($buffer, $filled, $length - $filled) }
                 $target.Write($buffer, 0, $length)
@@ -204,5 +220,4 @@ public static class GizletRawDisk {
     }
     Write-Host ''
     Write-Host (M 'Done. Eject the card, put it in the R36S and switch it on.' '完成。弹出卡，插进 R36S 开机。')
-    Write-Host (M 'The first boot grows the data partition to the whole card and opens the launcher.' '第一次开机会把数据分区扩展到整张卡，然后进入 launcher。')
 }

@@ -4,8 +4,10 @@
 # gizlet/ and home/ directories become /opt/gizlet and /home; state that must
 # survive a reboot (ssh host key, WiFi networks) lives under system/.
 #
-# The image's data partition is small. On first boot it is grown to the end of
-# the card, as long as it is the last partition, and its filesystem with it.
+# The image's data filesystem is small. The card writers (flash.sh, flash.ps1)
+# extend its partition to the end of the card; a card written another way has
+# it extended here, as long as it is the last partition. On first boot the
+# filesystem is then grown to its partition before it is mounted.
 set -eu
 # save-boot-log copies these messages to the boot partition.
 say() { echo "Gizlet OS: $*"; echo "$*" >> /run/gizlet-boot.log; }
@@ -49,6 +51,22 @@ if [ "$last" = yes ] && [ $((total - end)) -gt 2048 ]; then
         say 'cannot grow the data partition'
     fi
 fi
+# Grow the filesystem to its partition while it is unmounted: resize2fs then
+# leaves the new inode tables unwritten (they are marked unused), where the
+# kernel's online resize would write zeros over all of them.
+field() { dumpe2fs -h "$data_dev" 2>/dev/null | sed -n "s/^$1:[[:space:]]*//p"; }
+blocks=$(field 'Block count') block_size=$(field 'Block size')
+fs_bytes=$(( ${blocks:-0} * ${block_size:-0} ))
+if [ "$fs_bytes" -gt 0 ] && [ $(( $(cat "$part_sys/size") * 512 - fs_bytes )) -gt 1048576 ]; then
+    # resize2fs wants a freshly checked filesystem; 0 and 1 mean clean or repaired.
+    status=0
+    e2fsck -fp "$data_dev" > /dev/null 2>&1 || status=$?
+    if [ "$status" -le 1 ] && resize2fs "$data_dev" > /dev/null 2>&1; then
+        say "data filesystem grown to fill its partition"
+    else
+        say 'cannot grow the data filesystem'
+    fi
+fi
 store=/run/gizlet-data
 mkdir -m 0700 "$store"
 # noinit_itable: the kernel would otherwise zero the inode tables of a grown
@@ -56,12 +74,6 @@ mkdir -m 0700 "$store"
 # boot that stall everything else, the launcher's install among them. The
 # group checksums already mark those tables unused, so they need no zeroing.
 mount -t ext4 -o rw,nodev,nosuid,noinit_itable "$data_dev" "$store"
-# Grow the filesystem to its partition, online. Without a change this does nothing.
-case "$(resize2fs "$data_dev" 2>&1)" in
-    *'Nothing to do'*) ;;
-    *'is now'*) say "data filesystem grown to fill its partition" ;;
-    *) say 'cannot grow the data filesystem' ;;
-esac
 # mount(8) can fall back to read-only mode when the card is write protected.
 writable=
 while read -r id parent device fsroot target opts rest; do
