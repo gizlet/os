@@ -57,6 +57,10 @@ def main():
         assert line in inittab, line
     for executable in ("etc/rcS", "sbin/boot-session", "sbin/save-boot-log", "sbin/gizlet-net", "etc/udhcpc.script", "usr/sbin/wpa_supplicant", "usr/bin/wpa_cli", "sbin/gizlet-booter", "usr/sbin/dropbear", "usr/bin/scp"):
         assert (root / executable).stat().st_mode & 0o111, f"/{executable} is executable"
+    # Everyday commands for the ssh and LCD shells.
+    for applet in ("clear", "less", "sed", "awk", "sort", "tar", "gzip", "wget", "nc", "which", "watch"):
+        paths = [root / d / applet for d in ("bin", "sbin", "usr/bin", "usr/sbin")]
+        assert any(p.is_symlink() and p.resolve() == busybox for p in paths), f"BusyBox applet {applet}"
     for directory in ("opt/gizlet", "home"):
         assert (root / directory).is_dir(), f"/{directory}"
     for notice in config["licenses"]:
