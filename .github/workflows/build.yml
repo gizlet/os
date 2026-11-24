@@ -34,8 +34,7 @@ jobs:
     permissions:
       checks: write
       contents: read
-      issues: write
-      pull-requests: read
+      pull-requests: write
     uses: gizlet/github-workflows/.github/workflows/pr-check-start.yml@latest
     with:
       check-name: Bazel build and test (R36S)
@@ -105,7 +104,7 @@ jobs:
     permissions:
       checks: write
       contents: read
-      issues: write
+      pull-requests: write
     uses: gizlet/github-workflows/.github/workflows/pr-check-finish.yml@latest
     with:
       check_run_id: ${{ needs.start.outputs.check_run_id }}
