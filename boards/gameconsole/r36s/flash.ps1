@@ -17,6 +17,8 @@
 & {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
+    # Windows PowerShell 5.1 on older Windows 10 does not offer TLS 1.2 by default; GitHub needs it.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $release = if ($env:GIZLET_RELEASE) { $env:GIZLET_RELEASE } else { 'https://github.com/gizlet/os/releases/latest/download' }
     $large = 256GB
 
@@ -97,7 +99,7 @@
     # --- confirmation 3: type the disk's name, as GitHub asks for a repository's name
     Write-Host ''
     Write-Host ((M 'To confirm, type the disk name:' '请输入磁盘名称以确认：') + " $diskName")
-    if ((Read-Host '>') -cne $diskName) { throw (M 'The name does not match; cancelled.' '名称不一致，已取消。') }
+    if ((Read-Host '>').Trim() -ne $diskName) { throw (M 'The name does not match; cancelled.' '名称不一致，已取消。') }
 
     # --- image
     $work = Join-Path ([IO.Path]::GetTempPath()) ('gizlet-' + [guid]::NewGuid())
@@ -120,6 +122,23 @@
             }
         }
 
+        # Unpack before the card is touched, so a corrupt image changes nothing.
+        $raw = $image
+        if ($image -like '*.gz') {
+            Write-Host (M 'Unpacking the image ...' '正在解压镜像……')
+            $raw = Join-Path $work 'card.img'
+            $gz = [IO.Compression.GZipStream]::new([IO.File]::OpenRead($image), [IO.Compression.CompressionMode]::Decompress)
+            $out = [IO.File]::Create($raw)
+            try { $gz.CopyTo($out) } finally { $out.Dispose(); $gz.Dispose() }
+        }
+        $imageBytes = (Get-Item $raw).Length
+        # The card may have been swapped while the image downloaded.
+        $now = Get-Disk -Number $disk.Number -ErrorAction SilentlyContinue
+        if (-not $now -or $now.Size -ne $disk.Size -or $now.UniqueId -ne $disk.UniqueId) {
+            throw (M "$diskName changed since it was chosen; cancelled." "$diskName 在选择之后发生了变化，已取消。")
+        }
+        if ($disk.Size -lt $imageBytes) { throw (M 'The card is smaller than the image.' '这张卡比镜像还小。') }
+
         # Windows PowerShell's FileStream refuses \\.\ device paths; open the disk with CreateFile.
         if (-not ('GizletRawDisk' -as [type])) {
             Add-Type -TypeDefinition @'
@@ -140,14 +159,17 @@ public static class GizletRawDisk {
 '@
         }
 
-        # --- write: take the disk offline so no volume holds it, then write sectors.
+        # --- write. Windows blocks writes over a mounted volume, and often will not take a
+        # removable disk offline, so the partition table is cleared first: then no volume
+        # holds the disk. Offline is tried as well where it is supported.
         Set-Disk -Number $disk.Number -IsReadOnly $false
-        Set-Disk -Number $disk.Number -IsOffline $true
-        $source = [IO.File]::OpenRead($image)
+        if ($disk.PartitionStyle -ne 'RAW') { Clear-Disk -Number $disk.Number -RemoveData -RemoveOEM -Confirm:$false }
+        $offline = $false
+        try { Set-Disk -Number $disk.Number -IsOffline $true; $offline = $true } catch { }
+        $source = [IO.File]::OpenRead($raw)
         $target = $null
         try {
-            $reader = if ($image -like '*.gz') { New-Object IO.Compression.GZipStream($source, [IO.Compression.CompressionMode]::Decompress) } else { $source }
-            $target = New-Object IO.FileStream(([GizletRawDisk]::Open("\\.\PhysicalDrive$($disk.Number)")), [IO.FileAccess]::ReadWrite)
+            $target = [IO.FileStream]::new([GizletRawDisk]::Open("\\.\PhysicalDrive$($disk.Number)"), [IO.FileAccess]::ReadWrite)
             $buffer = New-Object byte[] (4MB)
             $written = 0L
             Write-Host (M "Writing $diskName, about a minute ..." "正在写入 $diskName，大约一分钟……")
@@ -155,7 +177,7 @@ public static class GizletRawDisk {
                 # Fill the whole buffer: writes to a disk must be whole sectors.
                 $filled = 0
                 while ($filled -lt $buffer.Length) {
-                    $n = $reader.Read($buffer, $filled, $buffer.Length - $filled)
+                    $n = $source.Read($buffer, $filled, $buffer.Length - $filled)
                     if ($n -le 0) { break }
                     $filled += $n
                 }
@@ -164,7 +186,7 @@ public static class GizletRawDisk {
                 if ($length -gt $filled) { [Array]::Clear($buffer, $filled, $length - $filled) }
                 $target.Write($buffer, 0, $length)
                 $written += $filled
-                Write-Host -NoNewline ("`r{0} MB" -f [int]($written / 1MB))
+                Write-Host -NoNewline ("`r{0} / {1} MB" -f [int]($written / 1MB), [int]($imageBytes / 1MB))
                 if ($filled -lt $buffer.Length) { break }
             }
             $target.Flush()
@@ -172,7 +194,7 @@ public static class GizletRawDisk {
         } finally {
             if ($target) { $target.Dispose() }
             $source.Dispose()
-            Set-Disk -Number $disk.Number -IsOffline $false
+            if ($offline) { Set-Disk -Number $disk.Number -IsOffline $false }
         }
         Update-Disk -Number $disk.Number
     } finally {
