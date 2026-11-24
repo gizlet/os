@@ -1,11 +1,6 @@
 load("//tools/bazel/krun:defs.bzl", "vm_test")
 
 exports_files(
-    ["card_test.py"],
-    visibility = ["//visibility:public"],
-)
-
-exports_files(
     ["runner.py"],
     visibility = ["//visibility:private"],
 )

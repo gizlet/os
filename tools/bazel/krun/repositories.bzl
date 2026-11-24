@@ -174,8 +174,8 @@ _rust_std = repository_rule(implementation = _rust_std_impl)
 def _krun_repositories_impl(module_ctx):
     _libkrun(
         name = "libkrun",
-        launcher_manifest = Label("//tools/bazel/krun/launcher:Cargo.toml"),
-        launcher_main = Label("//tools/bazel/krun/launcher:main.rs"),
+        launcher_manifest = Label("//tools/bazel/krun/vm:Cargo.toml"),
+        launcher_main = Label("//tools/bazel/krun/vm:main.rs"),
     )
     _libkrunfw(name = "libkrunfw")
     _rust_std(name = "rust_std_aarch64_unknown_linux_musl")

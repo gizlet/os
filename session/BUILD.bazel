@@ -1,19 +1,10 @@
 load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
 
-exports_files([
-    "boot-session",
-    "card.py",
-    "qemu_test.py",
-    "rootfs_test.py",
-    "gizlet-boot-device",
-    "gizlet-net",
-    "group",
-    "nsswitch.conf",
-    "passwd",
-    "save-boot-log",
-    "shells",
-    "udhcpc.script",
-])
+package(default_visibility = ["//visibility:public"])
+
+# boot-session runs the Booter, which starts the entry named in
+# /opt/gizlet/boot.ini and opens the recovery shell when it fails.
+exports_files(["boot-session"])
 
 # Built with the build VM's Debian GCC as a static AArch64 glibc executable,
 # like BusyBox, so the card needs no further C library notices.
@@ -27,5 +18,4 @@ debian_cc_binary(
         "-Wextra",
         "-Werror",
     ],
-    visibility = ["//targets:__subpackages__"],
 )

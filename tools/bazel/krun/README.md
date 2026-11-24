@@ -1,6 +1,6 @@
 # Build VM
 
-The native image stages and image tests run in a libkrun microVM so that one Bazel command builds and tests the card on an Apple silicon Mac. AArch64 Linux hosts with KVM are a libkrun target as well, but not yet verified with these rules. Every part of the VM is built by Bazel from pinned sources. [Launcher](launcher/main.rs) · [Rules](defs.bzl) · [Sources](repositories.bzl)
+The native image stages and image tests run in a libkrun microVM so that one Bazel command builds and tests the card on an Apple silicon Mac. AArch64 Linux hosts with KVM are a libkrun target as well, but not yet verified with these rules. Every part of the VM is built by Bazel from pinned sources. [VM launcher](vm/main.rs) · [Rules](defs.bzl) · [Sources](repositories.bzl)
 
 | Part | Source and build |
 | --- | --- |

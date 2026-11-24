@@ -1,4 +1,9 @@
+load("//tools/bazel/rockchip:defs.bzl", "rockchip_legacy_uboot", "rockchip_linux_kernel")
+
 package(default_visibility = ["//visibility:public"])
+
+# The Game Console R36S. This package builds the board's kernel, device trees
+# and boot chain from the pins in third_party; targets/ composes the card.
 
 constraint_setting(name = "board")
 
@@ -17,19 +22,12 @@ platform(
 )
 
 exports_files([
-    "boot.cmd",
-    "busybox.config",
-    "gizlet-r36s.dts",
-    "r36s-v30-panel4.dtso",
-    "inittab",
-    "kernel.config",
-    "rcS",
+    "boot/boot.cmd",
+    "boot/trust.sha256",
     "sdcard.cfg",
-    "trust.ini",
-    "trust.sha256",
 ])
 
-# Upstream inputs this board builds from. Target packages reference only these.
+_EPOCH = 1704067200
 
 _ROCKNIX_PKG = "@rocknix//:projects/ROCKNIX/packages/linux/patches/"
 
@@ -38,11 +36,6 @@ _ROCKNIX_RK3326 = "@rocknix//:projects/ROCKNIX/devices/RK3326/patches/linux/"
 _ROCKNIX_DTS = "@rocknix//:projects/ROCKNIX/devices/RK3326/linux/dts/rockchip/"
 
 _ROCKNIX_UBOOT = "@rocknix//:projects/ROCKNIX/devices/RK3326/packages/u-boot-legacy/"
-
-alias(
-    name = "linux_source",
-    actual = "@linux//:linux-7.1.2.tar.xz",
-)
 
 # The RK3326 kernel patch set of ROCKNIX for Linux 7.1.2, in the order its
 # build applies it: package patch dirs "mainline", "mainline-rockchip" and "7.0"
@@ -108,64 +101,72 @@ filegroup(
     ],
 )
 
-# Out-of-tree drivers the R36S needs, built into the kernel: ROCKNIX's panel
-# driver that reads its init sequence from the device tree, and the joypad
-# driver of the upstream R36S device tree.
-alias(
-    name = "panel_generic_dsi",
-    actual = "@rocknix//:projects/ROCKNIX/packages/linux-drivers/generic-dsi/sources/panel-generic-dsi.c",
-)
-
-alias(
-    name = "joypad_driver",
-    actual = "@rocknix_joypad//:rocknix-singleadc-joypad.c",
-)
-
-alias(
-    name = "joypad_header",
-    actual = "@rocknix_joypad//:rocknix-joypad.h",
-)
-
-alias(
-    name = "uboot_source",
-    actual = "@hardkernel_uboot//:hardkernel-uboot-2492a3e467e332e2350d987234ce6123700b3392.tar.gz",
-)
-
-filegroup(
-    name = "uboot_patches",
-    srcs = [
-        _ROCKNIX_UBOOT + "patches/01-fix-building.patch",
-        "rk3326_trust.patch",
-    ],
-)
-
-alias(
-    name = "uboot_defconfig",
-    actual = _ROCKNIX_UBOOT + "sources/configs/rocknix_rk3326_defconfig",
-)
-
-alias(
-    name = "busybox_source",
-    actual = "@busybox//:busybox-1.37.0.tar.bz2",
+rockchip_linux_kernel(
+    name = "kernel",
+    archive = "@linux//:linux-7.1.2.tar.xz",
+    build_user = "gizlet",
+    # Built in: ROCKNIX's panel driver that reads its init sequence from the
+    # device tree, the joypad driver of the upstream R36S tree, and the
+    # firmware of the on-board RTL8188EU WiFi (and the RTL8188FU of other units).
+    builtin_sources = {
+        "@rocknix//:projects/ROCKNIX/packages/linux-drivers/generic-dsi/sources/panel-generic-dsi.c": "drivers/gpu/drm/panel/panel-generic-dsi.c",
+        "@rocknix_joypad//:rocknix-singleadc-joypad.c": "drivers/input/joystick/rocknix-singleadc-joypad.c",
+        "@rocknix_joypad//:rocknix-joypad.h": "drivers/input/joystick/rocknix-joypad.h",
+        "@linux_firmware//:rtl8188eufw.bin": "firmware/rtlwifi/rtl8188eufw.bin",
+        "@linux_firmware//:rtl8188fufw.bin": "firmware/rtlwifi/rtl8188fufw.bin",
+    },
+    config = "kernel/kernel.config",
+    dtb = "r36s.dtb",
+    dtb_target = "rockchip/gizlet-r36s.dtb",
+    dts_dirs = {":rocknix_dts": "rockchip"},
+    dts_files = {
+        "kernel/gizlet-r36s.dts": "rockchip/gizlet-r36s.dts",
+        "kernel/panels/r36s-v30-panel4.dtso": "rockchip/r36s-v30-panel4.dtso",
+    },
+    extra_dtb_targets = ["rockchip/r36s-v30-panel4.dtbo"],
+    extra_dtbs = ["r36s-v30-panel4.dtbo"],
+    image = "Image",
+    # ROCKNIX applies this set with plain `patch -p1`, whose default fuzz is 2.
+    patch_fuzz = 2,
+    patches = [":kernel_patches"],
+    source_date_epoch = _EPOCH,
+    target_compatible_with = [":r36s"],
 )
 
 # Rockchip RK3326 legacy firmware: DDR 333 MHz v2.11, miniloader v1.40 and BL31 v1.34.
-alias(
-    name = "ddr",
-    actual = "@rkbin//:bin/rk33/rk3326_ddr_333MHz_v2.11.bin",
-)
-
-alias(
-    name = "miniloader",
-    actual = "@rkbin//:bin/rk33/rk3326_miniloader_v1.40.bin",
-)
-
 alias(
     name = "bl31",
     actual = "@rkbin//:bin/rk33/rk3326_bl31_v1.34.elf",
 )
 
+rockchip_legacy_uboot(
+    name = "bootloader",
+    archive = "@hardkernel_uboot//:hardkernel-uboot-2492a3e467e332e2350d987234ce6123700b3392.tar.gz",
+    bl31 = ":bl31",
+    boot_command = "boot/boot.cmd",
+    build_user = "gizlet",
+    ddr = "@rkbin//:bin/rk33/rk3326_ddr_333MHz_v2.11.bin",
+    defconfig = ":uboot_defconfig",
+    idbloader = "idbloader.img",
+    load_address = "0x00200000",
+    miniloader = "@rkbin//:bin/rk33/rk3326_miniloader_v1.40.bin",
+    mkimage_soc = "px30",
+    patches = [
+        _ROCKNIX_UBOOT + "patches/01-fix-building.patch",
+        "boot/rk3326_trust.patch",
+    ],
+    script = "boot.scr",
+    script_name = "Gizlet R36S Panel 0",
+    source_date_epoch = _EPOCH,
+    target_compatible_with = [":r36s"],
+    trust = "trust.img",
+    trust_checksum = "boot/trust.sha256",
+    trust_ini = "boot/trust.ini",
+    uboot = "uboot.img",
+)
+
+# The defconfig keeps its upstream name: the U-Boot stage requires <board>_defconfig.
 alias(
-    name = "rkbin_license",
-    actual = "@rkbin//:LICENSE",
+    name = "uboot_defconfig",
+    actual = _ROCKNIX_UBOOT + "sources/configs/rocknix_rk3326_defconfig",
 )

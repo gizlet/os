@@ -3,7 +3,7 @@
 Derived from GizOS tools/bazel/native/rockchip at 0ac3bfdc2bafa78bfc89965931b5ce22faeff795 (Apache-2.0, see LICENSE).
 """
 
-load("//tools/bazel/krun:defs.bzl", "KRUN_ATTRS", "krun_action", "vm_test")
+load("//tools/bazel/krun:defs.bzl", "KRUN_ATTRS", "krun_action")
 
 _NATIVE = KRUN_ATTRS | {
     "source_date_epoch": attr.int(mandatory = True, doc = "Fixed Unix timestamp for the image tools."),
@@ -194,23 +194,3 @@ rockchip_sd_image = rule(
         "out": attr.output(mandatory = True),
     },
 )
-
-def rockchip_card_test(name, image, bl31, trust_checksum, boot_command, card, **kwargs):
-    """Checks a legacy-boot card image in the build VM.
-
-    `card` is a dict with `disk_signature`, `size_mib`, `partitions`,
-    `idbloader`, `boot_files` and optional `device_tree`; see card_test.py.
-    """
-    vm_test(
-        name = name,
-        src = Label("//tools/bazel/rockchip:card_test.py"),
-        data = [image, bl31, trust_checksum, boot_command],
-        guest_args = [
-            "$(rootpath %s)" % image,
-            "$(rootpath %s)" % bl31,
-            "$(rootpath %s)" % trust_checksum,
-            "$(rootpath %s)" % boot_command,
-            json.encode(card),
-        ],
-        **kwargs
-    )

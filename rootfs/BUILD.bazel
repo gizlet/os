@@ -1,0 +1,4 @@
+package(default_visibility = ["//visibility:public"])
+
+# Files under etc/ and sbin/ are installed at the same paths; see rootfs.bzl.
+exports_files(["busybox.config"] + glob(["etc/*", "sbin/*"]))

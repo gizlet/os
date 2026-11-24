@@ -1,4 +1,4 @@
-# Sources of the krun-vm launcher. The libkrun repository rule adds them to
+# Sources of krun-vm, the program that starts the build VM. The libkrun repository rule adds them to
 # the libkrun workspace, where //tools/bazel/krun builds them with Cargo.
 exports_files(
     [
