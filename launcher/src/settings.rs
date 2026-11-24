@@ -13,10 +13,12 @@ pub enum Language {
 impl Language {
     pub const ALL: [Language; 3] = [Language::Auto, Language::ZhCn, Language::En];
 
-    /// The concrete language: `ZhCn` or `En`.
+    /// The concrete language: `ZhCn` or `En`. `Auto` is resolved once per
+    /// run, as it is read on every frame and macOS's preference needs a process.
     pub fn resolve(self) -> Language {
+        static SYSTEM: std::sync::OnceLock<Language> = std::sync::OnceLock::new();
         match self {
-            Language::Auto => {
+            Language::Auto => *SYSTEM.get_or_init(|| {
                 let env = ["LC_ALL", "LC_MESSAGES", "LANG"]
                     .iter()
                     .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
@@ -26,7 +28,7 @@ impl Language {
                 } else {
                     Language::En
                 }
-            }
+            }),
             other => other,
         }
     }

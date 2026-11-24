@@ -107,6 +107,16 @@ disk_bytes() {
     fi
 }
 
+# whole_disk DEVICE: succeeds for a whole disk, not one of its partitions.
+whole_disk() {
+    if [ "${os}" = mac ]; then
+        case "$1" in /dev/disk[0-9]*) ;; *) return 1 ;; esac
+        [ "$(diskutil info "$1" 2>/dev/null | sed -n 's/^[[:space:]]*Whole:[[:space:]]*//p')" = Yes ]
+    else
+        [ "$(lsblk -dno TYPE "$1" 2>/dev/null)" = disk ]
+    fi
+}
+
 # The disk that holds the running system, which is never offered.
 system_disk() {
     if [ "${os}" = mac ]; then
@@ -172,7 +182,9 @@ find_disks() {
 # Confirmation 1: the disk number (or --disk).
 choose_disk() {
     if [ -n "${disk}" ]; then
-        [ -b "${disk}" ] || [ -c "${disk}" ] || die "$(m "no such disk ${disk}" "没有这个磁盘：${disk}")"
+        [ -b "${disk}" ] || die "$(m "no such disk ${disk}" "没有这个磁盘：${disk}")"
+        # A partition would take the whole card's image inside it.
+        whole_disk "${disk}" || die "$(m "${disk} is a partition or not a plain disk; give the whole disk, such as /dev/disk4 or /dev/sdb" "${disk} 是分区或不是普通磁盘，请指定整个磁盘，例如 /dev/disk4 或 /dev/sdb")"
         [ "${disk}" != "${sys}" ] || die "$(m 'that is the system disk' '这是系统盘')"
         label=$(m '(given with --disk)' '（由 --disk 指定）')
         bytes=$(disk_bytes "${disk}")
