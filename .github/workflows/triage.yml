@@ -1,8 +1,9 @@
-name: PR trigger
+name: PR triage
 
-# Starts the build and Codex review for pull requests whose branch is in this
-# repository. Never checks
-# out pull-request code; it dispatches the listed workflows on main.
+# Decides whether a pull request may start CI automatically: open, not a draft,
+# and its branch is in this repository. If so, dispatches the build and Codex
+# review on main for the current head. Runs on a GitHub-hosted runner and never
+# checks out pull-request code. Other pull requests need /test or /codex-review.
 
 on:
   pull_request_target:

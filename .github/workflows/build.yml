@@ -1,6 +1,6 @@
 name: Build
 
-# Pull requests reach this workflow through pr-trigger.yml (branches in this
+# Pull requests reach this workflow through triage.yml (branches in this
 # repository) or a writer's `/test` comment. Both run this file from main and
 # report the required `Bazel build and test (R36S)` check on the PR head.
 # Do not add a pull_request trigger: the PR could then rewrite its own check.
