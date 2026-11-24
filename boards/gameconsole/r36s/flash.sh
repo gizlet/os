@@ -251,14 +251,14 @@ write_card() {
         sudo=''
     else
         say "$(m 'Writing needs administrator rights (sudo); enter your computer password if asked.' '写卡需要管理员权限（sudo），如有提示请输入电脑的登录密码。')"
-        sudo -v
+        sudo -v || die "$(m 'no administrator rights (wrong password?); nothing was written' '没有获得管理员权限（密码错误？），没有写入任何内容')"
     fi
     if [ "${os}" = linux ]; then
         lsblk -lnpo NAME,MOUNTPOINT "${disk}" | while read -r part mountpoint; do
             [ -z "${mountpoint}" ] || ${sudo} umount "${part}"
         done
     fi
-    grown_mbr "${raw}" "${bytes}" > "${work}/mbr"
+    grown_mbr "${raw}" "${bytes}" "${work}/mbr"
     say "$(m "Writing ${target}, about a minute ..." "正在写入 ${target}，大约一分钟……")"
     if [ "${os}" = mac ]; then
         ${sudo} dd if="${raw}" of="${target}" bs=4194304
@@ -274,21 +274,28 @@ write_card() {
     say "$(m 'Done. Put the card in the R36S and switch it on.' '完成。把卡插进 R36S 开机。')"
 }
 
-# grown_mbr IMAGE DISK_BYTES: the image's first sector with partition 3, the
-# data partition and the last one, extended to the end of the disk (aligned
-# down to 1 MiB; MBR sizes stop at 2 TiB). The card's first boot then only
-# grows the filesystem inside it, in a few seconds.
+# grown_mbr IMAGE DISK_BYTES OUT: writes to OUT the image's first sector with
+# partition 3, the data partition and the last one, extended to the end of the
+# disk (aligned down to 1 MiB; MBR sizes stop at 2 TiB). The card's first boot
+# then only grows the filesystem inside it, in a few seconds.
+#
+# Only whole small files are read, never a pipe that closes early: under
+# pipefail the writer's SIGPIPE would end the script without a word.
 grown_mbr() {
     entry=478 # partition 3 of the four at byte 446
-    start=$(od -An -tu4 -j $((entry + 8)) -N 4 "$1" | tr -d ' ')
-    type=$(od -An -tu1 -j $((entry + 4)) -N 1 "$1" | tr -d ' ')
+    head -c 512 "$1" > "$3.orig"
+    start=$(od -An -tu4 -j $((entry + 8)) -N 4 "$3.orig" | tr -d ' ')
+    type=$(od -An -tu1 -j $((entry + 4)) -N 1 "$3.orig" | tr -d ' ')
     sectors=$(( ($2 / 512) / 2048 * 2048 - start ))
     [ $((start + sectors)) -le 4294967295 ] || sectors=$((4294967295 - start))
     [ "${type}" = 131 ] && [ "${start}" -gt 0 ] && [ "${sectors}" -gt 0 ] || die "$(m 'unexpected partition table in the image' '镜像的分区表不符合预期')"
-    head -c $((entry + 12)) "$1"
-    # The 32-bit little-endian sector count.
-    printf "\\$(printf %03o $((sectors & 255)))\\$(printf %03o $((sectors >> 8 & 255)))\\$(printf %03o $((sectors >> 16 & 255)))\\$(printf %03o $((sectors >> 24 & 255)))"
-    tail -c +$((entry + 17)) "$1" | head -c $((512 - entry - 16))
+    {
+        head -c $((entry + 12)) "$3.orig"
+        # The 32-bit little-endian sector count.
+        printf "\\$(printf %03o $((sectors & 255)))\\$(printf %03o $((sectors >> 8 & 255)))\\$(printf %03o $((sectors >> 16 & 255)))\\$(printf %03o $((sectors >> 24 & 255)))"
+        tail -c $((512 - entry - 16)) "$3.orig"
+    } > "$3"
+    [ "$(wc -c < "$3" | tr -d ' ')" = 512 ] || die "$(m 'cannot prepare the partition table' '无法生成分区表')"
 }
 
 main "$@"
