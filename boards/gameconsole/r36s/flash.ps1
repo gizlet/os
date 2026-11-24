@@ -124,7 +124,9 @@ function Grow-DataPartition([byte[]]$mbr, [long]$diskBytes) {
     try {
         $image = $env:GIZLET_IMAGE
         if ($image) {
-            if (-not (Test-Path $image)) { throw (M "No such file $image." "文件不存在：$image。") }
+            if (-not (Test-Path -LiteralPath $image -PathType Leaf)) { throw (M "No such file $image." "文件不存在：$image。") }
+            # .NET resolves relative paths against the process's directory, not PowerShell's.
+            $image = (Resolve-Path -LiteralPath $image).ProviderPath
         } else {
             $image = Join-Path $work "$name.img.gz"
             Write-Host ((M 'Downloading' '正在下载') + " $name.img.gz ...")
@@ -148,7 +150,7 @@ function Grow-DataPartition([byte[]]$mbr, [long]$diskBytes) {
             $out = [IO.File]::Create($raw)
             try { $gz.CopyTo($out) } finally { $out.Dispose(); $gz.Dispose() }
         }
-        $imageBytes = (Get-Item $raw).Length
+        $imageBytes = (Get-Item -LiteralPath $raw).Length
         # The card may have been swapped while the image downloaded.
         $now = Get-Disk -Number $disk.Number -ErrorAction SilentlyContinue
         if (-not $now -or $now.Size -ne $disk.Size -or $now.UniqueId -ne $disk.UniqueId) {
@@ -176,16 +178,18 @@ public static class GizletRawDisk {
 '@
         }
 
-        # --- write. Windows blocks writes over a mounted volume, and often will not take a
-        # removable disk offline, so the partition table is cleared first: then no volume
-        # holds the disk. Offline is tried as well where it is supported.
-        Set-Disk -Number $disk.Number -IsReadOnly $false
-        if ($disk.PartitionStyle -ne 'RAW') { Clear-Disk -Number $disk.Number -RemoveData -RemoveOEM -Confirm:$false }
-        $offline = $false
-        try { Set-Disk -Number $disk.Number -IsOffline $true; $offline = $true } catch { }
+        # The image is open before anything on the card changes, so a file that
+        # cannot be read leaves the card as it was.
         $source = [IO.File]::OpenRead($raw)
         $target = $null
+        $offline = $false
         try {
+            # --- write. Windows blocks writes over a mounted volume, and often will not take a
+            # removable disk offline, so the partition table is cleared first: then no volume
+            # holds the disk. Offline is tried as well where it is supported.
+            Set-Disk -Number $disk.Number -IsReadOnly $false
+            if ($disk.PartitionStyle -ne 'RAW') { Clear-Disk -Number $disk.Number -RemoveData -RemoveOEM -Confirm:$false }
+            try { Set-Disk -Number $disk.Number -IsOffline $true; $offline = $true } catch { }
             $target = [IO.FileStream]::new([GizletRawDisk]::Open("\\.\PhysicalDrive$($disk.Number)"), [IO.FileAccess]::ReadWrite)
             $buffer = New-Object byte[] (4MB)
             $written = 0L
