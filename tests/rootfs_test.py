@@ -78,7 +78,7 @@ def main():
     # Each card creates its own identity at boot.
     assert not list((root / "etc/ssh").glob("ssh_host_*")), "the image carries ssh host keys"
     assert (root / "etc/machine-id").read_text() == "", "the image carries a machine ID"
-    for script in ("boot-session", "gizlet-boot-device", "gizlet-mount-data", "gizlet-ssh", "gizlet-switch",
+    for script in ("boot-session", "gizlet-boot-device", "gizlet-mount-data", "gizlet-ssh", "gizlet-setup", "gizlet-switch",
                    "gizlet-var", "save-boot-log", "gizlet-booter", "gizlet-launcher"):
         assert (root / "usr/lib/gizlet" / script).stat().st_mode & 0o111, f"/usr/lib/gizlet/{script} is executable"
     # First boot grows the data partition and its filesystem.

@@ -1,0 +1,58 @@
+#!/bin/sh
+# Applies setup.ini from the FAT boot partition at boot, before
+# gizlet-switches.service starts what is turned on. It lets a card join Wi-Fi
+# and offer ssh without the launcher, for example when preparing a unit:
+#
+#   wifi_ssid=Network name
+#   wifi_passphrase=its passphrase (8 to 63 characters; leave out for an open network)
+#   ssh=on
+#
+# The network is saved for iwd and the switches are turned on, as if done in
+# the launcher. Without setup.ini nothing changes; ssh=off turns ssh off.
+set -u
+say() { echo "Gizlet OS: $*"; echo "gizlet-setup: $*" >> /run/gizlet-boot.log; }
+switches=/run/gizlet-data/system/switches
+networks=/var/lib/iwd
+
+boot_dev=$(/usr/lib/gizlet/gizlet-boot-device) || exit 0
+fat=/run/gizlet-setup-bootfs
+mkdir -p "$fat"
+mount -t vfat -o ro,nodev,nosuid,noexec "$boot_dev" "$fat" || exit 0
+setup=
+[ -f "$fat/setup.ini" ] && setup=$(tr -d '\r' < "$fat/setup.ini")
+umount "$fat"
+[ -n "$setup" ] || exit 0
+
+# value KEY: everything after the first = on KEY's line.
+value() {
+    printf '%s\n' "$setup" | sed -n "s/^$1=//p" | head -n 1
+}
+
+ssid=$(value wifi_ssid)
+passphrase=$(value wifi_passphrase)
+if [ -n "$ssid" ]; then
+    # iwd names a network file after its SSID, or =hex when the SSID has other characters.
+    case "$ssid" in
+        *[!A-Za-z0-9_' '-]*) name="=$(printf '%s' "$ssid" | od -An -tx1 | tr -d ' \n')" ;;
+        *) name=$ssid ;;
+    esac
+    mkdir -p "$networks"
+    if [ -z "$passphrase" ]; then
+        printf '[Settings]\nAutoConnect=true\n' > "$networks/$name.open"
+        say "Wi-Fi network $ssid saved"
+    elif [ "${#passphrase}" -lt 8 ] || [ "${#passphrase}" -gt 63 ]; then
+        say "the Wi-Fi passphrase in setup.ini must have 8 to 63 characters"
+    elif ! grep -qxF "Passphrase=$passphrase" "$networks/$name.psk" 2>/dev/null; then
+        # iwd adds the derived key to this file once it connects.
+        (umask 077 && printf '[Security]\nPassphrase=%s\n' "$passphrase" > "$networks/$name.psk")
+        say "Wi-Fi network $ssid saved"
+    fi
+    mkdir -p "$switches"
+    : > "$switches/wifi"
+fi
+case "$(value ssh)" in
+    on) mkdir -p "$switches" && : > "$switches/ssh" && say 'ssh turned on' ;;
+    off) rm -f "$switches/ssh" && say 'ssh turned off' ;;
+esac
+sync
+exit 0

@@ -95,6 +95,10 @@ def check_ssh(private, boot_offset, kernel, root, work):
     key = work / "client_key"
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key], check=True)
     subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", key.with_suffix(".pub"), "::authorized_keys"], check=True)
+    # setup.ini saves a Wi-Fi network (an SSID iwd stores as =hex) and turns ssh on at boot.
+    setup = work / "setup.ini"
+    setup.write_bytes(b"wifi_ssid=Test Net!\r\nwifi_passphrase=passphrase-123\r\nssh=on\r\n")
+    subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", setup, "::setup.ini"], check=True)
     port = free_port()
     client = work / "ssh"
     client.write_text(f'#!/bin/sh\nexec ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "{key}" -p {port} "$@"\n')
@@ -102,11 +106,9 @@ def check_ssh(private, boot_offset, kernel, root, work):
     with boot(private, kernel, root, ssh_port=port) as console:
         console.expect(PROMPT)
         console.command("ip addr add 10.0.2.15/24 dev eth0 && ip link set eth0 up")
-        # sshd does not start at boot until the launcher turns it on.
-        console.enter("systemctl is-active ssh")
-        console.expect(b"\r\ninactive\r\n")
+        console.enter("cat '/var/lib/iwd/=54657374204e657421.psk'; /usr/lib/gizlet/gizlet-switch wifi; /usr/lib/gizlet/gizlet-switch ssh")
+        console.expect(b"[Security]\r\nPassphrase=passphrase-123\r\non\r\non\r\n")
         console.expect(PROMPT)
-        console.command("/usr/lib/gizlet/gizlet-switch ssh on")
         deadline = time.monotonic() + 60
         while True:
             login = subprocess.run([client, "root@127.0.0.1", "ls /; echo ssh-ok"],
@@ -151,12 +153,20 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.enter("for i in $(seq 60); do systemctl -q is-active ssh && systemctl -q is-active iwd && break; sleep 1; done; systemctl is-active ssh iwd")
         console.expect(b"\r\nactive\r\nactive\r\n")
         console.expect(PROMPT)
+        # Without setup.ini the switches stay as the launcher leaves them.
+        console.command("mount /dev/vda1 /mnt && rm /mnt/setup.ini && umount /mnt")
         console.command("/usr/lib/gizlet/gizlet-switch ssh off && /usr/lib/gizlet/gizlet-switch wifi off")
         console.enter("systemctl is-active ssh iwd; /usr/lib/gizlet/gizlet-switch ssh")
         console.expect(b"\r\ninactive\r\ninactive\r\noff\r\n")
         console.expect(PROMPT)
         console.stop()
-    print("The launcher's switches start sshd and iwd, also after a reboot; ssh login and scp in both directions work")
+    with boot(private, kernel, root) as console:
+        console.expect(PROMPT)
+        console.enter("sleep 5; systemctl is-active ssh iwd")
+        console.expect(b"\r\ninactive\r\ninactive\r\n")
+        console.expect(PROMPT)
+        console.stop()
+    print("setup.ini and the launcher's switches start sshd and iwd, also after a reboot; ssh login and scp in both directions work")
 
 
 def scenarios(image, kernel_name, work):

@@ -6,6 +6,8 @@ ConditionPathExists=/run/gizlet-data.ready
 
 [Service]
 Type=oneshot
+# setup.ini on the boot partition can join Wi-Fi and turn ssh on first.
+ExecStartPre=-/usr/lib/gizlet/gizlet-setup
 ExecStart=/usr/lib/gizlet/gizlet-switch boot
 
 [Install]
