@@ -19,9 +19,9 @@ The board guide covers the storage contract, local recovery and application setu
 
 ## CI and code review
 
-Pull requests to `main` must pass two checks:
+Pull requests to `main` must pass two checks. For every push to a pull request whose branch is in this repository, `.github/workflows/pr-trigger.yml` starts both. Fork pull requests start neither automatically and are never built.
 
-- `Bazel build and test (R36S)` runs the build and both tests above on an Ubuntu 24.04 ARM64 runner (`.github/workflows/build.yml`). It starts automatically for every push to a pull request whose branch is in this repository (`.github/workflows/pr-trigger.yml`). Fork pull requests are never built. A user with write access can rerun it by commenting `/test`.
-- `Codex Code Review` runs only when a user with write access comments `/codex-review` (`.github/workflows/codex-review.yml`). Every new push needs a new request.
+- `Bazel build and test (R36S)` runs the build and both tests above on an Ubuntu 24.04 ARM64 runner (`.github/workflows/build.yml`). A user with write access can rerun it by commenting `/test`.
+- `Codex Code Review` reviews the diff (`.github/workflows/codex-review.yml`). A user with write access can rerun it by commenting `/codex-review`.
 
 Both workflows run from `main` and use the shared [Gizlet workflows](https://github.com/gizlet/github-workflows). Pushes to `main` build directly and refresh the Bazel caches.

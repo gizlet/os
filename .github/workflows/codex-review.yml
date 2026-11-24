@@ -9,6 +9,11 @@ on:
         description: Open pull request to review.
         required: true
         type: string
+      head_sha:
+        description: Expected pull-request head, set by automatic triggers.
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -29,6 +34,7 @@ jobs:
     uses: gizlet/github-workflows/.github/workflows/codex-review.yml@latest
     with:
       pull_request_number: ${{ inputs.pull_request_number }}
+      head_sha: ${{ inputs.head_sha }}
       review-instructions: >-
         Gizlet OS builds a read-only Linux base system and TF1 card image for the
         RK3326 R36S with Bazel. Pay particular attention to boot chain, partition

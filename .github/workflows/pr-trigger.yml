@@ -1,6 +1,7 @@
 name: PR trigger
 
-# Starts CI for pull requests whose branch is in this repository. Never checks
+# Starts the build and Codex review for pull requests whose branch is in this
+# repository. Never checks
 # out pull-request code; it dispatches the listed workflows on main.
 
 on:
@@ -19,5 +20,5 @@ jobs:
       pull-requests: read
     uses: gizlet/github-workflows/.github/workflows/pr-auto-trigger.yml@latest
     with:
-      workflows: build.yml
+      workflows: build.yml,codex-review.yml
       command: /test
