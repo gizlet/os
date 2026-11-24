@@ -70,6 +70,7 @@ busybox_squashfs(
     executables = {
         _BOARD + "rcS": "etc/rcS",
         "//boot:boot-session": "sbin/boot-session",
+        "//boot:save-boot-log": "sbin/save-boot-log",
         "//boot:booter": "sbin/gizlet-booter",
     },
     files = {

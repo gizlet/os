@@ -53,9 +53,9 @@ def main():
     for link in ("sbin/init", "bin/sh", "bin/cttyhack"):
         assert (root / link).resolve() == busybox, f"/{link} is BusyBox"
     inittab = (root / "etc/inittab").read_text().splitlines()
-    for line in ("::sysinit:/etc/rcS", "::respawn:/bin/cttyhack /sbin/boot-session", "tty1::askfirst:-/bin/sh"):
+    for line in ("::sysinit:/etc/rcS", "::sysinit:/sbin/save-boot-log", "::respawn:/bin/cttyhack /sbin/boot-session", "tty1::askfirst:-/bin/sh"):
         assert line in inittab, line
-    for executable in ("etc/rcS", "sbin/boot-session", "sbin/gizlet-booter"):
+    for executable in ("etc/rcS", "sbin/boot-session", "sbin/save-boot-log", "sbin/gizlet-booter"):
         assert (root / executable).stat().st_mode & 0o111, f"/{executable} is executable"
     for directory in ("opt/gizlet", "home"):
         assert (root / directory).is_dir(), f"/{directory}"

@@ -5,6 +5,9 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t tmpfs -o mode=0755,nodev,nosuid tmpfs /run
 mount -t tmpfs -o mode=1777,nodev,nosuid tmpfs /tmp
+# save-boot-log copies these messages to the boot partition.
+say() { echo "Gizlet OS: $*"; echo "$*" >> /run/gizlet-boot.log; }
+trap 'echo "rcS exit $?" >> /run/gizlet-boot.log' EXIT
 
 # Locate partition 3 on the very disk that supplied the mounted SquashFS (p2).
 root_device=
@@ -12,7 +15,7 @@ while read -r id parent device fsroot target rest; do
     if [ "$target" = / ]; then root_device=$device; break; fi
 done < /proc/self/mountinfo
 sysroot=$(readlink -f "/sys/dev/block/$root_device")
-[ "$(cat "$sysroot/partition")" = 2 ] || { echo 'Gizlet OS: unexpected system partition'; exit 1; }
+[ "$(cat "$sysroot/partition")" = 2 ] || { say 'unexpected system partition'; exit 1; }
 data_dev=
 for sibling in "${sysroot%/*}"/*; do
     if [ -f "$sibling/partition" ] && [ "$(cat "$sibling/partition")" = 3 ]; then
@@ -20,11 +23,11 @@ for sibling in "${sysroot%/*}"/*; do
         break
     fi
 done
-[ -b "$data_dev" ] || { echo 'Gizlet OS: data partition missing'; exit 1; }
+[ -b "$data_dev" ] || { say 'data partition missing'; exit 1; }
 identity=$(blkid "$data_dev")
 case " $identity " in
     *' UUID="17605036-fda0-4633-a95b-2ed27409a90c" '*) ;;
-    *) echo 'Gizlet OS: unexpected data filesystem'; exit 1 ;;
+    *) say 'unexpected data filesystem'; exit 1 ;;
 esac
 store=/run/gizlet-data
 mkdir -m 0700 "$store"
@@ -37,13 +40,13 @@ while read -r id parent device fsroot target opts rest; do
     fi
 done < /proc/self/mountinfo
 if [ "$writable" != yes ]; then
-    echo 'Gizlet OS: writable data partition required'
+    say 'writable data partition required'
     umount "$store"
     exit 1
 fi
 for directory in gizlet home; do
     if [ ! -d "$store/$directory" ] || [ -L "$store/$directory" ]; then
-        echo "Gizlet OS: invalid data directory $directory"
+        say "invalid data directory $directory"
         umount "$store"
         exit 1
     fi

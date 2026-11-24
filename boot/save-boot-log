@@ -1,0 +1,41 @@
+#!/bin/sh
+# Keep this boot's kernel log on the FAT boot partition (partition 1 of the
+# system disk) as gizlet.log, so a card can be diagnosed on any computer
+# without a serial cable. Failure here never stops the boot.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+root_device=
+while read -r id parent device fsroot target rest; do
+    if [ "$target" = / ]; then root_device=$device; break; fi
+done < /proc/self/mountinfo
+sysroot=$(readlink -f "/sys/dev/block/$root_device") || exit 0
+boot_dev=
+for sibling in "${sysroot%/*}"/*; do
+    if [ -f "$sibling/partition" ] && [ "$(cat "$sibling/partition")" = 1 ]; then
+        boot_dev=/dev/${sibling##*/}
+        break
+    fi
+done
+[ -b "$boot_dev" ] || { echo 'Gizlet OS: boot partition missing, no gizlet.log'; exit 0; }
+dir=/run/gizlet-bootfs
+mkdir -p "$dir"
+mount -t vfat -o rw,nodev,nosuid,noexec,flush "$boot_dev" "$dir" || { echo 'Gizlet OS: cannot mount boot partition, no gizlet.log'; exit 0; }
+{
+    echo '== Gizlet OS boot log'
+    uname -a
+    cat /proc/cmdline
+    echo '== rcS'
+    cat /run/gizlet-boot.log 2>/dev/null
+    [ -f /run/gizlet-data.ready ] && echo 'data mounts ready' || echo 'data mounts unavailable'
+    echo '== display and input'
+    for f in /sys/class/drm/*/status /sys/class/drm/*/enabled /sys/class/backlight/*/brightness /sys/class/backlight/*/bl_power; do
+        [ -e "$f" ] && echo "$f: $(cat "$f")"
+    done
+    cat /proc/fb
+    ls /dev/input
+    echo '== dmesg'
+    dmesg
+} > "$dir/gizlet.log.new" 2>&1
+mv "$dir/gizlet.log.new" "$dir/gizlet.log"
+sync
+umount "$dir"
+exit 0

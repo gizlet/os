@@ -5,6 +5,7 @@ exports_files([
     "card.py",
     "qemu_test.py",
     "rootfs_test.py",
+    "save-boot-log",
 ])
 
 # Built with the build VM's Debian GCC as a static AArch64 glibc executable,
