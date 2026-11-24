@@ -46,6 +46,8 @@ _R36S_LAYOUT = {
             [_OTG, "status", "okay"],
             [_OTG, "dr_mode", "host"],
             [_OTG_PHY, "status", "okay"],
+            ["/usb@ff340000", "status", "okay"],
+            ["/usb@ff350000", "status", "okay"],
         ],
         "links": [
             [_OTG, "phys", _OTG_PHY],

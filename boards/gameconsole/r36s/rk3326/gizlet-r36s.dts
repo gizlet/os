@@ -18,3 +18,15 @@
 &usb20_otg {
 	dr_mode = "host";
 };
+
+/*
+ * The host-port PHY is already enabled upstream. Its EHCI/OHCI controllers
+ * expose USB devices wired to that port, such as an on-board WiFi module.
+ */
+&usb_host0_ehci {
+	status = "okay";
+};
+
+&usb_host0_ohci {
+	status = "okay";
+};
