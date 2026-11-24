@@ -84,6 +84,7 @@ busybox_squashfs(
         "//boot:boot-session": "sbin/boot-session",
         "//boot:save-boot-log": "sbin/save-boot-log",
         "//boot:debug-link": "sbin/debug-link",
+        "//boot:usb-watch": "sbin/usb-watch",
         "//boot:gizlet-boot-device": "sbin/gizlet-boot-device",
         "//boot/dropbear:dropbear-bin": "usr/sbin/dropbear",
         "//boot/dropbear:dropbearkey-bin": "usr/bin/dropbearkey",

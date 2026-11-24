@@ -55,7 +55,7 @@ def main():
     inittab = (root / "etc/inittab").read_text().splitlines()
     for line in ("::sysinit:/etc/rcS", "::sysinit:/sbin/debug-link", "::sysinit:/sbin/save-boot-log", "ttyGS0::respawn:-/bin/sh", "::respawn:/bin/cttyhack /sbin/boot-session", "tty1::askfirst:-/bin/sh"):
         assert line in inittab, line
-    for executable in ("etc/rcS", "sbin/boot-session", "sbin/save-boot-log", "sbin/debug-link", "sbin/gizlet-booter", "usr/sbin/dropbear", "usr/bin/scp"):
+    for executable in ("etc/rcS", "sbin/boot-session", "sbin/save-boot-log", "sbin/debug-link", "sbin/usb-watch", "sbin/gizlet-booter", "usr/sbin/dropbear", "usr/bin/scp"):
         assert (root / executable).stat().st_mode & 0o111, f"/{executable} is executable"
     for directory in ("opt/gizlet", "home"):
         assert (root / directory).is_dir(), f"/{directory}"

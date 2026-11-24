@@ -13,6 +13,7 @@ exports_files([
     "save-boot-log",
     "shells",
     "udhcpd.conf",
+    "usb-watch",
 ])
 
 # Built with the build VM's Debian GCC as a static AArch64 glibc executable,

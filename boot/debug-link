@@ -32,4 +32,6 @@ if ip link show usb0 >/dev/null 2>&1; then
 else
     say 'usb0 missing, no USB network link'
 fi
+# Diagnose the device port in the background; see usb-watch.
+setsid /sbin/usb-watch </dev/null >/dev/null 2>&1 &
 exit 0
