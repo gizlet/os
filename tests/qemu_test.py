@@ -125,6 +125,11 @@ def check_ssh(private, boot_offset, kernel, root, work):
             os.close(local)
             os.close(remote)
         assert "/dev/pts/" in pty.stdout, f"ssh got no pseudo-terminal: {pty.stdout!r} {pty.stderr!r}"
+        # iwd is off at boot; the launcher starts it. It must stay up without a WiFi adapter.
+        iwd = subprocess.run([client, "root@127.0.0.1", "systemctl start iwd; sleep 3; systemctl is-active iwd; "
+                              "journalctl -b --no-pager -u iwd | tail -n 20"],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60).stdout
+        assert iwd.startswith("active\n"), f"iwd did not stay up: {iwd}"
         payload = work / "payload"
         payload.write_bytes(os.urandom(65536))
         subprocess.run(["scp", "-O", "-S", client, payload, "root@127.0.0.1:/home/payload"],
