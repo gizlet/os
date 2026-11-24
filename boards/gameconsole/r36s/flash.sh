@@ -117,6 +117,28 @@ whole_disk() {
     fi
 }
 
+# disk_identity DISK: what tells this disk's medium apart from another card of
+# the same size put in the same reader: its model, serial and partitions with
+# their UUIDs, and on Linux the kernel's media sequence number, which changes
+# with every card inserted. Mount state is left out, as the writer unmounts.
+disk_identity() {
+    if [ "${os}" = mac ]; then
+        diskutil info "$1" | grep -E '^ *(Device / Media Name|Disk Size|Device Location|Protocol|Disk / Partition UUID):'
+        diskutil list "$1"
+        for part in $(diskutil list "$1" | awk '$NF ~ /^disk[0-9]+s[0-9]+$/ {print $NF}'); do
+            diskutil info "${part}" | grep -E '^ *(Volume UUID|Disk / Partition UUID):'
+        done
+    else
+        lsblk -bnpo NAME,SIZE,MODEL,SERIAL,WWN,PTUUID,PARTUUID,UUID "$1"
+        cat "/sys/block/${1##*/}/diskseq" 2>/dev/null || true
+    fi
+}
+
+# Refuses to go on when the chosen disk now holds another card.
+check_same_disk() {
+    [ "$(disk_identity "${disk}" 2>/dev/null)" = "${identity}" ] || die "$(m "${disk} changed since it was chosen (another card?); cancelled, nothing was written" "${disk} 在选择之后发生了变化（换了卡？），已取消，没有写入任何内容")"
+}
+
 # The disk that holds the running system, which is never offered.
 system_disk() {
     if [ "${os}" = mac ]; then
@@ -197,6 +219,9 @@ choose_disk() {
         disk=${disks[$i]} label=${labels[$i]} bytes=${sizes[$i]}
     fi
     disk_name=${disk##*/}
+    # The card as it was chosen and confirmed; checked again before writing.
+    identity=$(disk_identity "${disk}" 2>/dev/null)
+    [ -n "${identity}" ] || die "$(m "cannot read ${disk}" "无法读取 ${disk}")"
 }
 
 # Confirmations 2 and 3: yes after the warnings, then the disk's name, as
@@ -247,7 +272,7 @@ get_image() {
     esac
     image_bytes=$(wc -c < "${raw}" | tr -d ' ')
     # The card may have been swapped while the image downloaded.
-    [ "$(disk_bytes "${disk}")" = "${bytes}" ] || die "$(m "${disk} changed since it was chosen; cancelled" "${disk} 在选择之后发生了变化，已取消")"
+    check_same_disk
     [ "${bytes}" -ge "${image_bytes}" ] || die "$(m 'the card is smaller than the image' '这张卡比镜像还小')"
 }
 
@@ -270,6 +295,8 @@ write_card() {
             [ -z "${mountpoint}" ] || ${sudo} umount "${part}"
         done
     fi
+    # And while the password was asked for.
+    check_same_disk
     grown_mbr "${raw}" "${bytes}" "${work}/mbr"
     say "$(m "Writing ${target}, about a minute ..." "正在写入 ${target}，大约一分钟……")"
     if [ "${os}" = mac ]; then
