@@ -124,14 +124,19 @@ whole_disk() {
 # Any field may be missing (an ext4 partition has no Volume UUID on macOS),
 # so no lookup may fail the function under set -e.
 disk_identity() {
+    # grep finding nothing (status 1) is fine; diskutil or lsblk failing is not.
+    pick() { grep -E "$1" || [ $? -eq 1 ]; }
     if [ "${os}" = mac ]; then
-        diskutil info "$1" | grep -E '^ *(Device / Media Name|Disk Size|Device Location|Protocol|Disk / Partition UUID):' || true
-        diskutil list "$1"
-        for part in $(diskutil list "$1" | awk '$NF ~ /^disk[0-9]+s[0-9]+$/ {print $NF}'); do
-            diskutil info "${part}" | grep -E '^ *(Volume UUID|Disk / Partition UUID):' || true
+        info=$(diskutil info "$1") || return 1
+        printf '%s\n' "${info}" | pick '^ *(Device / Media Name|Disk Size|Device Location|Protocol|Disk / Partition UUID):'
+        list=$(diskutil list "$1") || return 1
+        printf '%s\n' "${list}"
+        for part in $(printf '%s\n' "${list}" | awk '$NF ~ /^disk[0-9]+s[0-9]+$/ {print $NF}'); do
+            info=$(diskutil info "${part}") || return 1
+            printf '%s\n' "${info}" | pick '^ *(Volume UUID|Disk / Partition UUID):'
         done
     else
-        lsblk -bnpo NAME,SIZE,MODEL,SERIAL,WWN,PTUUID,PARTUUID,UUID "$1"
+        lsblk -bnpo NAME,SIZE,MODEL,SERIAL,WWN,PTUUID,PARTUUID,UUID "$1" || return 1
         cat "/sys/block/${1##*/}/diskseq" 2>/dev/null || true
     fi
 }
@@ -222,8 +227,7 @@ choose_disk() {
     fi
     disk_name=${disk##*/}
     # The card as it was chosen and confirmed; checked again before writing.
-    identity=$(disk_identity "${disk}" 2>/dev/null)
-    [ -n "${identity}" ] || die "$(m "cannot read ${disk}" "无法读取 ${disk}")"
+    identity=$(disk_identity "${disk}" 2>/dev/null) && [ -n "${identity}" ] || die "$(m "cannot read ${disk}" "无法读取 ${disk}")"
 }
 
 # Confirmations 2 and 3: yes after the warnings, then the disk's name, as

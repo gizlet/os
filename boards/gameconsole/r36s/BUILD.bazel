@@ -1,3 +1,4 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/bazel/rockchip:defs.bzl", "rockchip_legacy_uboot", "rockchip_linux_kernel")
 
 package(default_visibility = ["//visibility:public"])
@@ -167,4 +168,13 @@ rockchip_legacy_uboot(
 alias(
     name = "uboot_defconfig",
     actual = _ROCKNIX_UBOOT + "sources/configs/rocknix_rk3326_defconfig",
+)
+
+# flash.sh's card identity against a stub diskutil: a card ending in an ext4
+# partition without a UUID, and a failing diskutil. Runs on any computer.
+sh_test(
+    name = "flash_test",
+    srcs = ["flash_test.sh"],
+    args = ["$(rootpath flash.sh)"],
+    data = ["flash.sh"],
 )
