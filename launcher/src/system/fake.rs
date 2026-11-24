@@ -10,7 +10,7 @@ pub fn devices() -> Devices {
         backlight: Ok(Box::new(FakeLevel(0.7))),
         volume: Ok(Box::new(FakeLevel(0.45))),
         wifi: Ok(Box::new(FakeWifi { on: true, connected: Some("Gizlet Lab".into()), known: vec!["Gizlet Lab".into()] })),
-        ssh: Ok(Box::new(FakeSsh { on: false })),
+        ssh: Ok(Box::new(FakeSsh { on: false, password: None })),
         power: Some(Box::new(FakePower)),
         simulated: true,
     }
@@ -116,15 +116,20 @@ impl Wifi for FakeWifi {
 
 struct FakeSsh {
     on: bool,
+    password: Option<String>,
 }
 
 impl Ssh for FakeSsh {
     fn state(&mut self) -> Result<SshState, String> {
-        Ok(SshState { on: self.on, running: self.on, keys: self.on.then_some(1) })
+        Ok(SshState { on: self.on, running: self.on, keys: self.on.then_some(1), password: self.password.clone() })
     }
     fn set(&mut self, on: bool) -> Result<(), String> {
         sleep(Duration::from_millis(500));
         self.on = on;
+        Ok(())
+    }
+    fn set_password(&mut self, password: &str) -> Result<(), String> {
+        self.password = Some(password.into());
         Ok(())
     }
 }

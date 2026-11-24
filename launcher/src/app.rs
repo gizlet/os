@@ -94,6 +94,7 @@ pub enum ItemId {
     WifiScan,
     WifiDisconnect,
     Ssh,
+    SshPassword,
     Brightness,
     Theme,
     Volume,
@@ -560,6 +561,13 @@ impl App {
                 self.ssh_switching = Some(!current);
                 self.system.send(Request::Ssh(!current));
             }
+            ItemId::SshPassword => {
+                let current = match self.snapshot.as_ref().map(|s| &s.ssh) {
+                    Some(Ok(s)) => s.password.clone().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                self.keyboard = Some(Keyboard::ssh_password(self.t(T::SshPasswordTitle).into(), &current));
+            }
             ItemId::WifiScan => {
                 self.wifi.networks = None;
                 self.scan();
@@ -688,9 +696,16 @@ impl App {
         if cancel {
             self.keyboard = None;
         } else if let Some(text) = submit {
-            let ssid = kb.ssid.clone();
+            let purpose = kb.purpose.clone();
             self.keyboard = None;
-            self.connect(&ssid, Some(text));
+            match purpose {
+                keyboard::Purpose::WifiPassphrase(ssid) => self.connect(&ssid, Some(text)),
+                keyboard::Purpose::SshPassword if text.is_empty() => {}
+                keyboard::Purpose::SshPassword => {
+                    self.system.send(Request::SshPassword(text));
+                    self.toast(self.t(T::SshPasswordSaved));
+                }
+            }
         }
     }
 
@@ -728,6 +743,8 @@ impl App {
                         items.push(Item::new(ItemId::Ssh, t(T::Ssh), ItemValue::Toggle(on)));
                         let status = if s.running { t(T::SshRunning) } else { t(T::SshStopped) };
                         items.push(Item::info(t(T::BatteryState), status));
+                        let password = s.password.clone().unwrap_or_else(|| t(T::SshPasswordUnset));
+                        items.push(Item::new(ItemId::SshPassword, t(T::SshPassword), ItemValue::Info(password)));
                         if s.running {
                             let login = snap.ip.as_ref().map(|ip| format!("ssh root@{ip}")).unwrap_or_else(|| t(T::SshNeedsNetwork));
                             items.push(Item::info(t(T::SshLogin), login));
@@ -737,7 +754,6 @@ impl App {
                             };
                             items.push(Item::info(t(T::SshKeys), keys));
                         }
-                        items.push(Item::notice("authorized_keys", t(T::SshKeysBody)));
                     }
                 }
             }

@@ -86,6 +86,8 @@ pub struct SshState {
     pub running: bool,
     /// Public keys accepted, once the server has started.
     pub keys: Option<usize>,
+    /// root's password for ssh logins, when one is set.
+    pub password: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +107,7 @@ pub enum Request {
     SetBrightness(f32),
     SetVolume(f32),
     Ssh(bool),
+    SshPassword(String),
     Power(PowerAction),
 }
 
@@ -153,6 +156,7 @@ pub trait Wifi: Send {
 pub trait Ssh: Send {
     fn state(&mut self) -> Result<SshState, String>;
     fn set(&mut self, on: bool) -> Result<(), String>;
+    fn set_password(&mut self, password: &str) -> Result<(), String>;
 }
 
 pub trait Power: Send {
@@ -316,6 +320,13 @@ fn worker(mut dev: Devices, storage_root: PathBuf, rx: Receiver<Request>, tx: Se
                     refresh = true;
                     match &mut dev.ssh {
                         Ok(s) => failed(s.set(on)),
+                        Err(m) => Some(Event::Failed(unavailable(m))),
+                    }
+                }
+                Request::SshPassword(password) => {
+                    refresh = true;
+                    match &mut dev.ssh {
+                        Ok(s) => failed(s.set_password(&password)),
                         Err(m) => Some(Event::Failed(unavailable(m))),
                     }
                 }

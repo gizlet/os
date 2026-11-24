@@ -95,9 +95,10 @@ def check_ssh(private, boot_offset, kernel, root, work):
     key = work / "client_key"
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key], check=True)
     subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", key.with_suffix(".pub"), "::authorized_keys"], check=True)
-    # setup.ini saves a Wi-Fi network (an SSID iwd stores as =hex) and turns ssh on at boot.
+    # setup.ini saves a Wi-Fi network (an SSID iwd stores as =hex), sets the ssh
+    # password and turns ssh on, once, as the launcher would.
     setup = work / "setup.ini"
-    setup.write_bytes(b"wifi_ssid=Test Net!\r\nwifi_passphrase=passphrase-123\r\nssh=on\r\n")
+    setup.write_bytes(b"wifi_ssid=Test Net!\r\nwifi_passphrase=passphrase-123\r\nssh=on\r\nssh_password=gizlet test\r\n")
     subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", setup, "::setup.ini"], check=True)
     port = free_port()
     client = work / "ssh"
@@ -106,8 +107,15 @@ def check_ssh(private, boot_offset, kernel, root, work):
     with boot(private, kernel, root, ssh_port=port) as console:
         console.expect(PROMPT)
         console.command("ip addr add 10.0.2.15/24 dev eth0 && ip link set eth0 up")
-        console.enter("cat '/var/lib/iwd/=54657374204e657421.psk'; /usr/lib/gizlet/gizlet-switch wifi; /usr/lib/gizlet/gizlet-switch ssh")
-        console.expect(b"[Security]\r\nPassphrase=passphrase-123\r\non\r\non\r\n")
+        # gizlet-switches.service imports setup.ini while the console is already up.
+        console.command("for i in $(seq 60); do [ \"$(systemctl show -P ActiveState gizlet-switches)\" = activating ] || break; sleep 1; done")
+        console.enter("cat '/var/lib/iwd/=54657374204e657421.psk'; /usr/lib/gizlet/gizlet-switch wifi; /usr/lib/gizlet/gizlet-switch ssh; echo \"[$(/usr/lib/gizlet/gizlet-switch ssh-password)]\"")
+        console.expect(b"[Security]\r\nPassphrase=passphrase-123\r\n\r\n[Settings]\r\nAutoConnect=true\r\non\r\non\r\n[gizlet test]\r\n")
+        console.expect(PROMPT)
+        # setup.ini is imported once: renamed, without the passphrase and password.
+        console.enter("mount -o ro /dev/vda1 /mnt && cat /mnt/setup.ini.done; ls /mnt/setup.ini; umount /mnt")
+        console.expect(b"wifi_ssid=Test Net!\r\nssh=on\r\n")
+        console.expect(b"No such file")
         console.expect(PROMPT)
         deadline = time.monotonic() + 60
         while True:
@@ -126,6 +134,17 @@ def check_ssh(private, boot_offset, kernel, root, work):
         finally:
             os.close(local)
             os.close(remote)
+        # The password logs in too, as typed in the launcher.
+        askpass = work / "askpass"
+        askpass.write_text("#!/bin/sh\necho 'gizlet test'\n")
+        askpass.chmod(0o755)
+        by_password = subprocess.run(
+            ["setsid", "ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
+             "-o", "PubkeyAuthentication=no", "-o", "PreferredAuthentications=password", "-p", str(port),
+             "root@127.0.0.1", "echo password-ok"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+            env=os.environ | {"SSH_ASKPASS": str(askpass), "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0"})
+        assert "password-ok" in by_password.stdout, f"password login failed: {by_password.stderr}"
         assert "/dev/pts/" in pty.stdout, f"ssh got no pseudo-terminal: {pty.stdout!r} {pty.stderr!r}"
         # iwd is off at boot; the launcher turns it on. It must stay up without a WiFi adapter.
         iwd = subprocess.run([client, "root@127.0.0.1", "/usr/lib/gizlet/gizlet-switch wifi on; sleep 3; systemctl is-active iwd; "
@@ -143,7 +162,7 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.command("rm /home/payload")
         console.enter("/opt/gizlet/launcher/gizlet-launcher --probe")
         console.expect(b"wifi: Ok(WifiState { on: true")
-        console.expect(b"ssh: Ok(SshState { on: true, running: true, keys: Some(1) })")
+        console.expect(b'ssh: Ok(SshState { on: true, running: true, keys: Some(1), password: Some("gizlet test") })')
         console.expect(PROMPT)
         console.stop()
     # Both switches survive a reboot, and turning them off stops the services.
@@ -153,8 +172,7 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.enter("for i in $(seq 60); do systemctl -q is-active ssh && systemctl -q is-active iwd && break; sleep 1; done; systemctl is-active ssh iwd")
         console.expect(b"\r\nactive\r\nactive\r\n")
         console.expect(PROMPT)
-        # Without setup.ini the switches stay as the launcher leaves them.
-        console.command("mount /dev/vda1 /mnt && rm /mnt/setup.ini && umount /mnt")
+        # Once imported, the switches stay as the launcher leaves them.
         console.command("/usr/lib/gizlet/gizlet-switch ssh off && /usr/lib/gizlet/gizlet-switch wifi off")
         console.enter("systemctl is-active ssh iwd; /usr/lib/gizlet/gizlet-switch ssh")
         console.expect(b"\r\ninactive\r\ninactive\r\noff\r\n")
@@ -166,7 +184,7 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.expect(b"\r\ninactive\r\ninactive\r\n")
         console.expect(PROMPT)
         console.stop()
-    print("setup.ini and the launcher's switches start sshd and iwd, also after a reboot; ssh login and scp in both directions work")
+    print("setup.ini (imported once) and the launcher's switches start sshd and iwd, also after a reboot; key and password logins and scp work")
 
 
 def scenarios(image, kernel_name, work):
@@ -218,7 +236,9 @@ def scenarios(image, kernel_name, work):
         assert marker in log, f"gizlet.log lacks {marker!r}"
     late = subprocess.run(["mtype", "-i", f"{private}@@{parts['boot'][1]}", "::gizlet-late.log"],
                           check=True, capture_output=True, text=True).stdout
-    for marker in ("15 s after boot", "== usb devices", "== regulators", "== dmesg"):
+    # The late log carries the launcher's own output, captured by boot-session.
+    for marker in ("15 s after boot", "== usb devices", "== regulators", "== session output",
+                   "Gizlet launcher: no display", "== processes", "== dmesg"):
         assert marker in late, f"gizlet-late.log lacks {marker!r}"
     print("gizlet.log and gizlet-late.log saved on the boot partition")
     with boot(private, kernel, root) as console:

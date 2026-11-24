@@ -19,8 +19,11 @@ if [ -f /run/gizlet-data.ready ] && [ ! -e /opt/gizlet/boot.ini ] && [ -x "$fact
         echo 'Gizlet OS: installed the factory launcher as the boot entry'
 fi
 if [ -f /run/gizlet-data.ready ]; then
-    /usr/lib/gizlet/gizlet-booter
-    printf 'Gizlet OS: boot entry finished with status %d\n' "$?"
+    # script keeps the entry on the console through a pty and copies what it
+    # prints to /run/gizlet-session.log, which gizlet-late.log includes.
+    script -q -f -e -a -c /usr/lib/gizlet/gizlet-booter /run/gizlet-session.log
+    status=$?
+    printf 'Gizlet OS: boot entry finished with status %d\n' "$status" | tee -a /run/gizlet-session.log
 else
     echo 'Gizlet OS: data mounts unavailable'
 fi

@@ -292,11 +292,16 @@ impl Ssh for Sshd {
                 .map(|t| t.lines().filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#')).count())
                 .unwrap_or(0)
         });
-        Ok(SshState { on, running, keys })
+        let password = run(SWITCH, &["ssh-password"]).ok().filter(|p| !p.is_empty());
+        Ok(SshState { on, running, keys, password })
     }
 
     fn set(&mut self, on: bool) -> Result<(), String> {
         switch("ssh", on)
+    }
+
+    fn set_password(&mut self, password: &str) -> Result<(), String> {
+        run(SWITCH, &["ssh-password", password]).map(|_| ())
     }
 }
 

@@ -863,6 +863,13 @@
    "version": "1:10.0p1-7+deb13u4"
   },
   {
+   "name": "openssl",
+   "path": "pool/main/o/openssl/openssl_3.5.7-1~deb13u2_arm64.deb",
+   "sha256": "ff38f9e4fdbfef72d9cb31088e5e42f58c83c2fb1d1bbb4e4b4c9adc53c17100",
+   "size": 1472236,
+   "version": "3.5.7-1~deb13u2"
+  },
+  {
    "name": "openssl-provider-legacy",
    "path": "pool/main/o/openssl/openssl-provider-legacy_3.5.7-1~deb13u2_arm64.deb",
    "sha256": "7628954796eb651fc499ad98d4e51435691c2ccce0b5fbae6b198cbece742db4",

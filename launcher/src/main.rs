@@ -109,7 +109,10 @@ fn run() {
         flags |= F::FLAG_MSAA_4X_HINT as u32 | F::FLAG_WINDOW_RESIZABLE as u32 | F::FLAG_WINDOW_HIGHDPI as u32;
     }
     unsafe {
-        ffi::SetTraceLogLevel(ffi::TraceLogLevel::LOG_ERROR as i32);
+        // On the card raylib's display warnings go to the boot logs; on a
+        // computer only errors, as fonts warn about glyph sizes.
+        let level = if KMS { ffi::TraceLogLevel::LOG_INFO } else { ffi::TraceLogLevel::LOG_ERROR };
+        ffi::SetTraceLogLevel(level as i32);
         ffi::SetConfigFlags(flags);
         ffi::InitWindow(w, h, c"Gizlet".as_ptr());
         if !ffi::IsWindowReady() {

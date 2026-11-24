@@ -81,7 +81,10 @@ strings! {
     SshKeys => "公钥", "Public Keys";
     SshKeyCount => "{} 个", "{}";
     SshNoKeys => "没有公钥，无法登录", "None, logins are refused";
-    SshKeysBody => "SSH 只接受启动分区 authorized_keys 文件里的公钥，不能用密码登录。修改后重新打开 SSH 生效。", "SSH accepts only the public keys in authorized_keys on the boot partition, never passwords. Turn SSH off and on again after changing it.";
+    SshPassword => "密码", "Password";
+    SshPasswordUnset => "未设置，按 A 设置", "Not set, press A to set";
+    SshPasswordTitle => "SSH 密码（用户 root）", "SSH password (user root)";
+    SshPasswordSaved => "SSH 密码已更新", "SSH password updated";
 
     MissingService => "缺少系统组件 {}", "The {} system component is missing";
     MissingServiceBody => "这台设备的系统没有提供它，相关功能暂不可用。", "This device's system doesn't provide it, so this feature is unavailable.";

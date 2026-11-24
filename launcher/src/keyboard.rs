@@ -25,6 +25,15 @@ impl Key {
 const LETTERS: [&str; 4] = ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"];
 const SYMBOLS: [&str; 4] = ["1234567890", "!@#$%^&*()", "-_=+[]{};:", "'\",.?/\\|~`<>"];
 
+/// What the typed text is for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Purpose {
+    /// The passphrase of this Wi-Fi network.
+    WifiPassphrase(String),
+    /// root's password for ssh logins.
+    SshPassword,
+}
+
 pub enum Outcome {
     None,
     Submit(String),
@@ -33,8 +42,7 @@ pub enum Outcome {
 #[derive(Clone, Debug)]
 pub struct Keyboard {
     pub title: String,
-    /// The network the passphrase is for.
-    pub ssid: String,
+    pub purpose: Purpose,
     pub text: String,
     pub masked: bool,
     pub shift: bool,
@@ -48,7 +56,7 @@ impl Keyboard {
     pub fn passphrase(title: String, ssid: String) -> Keyboard {
         Keyboard {
             title,
-            ssid,
+            purpose: Purpose::WifiPassphrase(ssid),
             text: String::new(),
             masked: true,
             shift: false,
@@ -58,6 +66,15 @@ impl Keyboard {
             // WPA passphrases are 8 to 63 characters.
             max_len: 63,
         }
+    }
+
+    /// The ssh password, shown in the clear and starting from the current one.
+    pub fn ssh_password(title: String, current: &str) -> Keyboard {
+        let mut kb = Keyboard::passphrase(title, String::new());
+        kb.purpose = Purpose::SshPassword;
+        kb.masked = false;
+        kb.text = current.to_string();
+        kb
     }
 
     pub fn rows(&self) -> Vec<Vec<Key>> {

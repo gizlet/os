@@ -57,6 +57,19 @@ late_state() {
     ip addr 2>&1
     echo '== failed units'
     systemctl --failed --no-pager --plain 2>&1
+    echo '== Gizlet OS services'
+    cat /run/gizlet-boot.log 2>/dev/null
+    echo '== session output'
+    cat /run/gizlet-session.log 2>/dev/null
+    echo '== processes'
+    ps -eo pid,stat,etime,args 2>&1
+    echo '== display devices'
+    ls -l /dev/dri 2>&1
+    echo '== ssh'
+    ls -l /run/gizlet-ssh 2>&1
+    mountpoint /etc/shadow 2>&1
+    echo '== unit logs'
+    journalctl -b --no-pager -o short-monotonic -u gizlet-session -u gizlet-switches -u gizlet-ssh -u ssh -u iwd 2>&1 | tail -n 80
     if mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || [ -d /sys/kernel/debug/regulator ]; then
         echo '== regulator summary'
         cat /sys/kernel/debug/regulator/regulator_summary 2>/dev/null

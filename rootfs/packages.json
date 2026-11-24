@@ -13,6 +13,7 @@
   "less",
   "libdrm2",
   "openssh-server",
+  "openssl",
   "procps",
   "systemd",
   "systemd-resolved",
