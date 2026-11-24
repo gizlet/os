@@ -134,7 +134,8 @@ impl Level for Amixer {
     }
 }
 
-/// Wi-Fi through iwd's command-line client.
+/// Wi-Fi through iwd: its D-Bus objects, read with busctl, for exact network
+/// names, and its command-line client for the rest.
 struct Iwd {
     switchable: bool,
 }
@@ -170,6 +171,28 @@ impl Iwd {
         Self::iface().ok_or_else(|| "no Wi-Fi adapter".into())
     }
 
+    /// iwd's station object for `iface`, such as `/net/connman/iwd/0/4`.
+    fn dbus_station(iface: &str) -> Option<String> {
+        let tree = busctl(&["--list", "tree", IWD_BUS]).ok()?;
+        tree.lines().map(str::trim).filter(|p| p.split('/').filter(|c| !c.is_empty()).count() == 5).find_map(|path| {
+            let name = busctl(&["get-property", IWD_BUS, path, "net.connman.iwd.Device", "Name"]).ok()?;
+            (busctl_values(&name).get(1).map(String::as_str) == Some(iface)).then(|| path.to_string())
+        })
+    }
+
+    /// The networks iwd sees from `station`, strongest first: (object path, signal in dBm).
+    fn dbus_networks(station: &str) -> Option<Vec<(String, i32)>> {
+        let out = busctl(&["call", IWD_BUS, station, "net.connman.iwd.Station", "GetOrderedNetworks"]).ok()?;
+        // a(on) COUNT "PATH" SIGNAL ...; the signal is in hundredths of a dBm.
+        let values = busctl_values(&out);
+        Some(values.get(2..)?.chunks(2).filter_map(|c| Some((c.first()?.clone(), c.get(1)?.parse::<i32>().ok()? / 100))).collect())
+    }
+
+    fn dbus_connected(station: &str) -> Option<String> {
+        let out = busctl(&["get-property", IWD_BUS, station, "net.connman.iwd.Station", "ConnectedNetwork"]).ok()?;
+        busctl_values(&out).get(1).cloned()
+    }
+
     /// The saved networks, from iwd's own files: their names are exact,
     /// where iwctl's table loses repeated spaces. iwctl is the fallback.
     fn known() -> Vec<String> {
@@ -183,6 +206,55 @@ impl Iwd {
 }
 
 const IWD_NETWORKS: &str = "/var/lib/iwd";
+const IWD_BUS: &str = "net.connman.iwd";
+
+fn busctl(args: &[&str]) -> Result<String, String> {
+    run_for(Duration::from_secs(5), "busctl", args)
+}
+
+/// The values busctl prints, such as `s "wlan0"` or `a(on) 1 "/x" -5100`:
+/// words, and double-quoted strings with C escapes undone.
+fn busctl_values(out: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut chars = out.trim().chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else if c == '"' {
+            chars.next();
+            let mut v = String::new();
+            while let Some(c) = chars.next() {
+                match c {
+                    '"' => break,
+                    '\\' => v.extend(chars.next()),
+                    c => v.push(c),
+                }
+            }
+            values.push(v);
+        } else {
+            let mut v = String::new();
+            while let Some(&c) = chars.peek().filter(|c| !c.is_whitespace()) {
+                v.push(c);
+                chars.next();
+            }
+            values.push(v);
+        }
+    }
+    values
+}
+
+/// A network object `/net/connman/iwd/0/4/HEX_TYPE`: its SSID, exactly, from
+/// the hex bytes, and whether it is secured.
+fn network_object(path: &str) -> Option<(String, bool)> {
+    let (hex, kind) = path.rsplit('/').next()?.rsplit_once('_')?;
+    (hex.len() % 2 == 0 && !hex.is_empty()).then_some(())?;
+    let bytes: Option<Vec<u8>> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok()).collect();
+    Some((String::from_utf8(bytes?).ok()?, kind != "open"))
+}
+
+fn signal_percent(dbm: i32) -> u8 {
+    ((dbm + 100) * 2).clamp(0, 100) as u8
+}
 
 /// The SSID of an iwd network file: `NAME.psk`, or `=HEX.psk` for a name
 /// with other characters than letters, digits, space, `-` and `_`.
@@ -199,17 +271,32 @@ fn known_name(file: &str) -> Option<String> {
     bytes.and_then(|b| String::from_utf8(b).ok())
 }
 
-/// Rows below the last dashed separator of an iwctl table, with the connected
-/// marker split off and the text otherwise as printed.
+/// Rows below the last dashed separator of an iwctl table, for when iwd's
+/// D-Bus objects cannot be read. The first column starts where the header's
+/// first title does: what comes before it is the connected marker, and the
+/// rest is the row as printed, so a name may start with `>` or a space. The
+/// table pads names, so trailing spaces in one cannot be told apart.
 fn table_rows(out: &str) -> Vec<(bool, String)> {
     let lines: Vec<&str> = out.lines().collect();
-    let start = lines.iter().rposition(|l| l.trim_start().starts_with("----")).map_or(0, |i| i + 1);
+    let separator = |l: &&str| l.trim_start().starts_with("----");
+    let start = lines.iter().rposition(separator).map_or(0, |i| i + 1);
+    let column = lines[..start.saturating_sub(1)]
+        .iter()
+        .rev()
+        .find(|l| !l.trim().is_empty() && !separator(l))
+        .and_then(|h| h.chars().position(|c| !c.is_whitespace()));
     lines[start..]
         .iter()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| {
-            let t = l.trim_start();
-            (t.starts_with('>'), t.trim_start_matches('>').trim().to_string())
+        .map(|l| match column {
+            Some(c) if l.chars().count() > c => {
+                let marker: String = l.chars().take(c).collect();
+                (marker.contains('>'), l.chars().skip(c).collect::<String>().trim_end().to_string())
+            }
+            _ => {
+                let t = l.trim_start();
+                (t.starts_with('>'), t.trim_start_matches('>').trim().to_string())
+            }
         })
         .collect()
 }
@@ -220,8 +307,8 @@ fn table_rows(out: &str) -> Vec<(bool, String)> {
 fn network_row(row: &str) -> Option<(String, String, String)> {
     let (rest, signal) = row.trim_end().rsplit_once(char::is_whitespace)?;
     let (ssid, security) = rest.trim_end().rsplit_once(char::is_whitespace)?;
-    let ssid = ssid.trim();
-    (!ssid.is_empty()).then(|| (ssid.to_string(), security.to_string(), signal.to_string()))
+    let ssid = ssid.trim_end();
+    (!ssid.trim().is_empty()).then(|| (ssid.to_string(), security.to_string(), signal.to_string()))
 }
 
 impl Wifi for Iwd {
@@ -230,6 +317,14 @@ impl Wifi for Iwd {
         let iface = Self::iface();
         let mut state = WifiState { on, adapter: iface.is_some(), link: WifiLink::default() };
         let (true, Some(iface)) = (on, iface) else { return Ok(state) };
+        if let Some(station) = Self::dbus_station(&iface) {
+            if let Some(path) = Self::dbus_connected(&station) {
+                state.link.ssid = network_object(&path).map(|(ssid, _)| ssid);
+                let networks = Self::dbus_networks(&station).unwrap_or_default();
+                state.link.signal = networks.iter().find(|(p, _)| *p == path).map(|(_, dbm)| signal_percent(*dbm));
+            }
+            return Ok(state);
+        }
         // iwd needs a moment after starting before it lists the station.
         let Ok(out) = Self::iwctl(&["station", &iface, "show"], 5) else { return Ok(state) };
         for line in out.lines() {
@@ -241,7 +336,7 @@ impl Wifi for Iwd {
             match columns(line).as_slice() {
                 [k, v] if k == "RSSI" => {
                     let dbm: i32 = v.trim_end_matches(" dBm").trim().parse().unwrap_or(-100);
-                    state.link.signal = Some(((dbm + 100) * 2).clamp(0, 100) as u8);
+                    state.link.signal = Some(signal_percent(dbm));
                 }
                 _ => {}
             }
@@ -269,8 +364,17 @@ impl Wifi for Iwd {
         // A scan already in progress is fine; its results are read below.
         let _ = Self::iwctl(&["station", &iface, "scan"], 10);
         std::thread::sleep(Duration::from_secs(3));
-        let out = Self::iwctl(&["station", &iface, "get-networks"], 10)?;
         let known = Self::known();
+        if let Some(networks) = Self::dbus_station(&iface).and_then(|s| Self::dbus_networks(&s)) {
+            return Ok(networks
+                .into_iter()
+                .filter_map(|(path, dbm)| {
+                    let (ssid, secured) = network_object(&path)?;
+                    Some(WifiNetwork { known: known.contains(&ssid), ssid, signal: signal_percent(dbm), secured })
+                })
+                .collect());
+        }
+        let out = Self::iwctl(&["station", &iface, "get-networks"], 10)?;
         Ok(table_rows(&out)
             .into_iter()
             .filter_map(|(_, row)| {
@@ -379,15 +483,33 @@ mod tests {
   \u{1b}[0m>\u{1b}[0m   Home Net                          psk                 ****
       Cafe                              open                **
       Home  Net 5G                      psk                 \u{1b}[1;90m*\u{1b}[0m***
+      >Home                             psk                 **
+       Lead                             open                *
 ";
         let rows = table_rows(&strip_ansi(out));
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 5);
         assert!(rows[0].0 && !rows[1].0);
         let net = |i: usize| network_row(&rows[i].1).unwrap();
         assert_eq!(net(0), ("Home Net".to_string(), "psk".into(), "****".into()));
         assert_eq!(net(1), ("Cafe".to_string(), "open".into(), "**".into()));
         // Repeated spaces stay in the name.
         assert_eq!(net(2).0, "Home  Net 5G");
+        // A name that starts with > is not the connected marker, and a leading space stays.
+        assert!(!rows[3].0);
+        assert_eq!(net(3).0, ">Home");
+        assert_eq!(net(4).0, " Lead");
+    }
+
+    #[test]
+    fn reads_iwd_dbus_objects() {
+        let out = r#"a(on) 2 "/net/connman/iwd/0/4/3e486f6d6520_psk" -5100 "/net/connman/iwd/0/4/e5b08fe7b1b3_open" -7000"#;
+        let v = busctl_values(out);
+        assert_eq!(v.len(), 6);
+        assert_eq!(network_object(&v[2]), Some((">Home ".to_string(), true)));
+        assert_eq!(network_object(&v[4]), Some(("小米".to_string(), false)));
+        assert_eq!(v[3].parse::<i32>().unwrap() / 100, -51);
+        assert_eq!(busctl_values(r#"s "a \"b\"""#), ["s", "a \"b\""]);
+        assert_eq!(network_object("/net/connman/iwd/0/4"), None);
     }
 
     #[test]
