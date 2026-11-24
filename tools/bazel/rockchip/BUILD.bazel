@@ -1,14 +1,14 @@
 load("//tools/bazel/krun:defs.bzl", "vm_test")
 
 exports_files(
-    ["runner.py"],
+    ["runner.sh"],
     visibility = ["//visibility:private"],
 )
 
 # Unit test of the native stage runner, in the build VM like the stages.
 vm_test(
     name = "runner_test",
-    src = "runner_test.py",
-    data = [":runner.py"],
-    guest_args = ["$(rootpath :runner.py)"],
+    src = "runner_test.sh",
+    data = [":runner.sh"],
+    guest_args = ["$(rootpath :runner.sh)"],
 )

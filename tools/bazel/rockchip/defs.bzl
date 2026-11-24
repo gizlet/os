@@ -7,7 +7,7 @@ load("//tools/bazel/krun:defs.bzl", "KRUN_ATTRS", "krun_action")
 
 _NATIVE = KRUN_ATTRS | {
     "source_date_epoch": attr.int(mandatory = True, doc = "Fixed Unix timestamp for the image tools."),
-    "_runner": attr.label(default = Label(":runner.py"), allow_single_file = True),
+    "_runner": attr.label(default = Label(":runner.sh"), allow_single_file = True),
     "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
 }
 _SOURCE = {
@@ -28,23 +28,33 @@ _RESOURCES = {
     "SDImage": (2, 2048),
 }
 
+def _params_line(fields):
+    for field in fields:
+        if "\t" in field or "\n" in field:
+            fail("Runner parameters cannot hold tabs or newlines: %r" % field)
+    return "\t".join(fields) + "\n"
+
 def _stage(ctx, stage, inputs, outputs, params):
     """Runs one runner stage in the build VM.
 
-    Inputs appear under /in at their execroot paths, which is the runner's
-    working directory. Outputs are written under /out at their package paths.
+    `params` is a list of [key, value...] entries, written one per line with
+    tab-separated fields for runner.sh. Inputs appear under /in at their
+    execroot paths, which is the runner's working directory. Outputs are
+    written under /out at their package paths.
     """
     if ctx.attr.source_date_epoch < 0:
         fail("source_date_epoch must be nonnegative")
     out_root = ctx.bin_dir.path + "/" + ctx.label.package + "/"
-    params["outputs"] = ["/out/" + output.path.removeprefix(out_root) for output in outputs]
+    params = params + [["output", "/out/" + output.path.removeprefix(out_root)] for output in outputs]
+    params_file = ctx.actions.declare_file(ctx.attr.name + ".rockchip-params")
+    ctx.actions.write(params_file, "".join([_params_line(entry) for entry in params]))
     cpus, mem = _RESOURCES[stage]
     krun_action(
         ctx,
         root_disk = ctx.file._rootfs,
-        inputs = {f: f.path for f in [ctx.file._runner] + inputs},
+        inputs = {f: f.path for f in [ctx.file._runner, params_file] + inputs},
         outputs = outputs,
-        command = ["/bin/sh", "-c", 'cd /in && exec python3 -I "$@"', "runner", ctx.file._runner.path, stage, json.encode(params)],
+        command = ["/bin/sh", "-c", 'cd /in && exec /bin/sh "$@"', "runner", ctx.file._runner.path, stage, params_file.path],
         env = {
             "HOME": "/tmp",
             "LC_ALL": "C",
@@ -59,36 +69,28 @@ def _stage(ctx, stage, inputs, outputs, params):
     return [DefaultInfo(files = depset(outputs))]
 
 def _source(ctx):
-    return {
-        "archive": ctx.file.archive.path,
-        "patches": [f.path for f in ctx.files.patches],
-        "patch_fuzz": ctx.attr.patch_fuzz,
-    }
+    return [["archive", ctx.file.archive.path]] + [["patch", f.path] for f in ctx.files.patches] + [
+        ["patch_fuzz", str(ctx.attr.patch_fuzz)],
+    ]
 
 def _kbuild(ctx):
-    return {"build_user": ctx.attr.build_user, "build_host": ctx.attr.build_host}
+    return [["build_user", ctx.attr.build_user], ["build_host", ctx.attr.build_host]]
 
-def _mapping(targets):
+def _mapping(key, targets):
     entries = []
     for target, destination in targets.items():
         files = target.files.to_list()
         if len(files) != 1 or files[0].is_directory:
             fail("%s must provide exactly one file for %s" % (target.label, destination))
-        entries.append([files[0].path, destination])
+        entries.append([key, files[0].path, destination])
     return entries
 
 def _kernel(ctx):
-    params = _source(ctx) | _kbuild(ctx) | {
-        "config": ctx.file.config.path,
-        "dts_files": _mapping(ctx.attr.dts_files) + [
-            [f.path, directory + "/" + f.basename]
-            for target, directory in ctx.attr.dts_dirs.items()
-            for f in target.files.to_list()
-        ],
-        "dtb_target": ctx.attr.dtb_target,
-        "extra_dtb_targets": ctx.attr.extra_dtb_targets,
-        "builtin_sources": _mapping(ctx.attr.builtin_sources),
-    }
+    params = _source(ctx) + _kbuild(ctx) + [["config", ctx.file.config.path]] + _mapping("dts", ctx.attr.dts_files) + [
+        ["dts", f.path, directory + "/" + f.basename]
+        for target, directory in ctx.attr.dts_dirs.items()
+        for f in target.files.to_list()
+    ] + [["dtb_target", target] for target in [ctx.attr.dtb_target] + ctx.attr.extra_dtb_targets] + _mapping("builtin", ctx.attr.builtin_sources)
     if len(ctx.attr.extra_dtb_targets) != len(ctx.outputs.extra_dtbs):
         fail("extra_dtb_targets and extra_dtbs must have the same length")
     inputs = [ctx.file.archive, ctx.file.config] + ctx.files.patches + ctx.files.dts_files + ctx.files.dts_dirs + ctx.files.builtin_sources
@@ -116,18 +118,19 @@ def _uboot(ctx):
     inputs = [ctx.file.archive, ctx.file.defconfig, ctx.file.ddr, ctx.file.miniloader, ctx.file.bl31, ctx.file.trust_ini, ctx.file.boot_command]
     if ctx.file.trust_checksum:
         inputs.append(ctx.file.trust_checksum)
-    params = _source(ctx) | _kbuild(ctx) | {
-        "defconfig": ctx.file.defconfig.path,
-        "ddr": ctx.file.ddr.path,
-        "miniloader": ctx.file.miniloader.path,
-        "bl31": ctx.file.bl31.path,
-        "trust_ini": ctx.file.trust_ini.path,
-        "trust_checksum": ctx.file.trust_checksum.path if ctx.file.trust_checksum else None,
-        "boot_command": ctx.file.boot_command.path,
-        "script_name": ctx.attr.script_name,
-        "mkimage_soc": ctx.attr.mkimage_soc,
-        "load_address": ctx.attr.load_address,
-    }
+    params = _source(ctx) + _kbuild(ctx) + [
+        ["defconfig", ctx.file.defconfig.path],
+        ["ddr", ctx.file.ddr.path],
+        ["miniloader", ctx.file.miniloader.path],
+        ["bl31", ctx.file.bl31.path],
+        ["trust_ini", ctx.file.trust_ini.path],
+        ["boot_command", ctx.file.boot_command.path],
+        ["script_name", ctx.attr.script_name],
+        ["mkimage_soc", ctx.attr.mkimage_soc],
+        ["load_address", ctx.attr.load_address],
+    ]
+    if ctx.file.trust_checksum:
+        params.append(["trust_checksum", ctx.file.trust_checksum.path])
     return _stage(ctx, "LegacyUBoot", inputs + ctx.files.patches, outputs, params)
 
 rockchip_legacy_uboot = rule(
@@ -152,11 +155,7 @@ rockchip_legacy_uboot = rule(
 )
 
 def _disk(ctx):
-    params = {
-        "layout": ctx.file.layout.path,
-        "inputs": _mapping(ctx.attr.inputs),
-        "layout_image": ctx.attr.layout_image,
-    }
+    params = [["layout", ctx.file.layout.path], ["layout_image", ctx.attr.layout_image]] + _mapping("input", ctx.attr.inputs)
     return _stage(ctx, "SDImage", [ctx.file.layout] + ctx.files.inputs, [ctx.outputs.out], params)
 
 rockchip_sd_image = rule(
