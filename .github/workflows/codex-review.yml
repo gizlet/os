@@ -31,7 +31,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    uses: gizlet/github-workflows/.github/workflows/codex-review.yml@latest
+    uses: gizlet/.github/.github/workflows/codex-review.yml@latest
     with:
       pull_request_number: ${{ inputs.pull_request_number }}
       head_sha: ${{ inputs.head_sha }}

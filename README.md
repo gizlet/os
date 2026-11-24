@@ -24,4 +24,4 @@ Pull requests to `main` must pass two checks. For every push to a pull request w
 - `Bazel build and test (R36S)` runs the build and both tests above (`.github/workflows/build.yml`). Compilation runs on the self-hosted ARM64 Linux runner named by the `BUILD_RUNNER` repository variable, with Bazel caches in `BAZEL_CACHE_DIR` on that runner; without the variable it falls back to GitHub's Ubuntu 24.04 ARM64 runner. Triggers, checks and Codex review run on GitHub-hosted runners. A user with write access can rerun it by commenting `/test`.
 - `Codex Code Review` reviews the diff (`.github/workflows/codex-review.yml`). A user with write access can rerun it by commenting `/codex-review`.
 
-Both workflows run from `main` and use the shared [Gizlet workflows](https://github.com/gizlet/github-workflows). Pushes to `main` build directly and refresh the Bazel caches.
+Both workflows run from `main` and use the shared [Gizlet workflows](https://github.com/gizlet/.github). Pushes to `main` build directly and refresh the Bazel caches.

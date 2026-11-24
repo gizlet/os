@@ -19,7 +19,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
-    uses: gizlet/github-workflows/.github/workflows/pr-auto-trigger.yml@latest
+    uses: gizlet/.github/.github/workflows/pr-auto-trigger.yml@latest
     with:
       workflows: build.yml,codex-review.yml
       command: /test
