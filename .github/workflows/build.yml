@@ -76,6 +76,26 @@ jobs:
             device-tree-compiler genimage dosfstools mtools squashfs-tools e2fsprogs faketime fdisk \
             u-boot-tools python3 qemu-system-arm
 
+      # GitHub-hosted images ship Bazelisk as `bazel`; self-hosted images may not.
+      - name: Install Bazelisk
+        env:
+          BAZELISK_VERSION: v1.30.0
+        run: |
+          set -eu
+          if command -v bazel >/dev/null; then exit 0; fi
+          case "$(uname -m)" in
+            aarch64|arm64) arch=arm64 sha=b2bcc040c213b44586b121bda6d983c35df121b917c3a7a66fb16f2fa0df1a4f ;;
+            x86_64|amd64) arch=amd64 sha=a248ae2b2b62b5baebb748f6fba7203bff1a27e5d01b55399a8406744cb539e8 ;;
+            *) echo "::error::Unsupported architecture $(uname -m)"; exit 1 ;;
+          esac
+          dir="$RUNNER_TEMP/bazelisk"
+          mkdir -p "$dir"
+          curl -fsSL -o "$dir/bazel" \
+            "https://github.com/bazelbuild/bazelisk/releases/download/$BAZELISK_VERSION/bazelisk-linux-$arch"
+          echo "$sha  $dir/bazel" | sha256sum -c -
+          chmod +x "$dir/bazel"
+          echo "$dir" >> "$GITHUB_PATH"
+
       # GitHub-hosted runs use the Actions cache; only main writes it, so
       # pull-request builds only restore. Self-hosted runs keep Bazel caches on
       # the runner's persistent BAZEL_CACHE_DIR volume instead.
