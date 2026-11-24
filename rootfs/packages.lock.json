@@ -1010,6 +1010,13 @@
    "version": "257.13-1~deb13u1"
   },
   {
+   "name": "systemd-timesyncd",
+   "path": "pool/main/s/systemd/systemd-timesyncd_257.13-1~deb13u1_arm64.deb",
+   "sha256": "5c00488c8cdbcebf2f39705d4e3554c532a87edf661f22101b181510e15e6b57",
+   "size": 91460,
+   "version": "257.13-1~deb13u1"
+  },
+  {
    "name": "sysvinit-utils",
    "path": "pool/main/s/sysvinit/sysvinit-utils_3.14-4_arm64.deb",
    "sha256": "1366e87a382a6b95a0a7c507b8f1be9b193f772f3428f9f7e0271a217915cfae",

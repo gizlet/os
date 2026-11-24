@@ -63,7 +63,8 @@ late_state() {
     echo '== session output'
     cat /run/gizlet-session.log 2>/dev/null
     echo '== processes'
-    ps -eo pid,stat,etime,args 2>&1
+    # Passwords passed on a command line are left out, as the log is shared.
+    ps -eo pid,stat,etime,args 2>&1 | sed -E 's/(--passphrase).*/\1 [hidden]/; s/(ssh-password) .*/\1 [hidden]/'
     echo '== display devices'
     ls -l /dev/dri 2>&1
     echo '== ssh'

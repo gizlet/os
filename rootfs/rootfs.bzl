@@ -66,6 +66,8 @@ ROOTFS_ENABLE = [
     "gizlet-session.service",
     "gizlet-switches.service",
     "gizlet-var.service",
+    # The clock from the network once Wi-Fi is up; the RK817 RTC keeps it across reboots.
+    "systemd-timesyncd.service",
 ]
 
 # Started by gizlet-switches.service when turned on in the launcher, not by

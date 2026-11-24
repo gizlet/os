@@ -20,6 +20,7 @@
   "systemd",
   "systemd-resolved",
   "systemd-sysv",
+  "systemd-timesyncd",
   "udev",
   "usbutils",
   "vim-tiny"
