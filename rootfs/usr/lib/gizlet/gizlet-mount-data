@@ -3,6 +3,9 @@
 # the read-only base (partition 2), with the image's filesystem UUID. Its
 # gizlet/ and home/ directories become /opt/gizlet and /home; state that must
 # survive a reboot (ssh host key, WiFi networks) lives under system/.
+#
+# The image's data partition is small. On first boot it is grown to the end of
+# the card, as long as it is the last partition, and its filesystem with it.
 set -eu
 # save-boot-log copies these messages to the boot partition.
 say() { echo "Gizlet OS: $*"; echo "$*" >> /run/gizlet-boot.log; }
@@ -28,9 +31,33 @@ case " $identity " in
     *' UUID="17605036-fda0-4633-a95b-2ed27409a90c" '*) ;;
     *) say 'unexpected data filesystem'; exit 1 ;;
 esac
+# Grow partition 3 in the MBR when the card has unused space after it.
+disk_sys=${sysroot%/*}
+disk=/dev/${disk_sys##*/}
+part_sys=/sys/class/block/${data_dev##*/}
+start=$(cat "$part_sys/start")
+end=$((start + $(cat "$part_sys/size")))
+total=$(cat "$disk_sys/size")
+last=yes
+for sibling in "$disk_sys"/*; do
+    [ -f "$sibling/start" ] && [ "$(cat "$sibling/start")" -gt "$start" ] && last=
+done
+if [ "$last" = yes ] && [ $((total - end)) -gt 2048 ]; then
+    if echo ', +' | sfdisk -q -N 3 --no-reread --no-tell-kernel "$disk" && partx -u --nr 3 "$disk"; then
+        say "data partition grown to $(( ($(cat "$part_sys/size") * 512) >> 20 )) MiB"
+    else
+        say 'cannot grow the data partition'
+    fi
+fi
 store=/run/gizlet-data
 mkdir -m 0700 "$store"
 mount -t ext4 -o rw,nodev,nosuid "$data_dev" "$store"
+# Grow the filesystem to its partition, online. Without a change this does nothing.
+case "$(resize2fs "$data_dev" 2>&1)" in
+    *'Nothing to do'*) ;;
+    *'is now'*) say "data filesystem grown to fill its partition" ;;
+    *) say 'cannot grow the data filesystem' ;;
+esac
 # mount(8) can fall back to read-only mode when the card is write protected.
 writable=
 while read -r id parent device fsroot target opts rest; do

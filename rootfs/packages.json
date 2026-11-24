@@ -4,6 +4,8 @@
  "architecture": "arm64",
  "packages": [
   "dbus",
+  "e2fsprogs",
+  "fdisk",
   "iproute2",
   "iputils-ping",
   "iwd",

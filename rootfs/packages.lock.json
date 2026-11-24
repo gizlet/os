@@ -128,6 +128,20 @@
    "version": "1.22.22"
   },
   {
+   "name": "e2fsprogs",
+   "path": "pool/main/e/e2fsprogs/e2fsprogs_1.47.2-3+b12_arm64.deb",
+   "sha256": "ebd315c483853fafe877e39c1f49bf725834d7af7249a98b727f2ef4fe01a5c4",
+   "size": 565128,
+   "version": "1.47.2-3+b12"
+  },
+  {
+   "name": "fdisk",
+   "path": "pool/main/u/util-linux/fdisk_2.41.5-0+deb13u1_arm64.deb",
+   "sha256": "ac012f570d272e703e91ef038b0fabcb0f1eff468775586e95940d4f1938eb98",
+   "size": 155612,
+   "version": "2.41.5-0+deb13u1"
+  },
+  {
    "name": "findutils",
    "path": "pool/main/f/findutils/findutils_4.10.0-3_arm64.deb",
    "sha256": "c8b505ce907c293031095b3a237cb231967963b1d5aa8b1699aff45ccec3158a",
@@ -380,6 +394,20 @@
    "version": "2.8.3-1~deb13u1"
   },
   {
+   "name": "libext2fs2t64",
+   "path": "pool/main/e/e2fsprogs/libext2fs2t64_1.47.2-3+b12_arm64.deb",
+   "sha256": "303433a742ff98337ad93e58b7e92cef224a062f4cffcaf5f0e0cb657b732081",
+   "size": 204888,
+   "version": "1.47.2-3+b12"
+  },
+  {
+   "name": "libfdisk1",
+   "path": "pool/main/u/util-linux/libfdisk1_2.41.5-0+deb13u1_arm64.deb",
+   "sha256": "afc6c087dd7983a8cd56994a726fe7b130d6220a143a7e4bf8680acad496b8d0",
+   "size": 202152,
+   "version": "2.41.5-0+deb13u1"
+  },
+  {
    "name": "libfido2-1",
    "path": "pool/main/libf/libfido2/libfido2-1_1.15.0-1+b1_arm64.deb",
    "sha256": "510f81957f2905c57d3d8681c3ed9bf68a17bfb254d721a578c88edd8158477c",
@@ -611,6 +639,13 @@
    "version": "3.46.1-7+deb13u2"
   },
   {
+   "name": "libss2",
+   "path": "pool/main/e/e2fsprogs/libss2_1.47.2-3+b12_arm64.deb",
+   "sha256": "73d1474f43f34e02e7171ac32ca8e84899c1dea61da5b7e42065f8c37376f452",
+   "size": 29368,
+   "version": "1.47.2-3+b12"
+  },
+  {
    "name": "libssl3t64",
    "path": "pool/main/o/openssl/libssl3t64_3.5.7-1~deb13u2_arm64.deb",
    "sha256": "ec131326aa9fa9ec934eca386bc7991f328fe383eaefd3e43bd8901a9199c5ae",
@@ -749,6 +784,13 @@
    "sha256": "b4bbb8242cbf5588de7aafeb9d578a3dee1db2891f444ab454fd30bd80ccf2b4",
    "size": 186124,
    "version": "1:4.17.4-2"
+  },
+  {
+   "name": "logsave",
+   "path": "pool/main/e/e2fsprogs/logsave_1.47.2-3+b12_arm64.deb",
+   "sha256": "4ff1e3fe38858f99f08a93070e45977fb3a9f4cabea6097a6a4cc7f89ff1e884",
+   "size": 24812,
+   "version": "1.47.2-3+b12"
   },
   {
    "name": "lsb-base",

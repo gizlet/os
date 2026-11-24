@@ -150,6 +150,8 @@ def scenarios(image, kernel_name, work):
     subprocess.run(["mcopy", "-i", f"{image}@@{parts['boot'][1]}", "::" + kernel_name, kernel], check=True)
     private = work / "private.img"
     shutil.copyfile(image, private)
+    # A larger card than the image: first boot grows the data partition to its end.
+    os.truncate(private, 1 << 30)
     with boot(private, kernel, root) as console:
         # A fresh card starts the factory launcher; q on its console ends it.
         console.expect(b"installed the factory launcher as the boot entry")
@@ -159,6 +161,9 @@ def scenarios(image, kernel_name, work):
         console.enter("q")
         console.expect(b"Leaving the launcher.")
         console.expect(b"boot entry finished with status 0")
+        console.expect(PROMPT)
+        console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 600000 ] && echo data-grown")
+        console.expect(b"\r\ndata-grown\r\n")
         console.expect(PROMPT)
         console.enter("cat /proc/mounts")
         for mount in (b" / squashfs ro,", b" /opt/gizlet ext4 rw,", b" /home ext4 rw,"):
