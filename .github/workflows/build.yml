@@ -37,7 +37,6 @@ jobs:
       pull-requests: write
     uses: gizlet/.github/.github/workflows/pr-check-start.yml@latest
     with:
-      runner: ${{ fromJSON(vars.RUNNERS || '{}')['linux-arm64'] || 'ubuntu-24.04-arm' }}
       check-name: Bazel build and test (R36S)
       command: /test
       pull_request_number: ${{ inputs.pull_request_number }}
@@ -50,10 +49,10 @@ jobs:
       !cancelled() && (
         needs.start.outputs.run == 'true'
         || (needs.start.result == 'skipped' && github.event_name != 'issue_comment'))
-    # Every job here runs on the self-hosted ARM64 Linux runner that the
-    # RUNNERS organization variable maps to linux-arm64, falling back to
-    # GitHub's ARM64 runner. Only triage and Codex review use GitHub-hosted
-    # runners.
+    # The build runs on the self-hosted ARM64 Linux runner that the RUNNERS
+    # organization variable maps to linux-arm64, falling back to GitHub's ARM64
+    # runner. Triage, Codex review and the check start/finish jobs stay on
+    # GitHub-hosted runners.
     runs-on: ${{ fromJSON(vars.RUNNERS || '{}')['linux-arm64'] || 'ubuntu-24.04-arm' }}
     timeout-minutes: 120
     # The job builds pull-request code: read-only token and no secrets.
@@ -145,7 +144,6 @@ jobs:
       pull-requests: write
     uses: gizlet/.github/.github/workflows/pr-check-finish.yml@latest
     with:
-      runner: ${{ fromJSON(vars.RUNNERS || '{}')['linux-arm64'] || 'ubuntu-24.04-arm' }}
       check_run_id: ${{ needs.start.outputs.check_run_id }}
       comment_id: ${{ needs.start.outputs.comment_id }}
       result: ${{ needs.r36s.result }}
