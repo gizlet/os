@@ -1,3 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
 load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
 
 package(default_visibility = ["//visibility:public"])
@@ -6,12 +7,24 @@ package(default_visibility = ["//visibility:public"])
 # Static, like the Booter.
 debian_cc_binary(
     name = "power",
-    srcs = ["power.c"],
+    srcs = [
+        "idle.h",
+        "power.c",
+    ],
     copts = [
         "-std=c11",
         "-O2",
         "-Wall",
         "-Wextra",
         "-Werror",
+    ],
+)
+
+# Whether held controls count as use (idle.h), on the computer running Bazel.
+cc_test(
+    name = "idle_test",
+    srcs = [
+        "idle.h",
+        "idle_test.c",
     ],
 )

@@ -183,9 +183,11 @@ const KEYS: [(K, Button); 21] = [
     (K::KEY_LEFT_BRACKET, Button::VolumeDown),
 ];
 
-/// Text-editing keys while the on-screen keyboard is open; the rest type.
+/// Keys that type while the on-screen keyboard is open: all but the arrows,
+/// which keep moving its focus. `=` types too rather than pressing Start, so
+/// a password with `=` or `+` is not submitted half-typed; Enter submits.
 fn text_key(k: K) -> bool {
-    !matches!(k, K::KEY_UP | K::KEY_DOWN | K::KEY_LEFT | K::KEY_RIGHT | K::KEY_EQUAL)
+    !matches!(k, K::KEY_UP | K::KEY_DOWN | K::KEY_LEFT | K::KEY_RIGHT)
 }
 
 /// raylib's gamepad buttons; raylib names face buttons by position too.
@@ -384,5 +386,21 @@ impl Controls {
         let mut raw = pad;
         raw.merge(&keys);
         (input, raw)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_type_in_text_mode_except_the_arrows() {
+        // = and + belong in passwords; Enter submits instead.
+        assert!(text_key(K::KEY_EQUAL));
+        assert!(text_key(K::KEY_MINUS));
+        assert!(text_key(K::KEY_ENTER));
+        for arrow in [K::KEY_UP, K::KEY_DOWN, K::KEY_LEFT, K::KEY_RIGHT] {
+            assert!(!text_key(arrow));
+        }
     }
 }

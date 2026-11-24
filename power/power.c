@@ -29,6 +29,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "idle.h"
+
 #define MAX_DEVICES 32
 #define DIM_SECONDS 15
 #define DEFAULT_SCREEN_OFF 300
@@ -41,6 +43,8 @@ struct device {
     unsigned char abs[BITS(ABS_CNT)];
     struct input_absinfo info[ABS_CNT];
     int last[ABS_CNT];
+    /* Each axis's value when the device was opened, where it rests. */
+    int rest[ABS_CNT];
 };
 
 static struct device devices[MAX_DEVICES];
@@ -187,7 +191,9 @@ static void rescan(void) {
         snprintf(d->name, sizeof d->name, "%.31s", e->d_name);
         if (test_bit(types, EV_ABS) && ioctl(fd, EVIOCGBIT(EV_ABS, sizeof d->abs), d->abs) >= 0) {
             for (int a = 0; a < ABS_CNT; a++) {
-                if (test_bit(d->abs, a) && ioctl(fd, EVIOCGABS(a), &d->info[a]) >= 0) d->last[a] = d->info[a].value;
+                if (test_bit(d->abs, a) && ioctl(fd, EVIOCGABS(a), &d->info[a]) >= 0) {
+                    d->last[a] = d->rest[a] = d->info[a].value;
+                }
             }
         }
         if (grabbed) ioctl(fd, EVIOCGRAB, 1);
@@ -199,9 +205,22 @@ static void rescan(void) {
 static int any_key_down(void) {
     for (int i = 0; i < ndevices; i++) {
         unsigned char keys[BITS(KEY_CNT)] = {0};
-        if (ioctl(devices[i].fd, EVIOCGKEY(sizeof keys), keys) < 0) continue;
-        for (size_t b = 0; b < sizeof keys; b++) {
-            if (keys[b]) return 1;
+        if (ioctl(devices[i].fd, EVIOCGKEY(sizeof keys), keys) >= 0 && idle_any_key(keys, sizeof keys)) return 1;
+    }
+    return 0;
+}
+
+/* Whether a control is held now: a button down, a hat off center, or a stick
+ * or trigger kept away from rest. These send no events while held. */
+static int controls_held(void) {
+    if (any_key_down()) return 1;
+    for (int i = 0; i < ndevices; i++) {
+        struct device *d = &devices[i];
+        for (int a = 0; a < ABS_CNT; a++) {
+            struct input_absinfo now;
+            if (!test_bit(d->abs, a) || ioctl(d->fd, EVIOCGABS(a), &now) < 0) continue;
+            int hat = a >= ABS_HAT0X && a <= ABS_HAT3Y;
+            if (idle_axis_engaged(now.value, d->rest[a], d->info[a].minimum, d->info[a].maximum, hat)) return 1;
         }
     }
     return 0;
@@ -248,6 +267,13 @@ int main(int argc, char **argv) {
         int seconds = screen_off_seconds(config);
         long long off_at = last_use + (long long)seconds * 1000;
         long long dim_at = off_at - (seconds > DIM_SECONDS * 2 ? DIM_SECONDS * 1000 : 0);
+        /* Due to dim or turn off: a control held all along is use too. */
+        if (seconds && screen != OFF && t >= dim_at && controls_held()) {
+            last_use = t;
+            off_at = last_use + (long long)seconds * 1000;
+            dim_at = off_at - (seconds > DIM_SECONDS * 2 ? DIM_SECONDS * 1000 : 0);
+            if (screen == DIM) set_screen(ON);
+        }
         if (seconds == 0) {
             if (screen != ON) set_screen(ON);
         } else if (t >= off_at) {
