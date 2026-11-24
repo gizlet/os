@@ -8,7 +8,7 @@
 
 /*
  * The OTG port is a USB host, as in the stock firmware: OTG_SWITCH supplies
- * VBUS from boot. On V30 boards the on-board RTL8188FU WiFi shares this bus.
+ * VBUS from boot. On V30 boards the on-board RTL8188EU WiFi shares this bus.
  */
 &otg_switch {
 	regulator-boot-on;

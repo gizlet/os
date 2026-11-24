@@ -21,6 +21,7 @@ rockchip_linux_kernel(
         _BOARD + "panel_generic_dsi": "drivers/gpu/drm/panel/panel-generic-dsi.c",
         _BOARD + "joypad_driver": "drivers/input/joystick/rocknix-singleadc-joypad.c",
         _BOARD + "joypad_header": "drivers/input/joystick/rocknix-joypad.h",
+        "@linux_firmware//:rtl8188eufw.bin": "firmware/rtlwifi/rtl8188eufw.bin",
         "@linux_firmware//:rtl8188fufw.bin": "firmware/rtlwifi/rtl8188fufw.bin",
     },
     dts_dirs = {_BOARD + "rocknix_dts": "rockchip"},
