@@ -87,20 +87,26 @@ def linux_kernel(stage, params):
     stage.run("make", "-s", "olddefconfig")
     check_config(config_settings(config), stage.work / ".config")
     # Out-of-tree drivers become built-in objects of their directory, as ROCKNIX adds them.
+    # Headers are installed beside them.
     for src, dst in params.get("builtin_sources", []):
-        if not dst.endswith(".c"):
-            raise ValueError(f"Built-in source must be a C file: {dst!r}")
+        if not dst.endswith((".c", ".h")):
+            raise ValueError(f"Built-in source must be a C file or header: {dst!r}")
         install(stage.work, [(stage.input(src), dst)], 0o644)
-        makefile = child(stage.work, str(Path(dst).parent / "Makefile"))
-        with makefile.open("a") as out:
-            out.write(f"obj-y += {Path(dst).stem}.o\n")
+        if dst.endswith(".c"):
+            makefile = child(stage.work, str(Path(dst).parent / "Makefile"))
+            with makefile.open("a") as out:
+                out.write(f"obj-y += {Path(dst).stem}.o\n")
     dt_dir = stage.work / "arch/arm64/boot/dts"
     install(dt_dir, [(stage.input(src), dst) for src, dst in params["dts_files"]], 0o644, replace=True)
     targets = [params["dtb_target"]] + params.get("extra_dtb_targets", [])
     dtbs = [child(dt_dir, target) for target in targets]
     for target, dtb in zip(targets, dtbs):
-        if dtb.suffix != ".dtb" or target.startswith("-"):
-            raise ValueError(f"Expected a Kbuild DTB target: {target!r}")
+        if dtb.suffix not in (".dtb", ".dtbo") or target.startswith("-"):
+            raise ValueError(f"Expected a Kbuild DTB or overlay target: {target!r}")
+        # Keep the label symbols, so that boot-time overlays can refer to them.
+        if dtb.suffix == ".dtb":
+            with child(dtb.parent, "Makefile").open("a") as out:
+                out.write(f"DTC_FLAGS_{dtb.stem} += -@\n")
     stage.run("make", "-s", f"-j{stage.jobs}", "Image", *targets)
     return [stage.work / "arch/arm64/boot/Image"] + dtbs
 

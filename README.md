@@ -1,18 +1,18 @@
 # Gizlet OS
 
-Gizlet OS builds the Linux base system and TF1 system card for the genuine RK3326 R36S-V12 (2023-08-18) with original 640×480 Panel 0. BusyBox init mounts a read-only Linux root, gives installed software `/opt/gizlet` and user files `/home`, and starts the executable named in `boot.ini`. A fresh card opens a local recovery shell for installation.
+Gizlet OS builds the Linux base system and TF1 system card for the RK3326 Game Console R36S. Its 640×480 panel is selected by a device tree overlay, as in ROCKNIX. BusyBox init mounts a read-only Linux root, gives installed software `/opt/gizlet` and user files `/home`, and starts the executable named in `boot.ini`. A fresh card opens a local recovery shell for installation.
 
 ## Build and test
 
 Install Bazel 9.3.3 on an Apple silicon Mac. No other build tools are needed. libkrun also supports AArch64 Linux hosts with `/dev/kvm`; that path is not yet exercised here. Bazel builds a libkrun microVM and its Debian bookworm root from pinned sources, and every native stage and image test runs inside it. [Build VM](tools/bazel/krun/README.md)
 
 ```sh
-bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-panel0 //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-v30-panel4
-bazel test --config=r36s --test_output=errors //targets/sd_image/gameconsole/r36s:image_test //targets/sd_image/gameconsole/r36s:image_test_v30_panel4 //targets/sd_image/gameconsole/r36s:rootfs_test //targets/sd_image/gameconsole/r36s:boot_test
+bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-v30-panel4
+bazel test --config=r36s --test_output=errors //targets/sd_image/gameconsole/r36s:image_test //targets/sd_image/gameconsole/r36s:image_test_r36s_v30_panel4 //targets/sd_image/gameconsole/r36s:rootfs_test //targets/sd_image/gameconsole/r36s:boot_test
 bazel test //tools/bazel/rockchip:runner_test
 ```
 
-The build writes one card per R36S display variant, `gizlet-os-r36s-panel0.img` and `gizlet-os-r36s-v30-panel4.img`, under `bazel-bin/targets/sd_image/gameconsole/r36s/`. They differ only in the device tree. Without a serial cable, `uboot.log` and `gizlet.log` on the FAT boot partition show how far the last boot got. The card test reads back the boot stages, both BL31 copies, the partition table and the device tree. The rootfs test checks the root and data filesystems, the license notices and the installed Booter. The QEMU test starts the kernel extracted from the image on a Cortex-A35 `virt` machine. It boots a private writable copy twice, installs a test executable through the guest console, checks its output and verifies a user file across reboot. It also exercises recovery from invalid entries and isolation from a second data disk. The delivered data partition starts with empty `gizlet/` and `home/` directories.
+The build writes `gizlet-os-r36s.img` under `bazel-bin/targets/sd_image/gameconsole/r36s/`, for the original ST7703 panel, and `gizlet-os-r36s-v30-panel4.img`, the same card with the V30 Panel 4 overlay preselected as `mipi-panel.dtbo`. Without a serial cable, `uboot.log` and `gizlet.log` on the FAT boot partition show how far the last boot got. The card test reads back the boot stages, both BL31 copies, the partition table and the device tree. The rootfs test checks the root and data filesystems, the license notices and the installed Booter. The QEMU test starts the kernel extracted from the image on a Cortex-A35 `virt` machine. It boots a private writable copy twice, installs a test executable through the guest console, checks its output and verifies a user file across reboot. It also exercises recovery from invalid entries and isolation from a second data disk. The delivered data partition starts with empty `gizlet/` and `home/` directories.
 
 `third_party/` pins each upstream once: Linux, Hardkernel U-Boot, BusyBox, Rockchip rkbin and the `gizlet/rocknix` fork that serves the kernel and U-Boot patches. A board package under `boards/` selects its archives, ordered patch lists, firmware, configuration and test expectations. A target package under `targets/` only composes the card from those labels and the rules in `tools/bazel/`. [Image rules](tools/bazel/rockchip/README.md) · [R36S board](boards/gameconsole/r36s/rk3326/BUILD.bazel) · [R36S target](targets/sd_image/gameconsole/r36s/BUILD.bazel)
 

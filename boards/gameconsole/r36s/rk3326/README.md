@@ -1,16 +1,16 @@
-# R36S-V12 Panel 0
+# Game Console R36S
 
-This card targets the genuine standard RK3326 R36S-V12 marked `2023-08-18`, with the original ST7703 Panel 0. Verify the original card's display DTB as well as the PCB marking. [Board and display reference](https://github.com/southoz/dArkOSRE-R36/tree/3f372c85aa53a26b265c3dc0c2661ec0fae5faf0/files/BOOT/dtb/r36s/R36S-V12%202023-08-18%20Panel%200)
+This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts`, which describes the R36S with its original ST7703 panel. [Board tree](gizlet-r36s.dts) [Board and display reference](https://github.com/southoz/dArkOSRE-R36/tree/3f372c85aa53a26b265c3dc0c2661ec0fae5faf0/files/BOOT/dtb/r36s/R36S-V12%202023-08-18%20Panel%200)
 
 ## Display variants
 
-R36S units ship with different LCD panels. `gizlet-r36s-panel0.dts` drives the original ST7703 Panel 0. `gizlet-r36s-v30-panel4.dts` is for V30 boards with Panel 4, whose controller ROCKNIX's generic DSI driver initializes from a description converted from the stock dtb. A card for the wrong panel boots with the backlight on and a blank screen. To identify a unit, check which dtb its stock card loads in `boot.ini`. [Panel 0](gizlet-r36s-panel0.dts) · [V30 Panel 4](gizlet-r36s-v30-panel4.dts)
+R36S units ship with different LCD panels. As in ROCKNIX, the device tree describes the original ST7703 panel and `boot.scr` applies `mipi-panel.dtbo` from the FAT boot partition when it is present. Each card carries the known panel overlays beside the tree; copy the one for your unit to `mipi-panel.dtbo`, or flash a card that already has it. `r36s-v30-panel4.dtbo` drives V30 boards with Panel 4 through ROCKNIX's generic DSI driver, with the init sequence converted from the stock dtb. A wrong panel boots with the backlight on and a blank screen; the stock card's `boot.ini` names the dtb that identifies the unit. `uboot.log` records which overlay was applied. [V30 Panel 4](r36s-v30-panel4.dtso)
 
 The legacy U-Boot picks a dtb name from a board-revision ADC reading before it runs `boot.scr`. Each card therefore carries its tree as `r36s.dtb` and under every name U-Boot can choose. [Card facts](card.bzl)
 
 ## TF1 storage
 
-The 160 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes. The boot stages, kernel load address, Panel 0 device tree, UART2 and OTG VBUS configuration follow the reviewed R36S boot chain. The kernel includes its ext4 driver for the data partition. [Layout](sdcard.cfg) · [Linux configuration](kernel.config) · [U-Boot commands](boot.cmd)
+The 160 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes. The boot stages, kernel load address, device tree, UART2 and OTG VBUS configuration follow the reviewed R36S boot chain. The kernel includes its ext4 driver for the data partition. [Layout](sdcard.cfg) · [Linux configuration](kernel.config) · [U-Boot commands](boot.cmd)
 
 | Start sector | Contents | Use |
 | ---: | --- | --- |

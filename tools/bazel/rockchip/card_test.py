@@ -5,7 +5,8 @@ Usage: card_test.py IMAGE BL31_ELF TRUST_SHA256 BOOT_CMD CONFIG_JSON
 CONFIG_JSON describes the board's card: MBR disk signature, partitions as
 [boot flag, type, first sector, sectors], total size, the pinned IDB digest
 and length, the boot partition's file names, optional `dtb_copies` that must
-equal the device tree, and device tree expectations.
+equal the device tree, device tree expectations and `overlays` that must apply
+to it.
 The BootROM stages sit at the legacy offsets: IDB at sector 64, U-Boot at
 8 MiB and BL31 trust at 12 MiB.
 """
@@ -209,6 +210,14 @@ def main():
         print(f"  BL31[{i}] physical={addr:#010x} bytes={len(data)}")
     check_regressions(trust, segments, golden, script, commands)
     check_device_tree(str(work / files["dtb"]), config.get("device_tree", {}))
+    for overlay in config.get("overlays", []):
+        name = overlay["file"]
+        run("mcopy", "-i", work / "boot.vfat", "::" + name, work / name)
+        merged = work / (name + ".merged.dtb")
+        run("fdtoverlay", "-i", work / files["dtb"], "-o", merged, work / name)
+        for node, prop, value in overlay["properties"]:
+            assert fdt(str(merged), node, prop) == value, f"{name}: {node} {prop}"
+        print(f"Overlay {name} applies to {files['dtb']}")
     run("sha256sum", image, work / files["kernel"], work / files["dtb"])
 
 

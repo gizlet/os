@@ -5,7 +5,7 @@ load("//third_party:pinned_files.bzl", "pinned_files_extension")
 linux = pinned_files_extension(
     name = "linux",
     files = {
-        "linux-6.12.17.tar.xz": ["https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.17.tar.xz", "5c205cd34f80974e4973e321cb008f5f6895a8aa8c2577f06a9448cd77de63b3"],
+        "linux-7.1.2.tar.xz": ["https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.1.2.tar.xz", "37198c93727be247c9fb5309bb86cd5e496c61e5322cd8c4eca9476bb0b5883f"],
     },
     doc = "Provides pinned Linux source archives.",
 )

@@ -1,4 +1,4 @@
-"""Facts about the R36S Panel 0 card that the image tests check."""
+"""Facts about the R36S card that the image tests check."""
 
 _PMIC = "/i2c@ff180000/pmic@20"
 
@@ -22,7 +22,7 @@ R36S_UBOOT_DTB_NAMES = [
 ]
 
 # Layout and boot chain, matching sdcard.cfg and the pinned ROCKNIX 20261101-a IDB.
-R36S_CARD = {
+_R36S_LAYOUT = {
     "disk_signature": "36335030",
     "size_mib": 160,
     # [boot flag, MBR type, first sector, sectors]
@@ -55,15 +55,19 @@ R36S_CARD = {
     },
 }
 
-_PANEL0_COMPATIBLE = "gameconsole,r36s-panel sitronix,st7703"
+_PANEL = "/dsi@ff450000/panel@0"
 
-# The V30 Panel 4 card differs only in its device tree's panel driver.
-R36S_V30_PANEL4_CARD = R36S_CARD | {
-    "device_tree": R36S_CARD["device_tree"] | {
-        "properties": [
-            p[:2] + ["rocknix,generic-dsi"] if p[2] == _PANEL0_COMPATIBLE else p
-            for p in R36S_CARD["device_tree"]["properties"]
-        ],
+# Every panel overlay must apply to the card's tree and select its driver.
+_PANEL4 = [[_PANEL, "compatible", "rocknix,generic-dsi"]]
+
+R36S_CARD = _R36S_LAYOUT | {
+    "overlays": [{"file": "r36s-v30-panel4.dtbo", "properties": _PANEL4}],
+}
+
+# Panel overlays, each also built as a card with it preselected as mipi-panel.dtbo.
+R36S_PANELS = {
+    "r36s-v30-panel4": R36S_CARD | {
+        "overlays": R36S_CARD["overlays"] + [{"file": "mipi-panel.dtbo", "properties": _PANEL4}],
     },
 }
 

@@ -38,3 +38,6 @@ use_repo(rkbin, "rkbin")
 
 rocknix = use_extension("//third_party/rocknix:repositories.bzl", "rocknix")
 use_repo(rocknix, "rocknix")
+
+rocknix_joypad = use_extension("//third_party/rocknix-joypad:repositories.bzl", "rocknix_joypad")
+use_repo(rocknix_joypad, "rocknix_joypad")

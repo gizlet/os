@@ -1,4 +1,4 @@
-load("//boards/gameconsole/r36s/rk3326:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_UBOOT_DTB_NAMES", "R36S_V30_PANEL4_CARD")
+load("//boards/gameconsole/r36s/rk3326:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_PANELS", "R36S_UBOOT_DTB_NAMES")
 load("//boot:defs.bzl", "gizlet_qemu_test", "gizlet_rootfs_test")
 load("//tools/bazel/rockchip:defs.bzl", "busybox_squashfs", "rockchip_card_test", "rockchip_legacy_uboot", "rockchip_linux_kernel", "rockchip_sd_image")
 
@@ -8,13 +8,7 @@ _BOARD = "//boards/gameconsole/r36s/rk3326:"
 
 _EPOCH = 1704067200
 
-_PANEL0 = [_BOARD + "r36s_panel0"]
-
-# Display variants of the R36S. Each card differs only in its device tree.
-_VARIANTS = {
-    "panel0": "parts/r36s.dtb",
-    "v30-panel4": "parts/r36s-v30-panel4.dtb",
-}
+_R36S = [_BOARD + "r36s"]
 
 rockchip_linux_kernel(
     name = "kernel",
@@ -22,21 +16,25 @@ rockchip_linux_kernel(
     build_user = "gizlet",
     config = _BOARD + "kernel.config",
     dtb = "parts/r36s.dtb",
-    dtb_target = "rockchip/gizlet-r36s-panel0.dtb",
-    builtin_sources = {_BOARD + "panel_generic_dsi": "drivers/gpu/drm/panel/panel-generic-dsi.c"},
-    dts_files = {
-        _BOARD + "gizlet-r36s-panel0.dts": "rockchip/gizlet-r36s-panel0.dts",
-        _BOARD + "gizlet-r36s-v30-panel4.dts": "rockchip/gizlet-r36s-v30-panel4.dts",
+    dtb_target = "rockchip/gizlet-r36s.dtb",
+    builtin_sources = {
+        _BOARD + "panel_generic_dsi": "drivers/gpu/drm/panel/panel-generic-dsi.c",
+        _BOARD + "joypad_driver": "drivers/input/joystick/rocknix-singleadc-joypad.c",
+        _BOARD + "joypad_header": "drivers/input/joystick/rocknix-joypad.h",
     },
-    extra_dtb_targets = ["rockchip/gizlet-r36s-v30-panel4.dtb"],
-    extra_dtbs = ["parts/r36s-v30-panel4.dtb"],
+    dts_dirs = {_BOARD + "rocknix_dts": "rockchip"},
+    dts_files = {
+        _BOARD + "gizlet-r36s.dts": "rockchip/gizlet-r36s.dts",
+        _BOARD + "r36s-v30-panel4.dtso": "rockchip/r36s-v30-panel4.dtso",
+    },
+    extra_dtb_targets = ["rockchip/r36s-v30-panel4.dtbo"],
+    extra_dtbs = ["parts/r36s-v30-panel4.dtbo"],
     image = "parts/Image",
     # ROCKNIX applies this set with plain `patch -p1`, whose default fuzz is 2.
-    # 004-input-drivers needs it after 0006-rk817 shifts its trailing context.
     patch_fuzz = 2,
     patches = [_BOARD + "kernel_patches"],
     source_date_epoch = _EPOCH,
-    target_compatible_with = _PANEL0,
+    target_compatible_with = _R36S,
 )
 
 rockchip_legacy_uboot(
@@ -55,7 +53,7 @@ rockchip_legacy_uboot(
     script = "parts/boot.scr",
     script_name = "Gizlet R36S Panel 0",
     source_date_epoch = _EPOCH,
-    target_compatible_with = _PANEL0,
+    target_compatible_with = _R36S,
     trust = "parts/trust.img",
     trust_checksum = _BOARD + "trust.sha256",
     trust_ini = _BOARD + "trust.ini",
@@ -97,63 +95,101 @@ busybox_squashfs(
     },
     source_date_epoch = _EPOCH,
     source_files = {"LICENSE": "usr/share/licenses/BusyBox"},
-    target_compatible_with = _PANEL0,
+    target_compatible_with = _R36S,
 )
 
-# Each card carries its variant's tree as r36s.dtb for boot.scr, and under every
+# The card carries the R36S tree as r36s.dtb for boot.scr, and under every
 # revision-dependent name the legacy U-Boot loads; see card.bzl.
 [genrule(
-    name = variant + "_" + dtb_name.removesuffix(".dtb"),
-    srcs = [dtb],
-    outs = [variant + "/" + dtb_name],
+    name = "uboot_" + dtb_name.removesuffix(".dtb"),
+    srcs = [":parts/r36s.dtb"],
+    outs = ["parts/" + dtb_name],
     cmd = "cp $< $@",
-    target_compatible_with = _PANEL0,
-) for variant, dtb in _VARIANTS.items() for dtb_name in ["r36s.dtb"] + R36S_UBOOT_DTB_NAMES]
+    target_compatible_with = _R36S,
+) for dtb_name in R36S_UBOOT_DTB_NAMES]
 
-[rockchip_sd_image(
-    name = "gizlet-os-r36s-" + variant,
-    out = "gizlet-os-r36s-%s.img" % variant,
-    inputs = {
-        ":parts/idbloader.img": "idbloader.img",
-        ":parts/uboot.img": "uboot.img",
-        ":parts/trust.img": "trust.img",
-        ":parts/boot.scr": "boot.scr",
-        ":parts/Image": "Image",
-        ":parts/rootfs.sqfs": "rootfs.sqfs",
-    } | {":%s/%s" % (variant, dtb_name): dtb_name for dtb_name in ["r36s.dtb"] + R36S_UBOOT_DTB_NAMES},
+_CARD_FILES = {
+    ":parts/idbloader.img": "idbloader.img",
+    ":parts/uboot.img": "uboot.img",
+    ":parts/trust.img": "trust.img",
+    ":parts/boot.scr": "boot.scr",
+    ":parts/Image": "Image",
+    ":parts/r36s.dtb": "r36s.dtb",
+    ":parts/rootfs.sqfs": "rootfs.sqfs",
+} | {
+    ":parts/" + dtb_name: dtb_name
+    for dtb_name in R36S_UBOOT_DTB_NAMES
+} | {
+    ":parts/%s.dtbo" % panel: "%s.dtbo" % panel
+    for panel in R36S_PANELS
+}
+
+# The R36S card. Its panel overlays sit beside the device tree; boot.scr
+# applies the one copied to mipi-panel.dtbo.
+rockchip_sd_image(
+    name = "gizlet-os-r36s",
+    out = "gizlet-os-r36s.img",
+    inputs = _CARD_FILES,
     layout = _BOARD + "sdcard.cfg",
     layout_image = "sdcard.img",
     source_date_epoch = _EPOCH,
-    target_compatible_with = _PANEL0,
-) for variant in _VARIANTS]
+    target_compatible_with = _R36S,
+)
+
+# The same card with a panel overlay already selected, for flashing a known unit.
+[genrule(
+    name = "sdcard_" + panel,
+    srcs = [_BOARD + "sdcard.cfg"],
+    outs = ["%s/sdcard.cfg" % panel],
+    cmd = "sed 's/\"r36s.dtb\",/\"r36s.dtb\", \"mipi-panel.dtbo\",/' $< > $@ && grep -q mipi-panel.dtbo $@",
+    target_compatible_with = _R36S,
+) for panel in R36S_PANELS]
+
+[rockchip_sd_image(
+    name = "gizlet-os-" + panel,
+    out = "gizlet-os-%s.img" % panel,
+    inputs = _CARD_FILES | {":%s/mipi-panel.dtbo" % panel: "mipi-panel.dtbo"},
+    layout = ":%s/sdcard.cfg" % panel,
+    layout_image = "sdcard.img",
+    source_date_epoch = _EPOCH,
+    target_compatible_with = _R36S,
+) for panel in R36S_PANELS]
+
+[genrule(
+    name = "mipi_panel_" + panel,
+    srcs = [":parts/%s.dtbo" % panel],
+    outs = ["%s/mipi-panel.dtbo" % panel],
+    cmd = "cp $< $@",
+    target_compatible_with = _R36S,
+) for panel in R36S_PANELS]
 
 rockchip_card_test(
     name = "image_test",
     bl31 = _BOARD + "bl31",
     boot_command = _BOARD + "boot.cmd",
     card = R36S_CARD,
-    image = ":gizlet-os-r36s-panel0",
+    image = ":gizlet-os-r36s",
     tags = ["manual"],
-    target_compatible_with = _PANEL0,
+    target_compatible_with = _R36S,
     trust_checksum = _BOARD + "trust.sha256",
 )
 
-rockchip_card_test(
-    name = "image_test_v30_panel4",
+[rockchip_card_test(
+    name = "image_test_" + panel.replace("-", "_"),
     bl31 = _BOARD + "bl31",
     boot_command = _BOARD + "boot.cmd",
-    card = R36S_V30_PANEL4_CARD,
-    image = ":gizlet-os-r36s-v30-panel4",
+    card = card,
+    image = ":gizlet-os-" + panel,
     tags = ["manual"],
-    target_compatible_with = _PANEL0,
+    target_compatible_with = _R36S,
     trust_checksum = _BOARD + "trust.sha256",
-)
+) for panel, card in R36S_PANELS.items()]
 
 gizlet_rootfs_test(
     name = "rootfs_test",
     booter = "//boot:booter",
     data_uuid = R36S_DATA_UUID,
-    image = ":gizlet-os-r36s-panel0",
+    image = ":gizlet-os-r36s",
     licenses = [
         "BusyBox",
         "glibc-LGPL-2.1",
@@ -165,13 +201,13 @@ gizlet_rootfs_test(
         "u-boot/gpl-2.0.txt",
     ],
     tags = ["manual"],
-    target_compatible_with = _PANEL0,
+    target_compatible_with = _R36S,
 )
 
 gizlet_qemu_test(
     name = "boot_test",
     size = "medium",
-    image = ":gizlet-os-r36s-panel0",
+    image = ":gizlet-os-r36s",
     tags = ["manual"],
-    target_compatible_with = _PANEL0,
+    target_compatible_with = _R36S,
 )

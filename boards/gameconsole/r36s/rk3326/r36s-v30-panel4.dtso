@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * R36S V30 with Panel 4. The board matches Panel 0 except for the display
- * controller, which ROCKNIX's generic DSI driver initializes from this
- * description. It was converted with ROCKNIX's importpanel.py from the stock
- * ArkOS-clone rk3326-r36s-v30-linux.dtb, "v30 panel4" profile.
+ * R36S V30 with Panel 4. ROCKNIX's generic DSI driver initializes this panel
+ * from the description below, converted with ROCKNIX's importpanel.py from the
+ * stock ArkOS-clone rk3326-r36s-v30-linux.dtb ("v30 panel4" profile).
+ *
+ * boot.scr applies mipi-panel.dtbo from the FAT boot partition when present.
+ * Copy this overlay there under that name for a V30 Panel 4 unit.
  */
-#include "gizlet-r36s-panel0.dts"
+/dts-v1/;
+/plugin/;
 
 &internal_display {
 	compatible = "rocknix,generic-dsi";

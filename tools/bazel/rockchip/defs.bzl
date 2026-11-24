@@ -81,14 +81,18 @@ def _mapping(targets):
 def _kernel(ctx):
     params = _source(ctx) | _kbuild(ctx) | {
         "config": ctx.file.config.path,
-        "dts_files": _mapping(ctx.attr.dts_files),
+        "dts_files": _mapping(ctx.attr.dts_files) + [
+            [f.path, directory + "/" + f.basename]
+            for target, directory in ctx.attr.dts_dirs.items()
+            for f in target.files.to_list()
+        ],
         "dtb_target": ctx.attr.dtb_target,
         "extra_dtb_targets": ctx.attr.extra_dtb_targets,
         "builtin_sources": _mapping(ctx.attr.builtin_sources),
     }
     if len(ctx.attr.extra_dtb_targets) != len(ctx.outputs.extra_dtbs):
         fail("extra_dtb_targets and extra_dtbs must have the same length")
-    inputs = [ctx.file.archive, ctx.file.config] + ctx.files.patches + ctx.files.dts_files + ctx.files.builtin_sources
+    inputs = [ctx.file.archive, ctx.file.config] + ctx.files.patches + ctx.files.dts_files + ctx.files.dts_dirs + ctx.files.builtin_sources
     outputs = [ctx.outputs.image, ctx.outputs.dtb] + ctx.outputs.extra_dtbs
     return _stage(ctx, "Kernel", inputs, outputs, params)
 
@@ -98,9 +102,10 @@ rockchip_linux_kernel = rule(
     attrs = _NATIVE | _SOURCE | _KBUILD | {
         "config": attr.label(mandatory = True, allow_single_file = True, doc = "Base .config for olddefconfig."),
         "dts_files": attr.label_keyed_string_dict(allow_files = True, doc = "Optional source labels mapped to paths under arch/arm64/boot/dts/."),
+        "dts_dirs": attr.label_keyed_string_dict(allow_files = True, doc = "Labels whose files are installed by name into a directory under arch/arm64/boot/dts/."),
         "dtb_target": attr.string(mandatory = True, doc = "Kbuild DTB target relative to arch/arm64/boot/dts/."),
-        "extra_dtb_targets": attr.string_list(doc = "Further Kbuild DTB targets, built into `extra_dtbs` in order."),
-        "builtin_sources": attr.label_keyed_string_dict(allow_files = True, doc = "C sources mapped to source-tree paths and linked into their directory as obj-y."),
+        "extra_dtb_targets": attr.string_list(doc = "Further Kbuild DTB or `.dtbo` overlay targets, built into `extra_dtbs` in order. DTBs keep their symbols for overlays."),
+        "builtin_sources": attr.label_keyed_string_dict(allow_files = True, doc = "C sources and headers mapped to source-tree paths. C files are linked into their directory as obj-y."),
         "image": attr.output(mandatory = True),
         "dtb": attr.output(mandatory = True),
         "extra_dtbs": attr.output_list(),
