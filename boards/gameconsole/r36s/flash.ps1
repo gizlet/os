@@ -62,8 +62,9 @@
     }
 
     # --- disks: USB or card readers, never the boot or system disk
+    # Smallest first: the TF card is usually the smallest disk, and number 1 is the default.
     $disks = @(Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem -and $_.BusType -in 'USB', 'SD', 'MMC' } |
-        Sort-Object Number)
+        Sort-Object Size, Number)
     if ($disks.Count -eq 0) { throw (M 'No external disk found. Insert the TF card and try again.' '没有找到外接磁盘，请插入 TF 卡后重试。') }
     Write-Host ''
     Write-Host (M 'External disks:' '外接磁盘：')
@@ -78,7 +79,8 @@
     }
 
     # --- confirmation 1: the disk number
-    $choice = Read-Host (M 'Which disk is the R36S card? Number' '哪个是 R36S 的卡？输入编号')
+    $choice = Read-Host (M 'Which disk is the R36S card? Number [1]' '哪个是 R36S 的卡？输入编号 [1]')
+    if (-not $choice) { $choice = '1' }
     if ($choice -notmatch '^\d+$' -or [int]$choice -lt 1 -or [int]$choice -gt $disks.Count) { throw (M 'No such disk.' '没有这个磁盘。') }
     $disk = $disks[[int]$choice - 1]
     $label = $labels[[int]$choice - 1]

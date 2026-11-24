@@ -151,6 +151,15 @@ find_disks() {
         return
     fi
     [ ${#disks[@]} -gt 0 ] || die "$(m 'no TF card found; insert it and try again' '没有找到 TF 卡，请插入后重试')"
+    # Smallest first: the TF card is usually the smallest disk, and number 1 is the default.
+    if [ ${#disks[@]} -gt 1 ]; then
+        order=$(for i in "${!disks[@]}"; do printf '%s\t%s\n' "${sizes[$i]:-0}" "${i}"; done | sort -n -k1,1 | cut -f2)
+        old_disks=("${disks[@]}") old_labels=("${labels[@]}") old_sizes=("${sizes[@]}")
+        disks=() labels=() sizes=()
+        for i in ${order}; do
+            disks+=("${old_disks[$i]}") labels+=("${old_labels[$i]}") sizes+=("${old_sizes[$i]}")
+        done
+    fi
     say ''
     say "$(m 'Removable and external disks:' '可移动和外接磁盘：')"
     for i in "${!disks[@]}"; do
@@ -168,8 +177,9 @@ choose_disk() {
         label=$(m '(given with --disk)' '（由 --disk 指定）')
         bytes=$(disk_bytes "${disk}")
     else
-        choice=$(ask "$(m 'Which disk is the R36S card? Number: ' '哪个是 R36S 的卡？输入编号：')")
-        case "${choice}" in '' | *[!0-9]*) die "$(m 'answer with the number' '请输入编号')" ;; esac
+        choice=$(ask "$(m 'Which disk is the R36S card? Number [1]: ' '哪个是 R36S 的卡？输入编号 [1]：')")
+        [ -n "${choice}" ] || choice=1
+        case "${choice}" in *[!0-9]*) die "$(m 'answer with the number' '请输入编号')" ;; esac
         [ "${choice}" -ge 1 ] && [ "${choice}" -le ${#disks[@]} ] || die "$(m 'no such disk' '没有这个磁盘')"
         i=$((choice - 1))
         disk=${disks[$i]} label=${labels[$i]} bytes=${sizes[$i]}

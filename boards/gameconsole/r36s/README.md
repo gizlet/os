@@ -4,7 +4,7 @@ This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts`, which describes th
 
 ## Writing a card
 
-The writers ask for a language (English or 中文), the panel and the card's disk, download the matching `.img.gz` from the latest release, check it against `SHA256SUMS` and write the whole card. They list every external disk and flag those over 256 GB, then erase only after three confirmations: the disk's number, `y`, and the disk's name typed out. Everything on the card is lost; keep the stock card as a backup. The first boot grows the data partition to the end of the card. [macOS and Linux](flash.sh) · [Windows](flash.ps1)
+The writers ask for a language (English or 中文), the panel and the card's disk, download the matching `.img.gz` from the latest release, check it against `SHA256SUMS` and write the whole card. They list every external disk, smallest first with the first as the default answer, and flag those over 256 GB, then erase only after three confirmations: the disk's number, `y`, and the disk's name typed out. Everything on the card is lost; keep the stock card as a backup. The first boot grows the data partition to the end of the card. [macOS and Linux](flash.sh) · [Windows](flash.ps1)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.sh | bash
