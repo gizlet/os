@@ -45,6 +45,7 @@ _R36S_LAYOUT = {
             ["/serial@ff160000", "status", "okay"],
             [_OTG, "status", "okay"],
             [_OTG, "dr_mode", "peripheral"],
+            [_OTG, "role-switch-default-mode", "peripheral"],
             [_OTG_PHY, "status", "okay"],
             ["/usb@ff340000", "status", "okay"],
             ["/usb@ff350000", "status", "okay"],

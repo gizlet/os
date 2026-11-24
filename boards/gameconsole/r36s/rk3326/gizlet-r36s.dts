@@ -20,8 +20,14 @@
 	status = "okay";
 };
 
+/*
+ * ROCKNIX's rk3326.dtsi declares a role switch that starts as host. Its
+ * session override would then mark only the A-session valid, so the device
+ * never connects. Starting as a peripheral forces B-session and VBUS valid.
+ */
 &usb20_otg {
 	dr_mode = "peripheral";
+	role-switch-default-mode = "peripheral";
 	/delete-property/ vbus-supply;
 };
 
