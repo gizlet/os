@@ -50,8 +50,7 @@ struct device {
 static struct device devices[MAX_DEVICES];
 static int ndevices;
 static char backlight[256];
-enum state { ON, DIM, OFF };
-static enum state screen = ON;
+static enum screen_state screen = SCREEN_ON;
 static int saved_brightness = -1;
 static int grabbed;
 static volatile sig_atomic_t stopping;
@@ -136,14 +135,14 @@ static void grab(int on) {
     grabbed = on;
 }
 
-static void set_screen(enum state next) {
+static void set_screen(enum screen_state next) {
     if (next == screen) return;
-    if (screen == ON) saved_brightness = read_int(backlight, "brightness");
+    if (screen == SCREEN_ON) saved_brightness = read_int(backlight, "brightness");
     int max = read_int(backlight, "max_brightness");
-    if (next == ON) {
+    if (next == SCREEN_ON) {
         write_int(backlight, "bl_power", 0);
         if (saved_brightness > 0) write_int(backlight, "brightness", saved_brightness);
-    } else if (next == DIM) {
+    } else if (next == SCREEN_DIM) {
         int dim = max > 0 ? max / 10 : 1;
         if (dim < 1) dim = 1;
         if (saved_brightness > 0 && dim > saved_brightness) dim = saved_brightness;
@@ -267,24 +266,15 @@ int main(int argc, char **argv) {
         int seconds = screen_off_seconds(config);
         long long off_at = last_use + (long long)seconds * 1000;
         long long dim_at = off_at - (seconds > DIM_SECONDS * 2 ? DIM_SECONDS * 1000 : 0);
-        /* Due to dim or turn off: a control held all along is use too. */
-        if (seconds && screen != OFF && t >= dim_at && controls_held()) {
-            last_use = t;
-            off_at = last_use + (long long)seconds * 1000;
-            dim_at = off_at - (seconds > DIM_SECONDS * 2 ? DIM_SECONDS * 1000 : 0);
-            if (screen == DIM) set_screen(ON);
-        }
-        if (seconds == 0) {
-            if (screen != ON) set_screen(ON);
-        } else if (t >= off_at) {
-            set_screen(OFF);
-        } else if (t >= dim_at && screen == ON) {
-            set_screen(DIM);
-        }
+        /* What is held is only read when the screen is due to dim or turn off. */
+        int held = seconds && screen != SCREEN_OFF && t >= dim_at && controls_held();
+        set_screen(idle_next(screen, t, &last_use, seconds, DIM_SECONDS, held));
+        off_at = last_use + (long long)seconds * 1000;
+        dim_at = off_at - (seconds > DIM_SECONDS * 2 ? DIM_SECONDS * 1000 : 0);
 
         long long wait = RESCAN_MS;
-        if (seconds && screen == ON && dim_at - t < wait) wait = dim_at - t;
-        if (seconds && screen == DIM && off_at - t < wait) wait = off_at - t;
+        if (seconds && screen == SCREEN_ON && dim_at - t < wait) wait = dim_at - t;
+        if (seconds && screen == SCREEN_DIM && off_at - t < wait) wait = off_at - t;
         if (wait < 0) wait = 0;
         struct pollfd fds[MAX_DEVICES];
         for (int i = 0; i < ndevices; i++) fds[i] = (struct pollfd){.fd = devices[i].fd, .events = POLLIN};
@@ -304,19 +294,19 @@ int main(int argc, char **argv) {
             }
             if (len < 0 && errno != EAGAIN && errno != EINTR) close_device(i);
         }
-        if (screen == OFF) {
+        if (screen == SCREEN_OFF) {
             if (pressed) {
                 last_use = now_ms();
-                set_screen(ON);
+                set_screen(SCREEN_ON);
             }
         } else if (used) {
             last_use = now_ms();
-            set_screen(ON);
+            set_screen(SCREEN_ON);
         }
         /* The press that woke the screen stays with us until it is let go. */
-        if (grabbed && screen != OFF && !any_key_down()) grab(0);
+        if (grabbed && screen != SCREEN_OFF && !any_key_down()) grab(0);
     }
     if (grabbed) grab(0);
-    set_screen(ON);
+    set_screen(SCREEN_ON);
     return 0;
 }

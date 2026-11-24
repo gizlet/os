@@ -32,6 +32,28 @@ int main(void) {
     /* An axis without a range never counts. */
     check(!idle_axis_engaged(5, 0, 0, 0, 0), "no range");
 
+    /* The timeout and wake sequence, 60 s timeout, dimming 15 s before. */
+    long long last = 0;
+    enum screen_state st = SCREEN_ON;
+    st = idle_next(st, 44000, &last, 60, 15, 0);
+    check(st == SCREEN_ON, "on before the dim");
+    st = idle_next(st, 45000, &last, 60, 15, 0);
+    check(st == SCREEN_DIM, "dims 15 s before");
+    /* A button held through the timeout, such as accelerate: never off, and
+     * so never grabbed while the app still sees it down. */
+    st = idle_next(st, 60000, &last, 60, 15, 1);
+    check(st == SCREEN_ON && last == 60000, "held through the timeout stays on");
+    st = idle_next(st, 119000, &last, 60, 15, 1);
+    check(st == SCREEN_ON && last == 119000, "held for a minute more stays on");
+    /* Released: the timeout counts from the last time it was held. */
+    st = idle_next(st, 178999, &last, 60, 15, 0);
+    check(st == SCREEN_DIM, "dimmed after the release");
+    st = idle_next(st, 179000, &last, 60, 15, 0);
+    check(st == SCREEN_OFF, "off a full timeout after the release");
+    /* Off stays off until a press, which the daemon handles itself. */
+    check(idle_next(st, 999999, &last, 60, 15, 1) == SCREEN_OFF, "off waits for a press");
+    check(idle_next(st, 0, &last, 0, 15, 0) == SCREEN_ON, "never turns back on");
+
     if (failures) return 1;
     puts("idle_test: sustained input counts as use");
     return 0;
