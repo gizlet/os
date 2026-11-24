@@ -121,12 +121,14 @@ whole_disk() {
 # the same size put in the same reader: its model, serial and partitions with
 # their UUIDs, and on Linux the kernel's media sequence number, which changes
 # with every card inserted. Mount state is left out, as the writer unmounts.
+# Any field may be missing (an ext4 partition has no Volume UUID on macOS),
+# so no lookup may fail the function under set -e.
 disk_identity() {
     if [ "${os}" = mac ]; then
-        diskutil info "$1" | grep -E '^ *(Device / Media Name|Disk Size|Device Location|Protocol|Disk / Partition UUID):'
+        diskutil info "$1" | grep -E '^ *(Device / Media Name|Disk Size|Device Location|Protocol|Disk / Partition UUID):' || true
         diskutil list "$1"
         for part in $(diskutil list "$1" | awk '$NF ~ /^disk[0-9]+s[0-9]+$/ {print $NF}'); do
-            diskutil info "${part}" | grep -E '^ *(Volume UUID|Disk / Partition UUID):'
+            diskutil info "${part}" | grep -E '^ *(Volume UUID|Disk / Partition UUID):' || true
         done
     else
         lsblk -bnpo NAME,SIZE,MODEL,SERIAL,WWN,PTUUID,PARTUUID,UUID "$1"
