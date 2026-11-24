@@ -6,6 +6,21 @@ _OTG = "/usb@ff300000"
 
 _OTG_PHY = "/syscon@ff2c0000/usb2phy@100/otg-port"
 
+# The legacy U-Boot reads a board revision from SARADC channel 0 during
+# board_init and loads a kernel device tree of the matching name from the FAT
+# partition (cmd/hwrev.c). Without it, U-Boot writes error.log and halts in an
+# LED loop before running boot.scr. The card carries the R36S tree under every
+# name the revision check can choose.
+R36S_UBOOT_DTB_NAMES = [
+    "rk3326-odroidgo2-linux-v11.dtb",
+    "rk3326-odroidgo2-linux.dtb",
+    "rk3326-odroidgo3-linux.dtb",
+    "rk3326-anbernic-rg351v.dtb",
+    "rk3326-gameconsole-r33s.dtb",
+    "rk3326-magicx-xu10.dtb",
+    "rk3326-gameforce-chi.dtb",
+]
+
 # Layout and boot chain, matching sdcard.cfg and the pinned ROCKNIX 20261101-a IDB.
 R36S_CARD = {
     "disk_signature": "36335030",
@@ -19,6 +34,7 @@ R36S_CARD = {
     # LBA 64 through the last byte of the pinned miniloader.
     "idbloader": {"sha256": "2fc42ada721b84d8bd40a9a3486abde92d869a5124cad14789743205b1168384", "size": 176452},
     "boot_files": {"script": "boot.scr", "kernel": "Image", "dtb": "r36s.dtb"},
+    "dtb_copies": R36S_UBOOT_DTB_NAMES,
     "device_tree": {
         "properties": [
             ["/", "model", "Game Console R36S"],

@@ -4,7 +4,8 @@ Usage: card_test.py IMAGE BL31_ELF TRUST_SHA256 BOOT_CMD CONFIG_JSON
 
 CONFIG_JSON describes the board's card: MBR disk signature, partitions as
 [boot flag, type, first sector, sectors], total size, the pinned IDB digest
-and length, the boot partition's file names and device tree expectations.
+and length, the boot partition's file names, optional `dtb_copies` that must
+equal the device tree, and device tree expectations.
 The BootROM stages sit at the legacy offsets: IDB at sector 64, U-Boot at
 8 MiB and BL31 trust at 12 MiB.
 """
@@ -184,6 +185,11 @@ def main():
     files = config["boot_files"]
     for name in files.values():
         run("mcopy", "-i", work / "boot.vfat", "::" + name, work / name)
+    dtb = (work / files["dtb"]).read_bytes()
+    for name in config.get("dtb_copies", []):
+        run("mcopy", "-i", work / "boot.vfat", "::" + name, work / name)
+        assert (work / name).read_bytes() == dtb, f"{name} differs from {files['dtb']}"
+    print(f"U-Boot finds the device tree under {len(config.get('dtb_copies', []))} revision names")
     run("dumpimage", "-l", work / files["script"])
     kernel = (work / files["kernel"]).read_bytes()
     assert kernel[56:60] == b"ARM\x64", "AArch64 Linux Image magic"

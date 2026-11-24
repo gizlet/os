@@ -1,4 +1,4 @@
-load("//boards/gameconsole/r36s/rk3326:card.bzl", "R36S_CARD", "R36S_DATA_UUID")
+load("//boards/gameconsole/r36s/rk3326:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_UBOOT_DTB_NAMES")
 load("//boot:defs.bzl", "gizlet_qemu_test", "gizlet_rootfs_test")
 load("//tools/bazel/rockchip:defs.bzl", "busybox_squashfs", "rockchip_card_test", "rockchip_legacy_uboot", "rockchip_linux_kernel", "rockchip_sd_image")
 
@@ -88,6 +88,15 @@ busybox_squashfs(
     target_compatible_with = _PANEL0,
 )
 
+# U-Boot loads the device tree by a revision-dependent name; see card.bzl.
+[genrule(
+    name = "uboot_dtb_" + dtb_name.removesuffix(".dtb"),
+    srcs = [":parts/r36s.dtb"],
+    outs = ["parts/" + dtb_name],
+    cmd = "cp $< $@",
+    target_compatible_with = _PANEL0,
+) for dtb_name in R36S_UBOOT_DTB_NAMES]
+
 rockchip_sd_image(
     name = "gizlet-os-r36s-panel0",
     out = "gizlet-os-r36s-panel0.img",
@@ -99,7 +108,7 @@ rockchip_sd_image(
         ":parts/Image": "Image",
         ":parts/r36s.dtb": "r36s.dtb",
         ":parts/rootfs.sqfs": "rootfs.sqfs",
-    },
+    } | {":parts/" + dtb_name: dtb_name for dtb_name in R36S_UBOOT_DTB_NAMES},
     layout = _BOARD + "sdcard.cfg",
     layout_image = "sdcard.img",
     source_date_epoch = _EPOCH,
