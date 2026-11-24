@@ -155,7 +155,10 @@ def scenarios(image, kernel_name, work, tools):
                           check=True, capture_output=True, text=True).stdout
     for marker in ("15 s after boot", "== usb devices", "== regulators", "== dmesg"):
         assert marker in late, f"gizlet-late.log lacks {marker!r}"
-    print("gizlet.log and gizlet-late.log saved on the boot partition")
+    usb = subprocess.run(["mtype", "-i", f"{private}@@{parts['boot'][1]}", "::gizlet-usb.log"],
+                         check=True, capture_output=True, text=True).stdout
+    assert "== observe" in usb and "t=" in usb, f"gizlet-usb.log is incomplete: {usb!r}"
+    print("gizlet.log, gizlet-late.log and gizlet-usb.log saved on the boot partition")
     with boot(private, kernel, root) as console:
         console.expect(b"starting /opt/gizlet/bin/hello")
         console.expect(b"\r\nhello-from-card\r\n")

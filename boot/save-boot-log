@@ -52,7 +52,9 @@ late_state() {
         [ -e "$f" ] && echo "$f: $(cat "$f")"
     done
     ip addr 2>&1
-    cat /run/udhcpd.leases 2>/dev/null | hexdump -C | head -4
+    echo '== usb-watch so far'
+    cat /run/gizlet-usb.log 2>/dev/null
+    cat /run/udhcpd.leases 2>/dev/null | hexdump -C | head -n 4
     if mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || [ -d /sys/kernel/debug/regulator ]; then
         echo '== regulator summary'
         cat /sys/kernel/debug/regulator/regulator_summary 2>/dev/null
