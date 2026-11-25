@@ -87,6 +87,8 @@ def main():
     for script in ("boot-session", "gizlet-boot-device", "gizlet-mount-data", "gizlet-ssh", "gizlet-setup", "gizlet-switch",
                    "gizlet-var", "save-boot-log", "gizlet-booter", "gizlet-launcher", "gizlet-launcher-start"):
         assert (root / "usr/lib/gizlet" / script).stat().st_mode & 0o111, f"/usr/lib/gizlet/{script} is executable"
+    # The gizlet command runs the installed launcher's app commands.
+    assert (root / "usr/bin/gizlet").stat().st_mode & 0o111, "/usr/bin/gizlet is executable"
     # First boot grows the data partition and its filesystem.
     for tool in ("usr/sbin/sfdisk", "usr/bin/partx", "usr/sbin/resize2fs"):
         assert (root / tool).exists(), f"/{tool}"

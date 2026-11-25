@@ -91,6 +91,15 @@ impl Painter {
     }
 
     /// An outline drawn inside the rectangle's bounds.
+    /// A texture stretched over the rectangle.
+    pub fn texture(&self, tex: ffi::Texture2D, x: f32, y: f32, w: f32, h: f32, tint: Color) {
+        if tex.id == 0 || w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let src = Rectangle { x: 0.0, y: 0.0, width: tex.width as f32, height: tex.height as f32 };
+        unsafe { ffi::DrawTexturePro(tex, src, self.rec(x, y, w, h), v2(0.0, 0.0), 0.0, tint) };
+    }
+
     pub fn outline(&self, x: f32, y: f32, w: f32, h: f32, radius: f32, thick: f32, c: Color) {
         if c.a == 0 || w <= thick || h <= thick {
             return;

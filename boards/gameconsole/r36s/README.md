@@ -39,6 +39,16 @@ The 464 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes.
 
 `gizlet-data.service` identifies the mounted root device through `/proc/self/mountinfo` and sysfs. It mounts ext4 partition 3 of that same disk, with the image's filesystem UUID `17605036-fda0-4633-a95b-2ed27409a90c`. Its `gizlet/` and `home/` directories are bind-mounted at `/opt/gizlet` and `/home`. Both live on the card, and `system/` keeps the ssh host key and iwd's networks. `/run` and `/tmp` live in RAM, and `/var` is the image's `/var` with a RAM overlay. Boot-time setup only mounts existing filesystems. Formatting and creation of the two data directories happen while building the image. An unmountable, read-only, mismatched or incomplete data partition results in local recovery. [Data mounts](../../../rootfs/usr/lib/gizlet/gizlet-mount-data) · [Units](../../../rootfs/usr/lib/systemd/system)
 
+## Installing apps
+
+Apps come as `.gzl` packages. Copy one to the handheld and install it over ssh; it appears on the launcher's home screen, where A starts it. Packages, where apps live and how they run are described in the [launcher](../../../launcher/README.md#apps).
+
+```sh
+scp io.gizlet.overeaten-0.1.0-aarch64-unknown-linux-gnu-lite.gzl root@DEVICE:/tmp/
+ssh root@DEVICE gizlet install /tmp/io.gizlet.overeaten-0.1.0-aarch64-unknown-linux-gnu-lite.gzl
+ssh root@DEVICE gizlet start io.gizlet.overeaten
+```
+
 ## Installing an entry
 
 On the third partition install a trusted executable at, for example, `gizlet/bin/launcher`. Give it executable mode. Write `gizlet/boot.ini` in the following format. From the running OS the same file is `/opt/gizlet/boot.ini`.

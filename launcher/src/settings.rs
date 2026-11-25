@@ -33,6 +33,14 @@ impl Language {
         }
     }
 
+    /// The code apps get in `GIZLET_LANG`: `en`, or `zh-CN` otherwise.
+    pub fn app_code(self) -> &'static str {
+        match self.resolve() {
+            Language::En => "en",
+            _ => "zh-CN",
+        }
+    }
+
     fn key(self) -> &'static str {
         match self {
             Language::Auto => "auto",

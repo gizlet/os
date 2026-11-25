@@ -1,7 +1,7 @@
-//! Home: the app shelf, empty until the Store opens, above the system buttons.
+//! Home: the shelf of installed apps above the system buttons.
 
 use super::chrome::{self, MARGIN};
-use super::Ui;
+use super::{approach, Ui};
 use crate::app::{App, HomeButton, HomeRow};
 use crate::fonts::Weight;
 use crate::i18n::T;
@@ -50,23 +50,10 @@ pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     chrome::status(p, app);
     let on_tiles = app.home_row == HomeRow::Tiles;
 
-    // The shelf: no apps yet.
-    let w = (TILE * 2.0 + GAP).min(p.w - MARGIN * 2.0);
-    let x = (p.w - w) / 2.0;
-    let y = TILES_Y;
-    if on_tiles {
-        p.text_mid(app.t(T::Library), x, y - 32.0, 28.0, Weight::Display, focus_color(p));
-    }
-    p.rect(x, y, w, TILE, TILE * CORNER, alpha(pal.surface, 0.7));
-    p.outline(x, y, w, TILE, TILE * CORNER, 2.0, alpha(pal.line, 0.8));
-    icons::gamepad(p, x + w / 2.0, y + TILE * 0.33, 84.0, alpha(pal.dim, 0.8), pal.surface);
-    p.text_center(app.t(T::EmptyTitle), x + w / 2.0, y + TILE * 0.6, 24.0, Weight::Display, pal.text);
-    let lines = p.wrap(app.t(T::EmptyBody), w - 60.0, 18.0, Weight::Regular);
-    for (i, line) in lines.iter().take(2).enumerate() {
-        p.text_center(line, x + w / 2.0, y + TILE * 0.74 + i as f32 * 26.0, 18.0, Weight::Regular, pal.dim);
-    }
-    if on_tiles {
-        focus_ring(p, x, y, w, TILE, TILE * CORNER, 0.0);
+    if app.apps.is_empty() {
+        empty_shelf(p, app, on_tiles);
+    } else {
+        shelf(ui, p, app, on_tiles, dt);
     }
 
     // System buttons, centered.
@@ -98,4 +85,77 @@ pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     }
 
     chrome::hints(p, app, &[("A", app.t(T::Ok))]);
+}
+
+/// The shelf without apps: one wide card that says how to get some.
+fn empty_shelf(p: &mut Painter, app: &App, on_tiles: bool) {
+    let pal = p.pal;
+    let w = (TILE * 2.0 + GAP).min(p.w - MARGIN * 2.0);
+    let x = (p.w - w) / 2.0;
+    let y = TILES_Y;
+    if on_tiles {
+        p.text_mid(app.t(T::Library), x, y - 32.0, 28.0, Weight::Display, focus_color(p));
+    }
+    p.rect(x, y, w, TILE, TILE * CORNER, alpha(pal.surface, 0.7));
+    p.outline(x, y, w, TILE, TILE * CORNER, 2.0, alpha(pal.line, 0.8));
+    icons::gamepad(p, x + w / 2.0, y + TILE * 0.33, 84.0, alpha(pal.dim, 0.8), pal.surface);
+    p.text_center(app.t(T::EmptyTitle), x + w / 2.0, y + TILE * 0.6, 24.0, Weight::Display, pal.text);
+    let lines = p.wrap(app.t(T::EmptyBody), w - 60.0, 18.0, Weight::Regular);
+    for (i, line) in lines.iter().take(2).enumerate() {
+        p.text_center(line, x + w / 2.0, y + TILE * 0.74 + i as f32 * 26.0, 18.0, Weight::Regular, pal.dim);
+    }
+    if on_tiles {
+        focus_ring(p, x, y, w, TILE, TILE * CORNER, 0.0);
+    }
+}
+
+/// Installed apps as square tiles in one row, scrolled to keep focus in view.
+fn shelf(ui: &mut Ui, p: &mut Painter, app: &App, on_tiles: bool, dt: f32) {
+    let pal = p.pal;
+    let n = app.apps.len();
+    let step = TILE + GAP;
+    let row_w = n as f32 * step - GAP;
+    let view_w = p.w - MARGIN * 2.0;
+    // Centered when the row fits; otherwise the focused tile stays in view.
+    let target = if row_w <= view_w {
+        (p.w - row_w) / 2.0
+    } else {
+        let focus_x = app.home_tile as f32 * step;
+        MARGIN - (focus_x + TILE / 2.0 - view_w / 2.0).clamp(0.0, row_w - view_w)
+    };
+    ui.shelf_x = if ui.shelf_x == 0.0 { target } else { approach(ui.shelf_x, target, 14.0, dt) };
+    let y = TILES_Y;
+    let pop = ui.tile_pop.update((2, app.home_tile), dt);
+    let lang = app.lang_code();
+
+    p.text_mid(app.t(T::Library), MARGIN, y - 32.0, 28.0, Weight::Display, if on_tiles { focus_color(p) } else { pal.dim });
+    for (i, a) in app.apps.iter().enumerate() {
+        let x = ui.shelf_x + i as f32 * step;
+        if x + TILE < 0.0 || x > p.w {
+            continue;
+        }
+        let radius = TILE * CORNER;
+        p.shadow(x, y, TILE, TILE, radius, 10.0, 0.5);
+        let base = a.manifest.rgb().map_or(pal.surface, |[r, g, b]| Color { r, g, b, a: 255 });
+        p.rect(x, y, TILE, TILE, radius, base);
+        match a.icon().and_then(|path| ui.icons.get(&path)) {
+            // Square icons fill the tile inside its rounded corners.
+            Some(tex) => {
+                let inset = radius * 0.3;
+                p.texture(tex, x + inset, y + inset, TILE - 2.0 * inset, TILE - 2.0 * inset, Color { r: 255, g: 255, b: 255, a: 255 });
+            }
+            None => {
+                let name = a.manifest.name_for(lang);
+                let initial: String = name.chars().take(1).collect();
+                p.text_center(&initial, x + TILE / 2.0, y + TILE / 2.0, 120.0, Weight::Display, pal.text);
+            }
+        }
+        p.outline(x, y, TILE, TILE, radius, 2.0, alpha(pal.line, 0.5));
+        let focused = on_tiles && app.home_tile == i;
+        if focused {
+            focus_ring(p, x, y, TILE, TILE, radius, pop);
+            let name = p.fit(a.manifest.name_for(lang), TILE + GAP * 2.0, 22.0, Weight::Display);
+            p.text_center(&name, x + TILE / 2.0, y + TILE + 30.0, 22.0, Weight::Display, pal.text);
+        }
+    }
 }

@@ -46,6 +46,8 @@ ROOTFS_EXECUTABLES = {
     "//rootfs:usr/lib/gizlet/gizlet-switch": "usr/lib/gizlet/gizlet-switch",
     "//rootfs:usr/lib/gizlet/gizlet-var": "usr/lib/gizlet/gizlet-var",
     "//rootfs:usr/lib/gizlet/save-boot-log": "usr/lib/gizlet/save-boot-log",
+    # Installs, lists, runs and removes apps with the installed launcher.
+    "//rootfs:usr/bin/gizlet": "usr/bin/gizlet",
     # The launcher runs against Gizlet runtime 1 (its raylib, Mesa and glibc)
     # through its start script; the Booter is static.
     "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",

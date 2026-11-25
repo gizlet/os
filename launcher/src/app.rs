@@ -1,5 +1,6 @@
 //! The launcher's state and what each control does. Pages in `ui` only draw it.
 
+use crate::apps::{self, Library};
 use crate::clock;
 use crate::i18n::{human_size, T};
 use crate::input::{Action, Input, TextEvent};
@@ -206,6 +207,13 @@ pub struct App {
     pages: Vec<Page>,
     pub home_row: HomeRow,
     pub home_button: usize,
+    /// Installed apps, as the home shelf shows them, and the focused one.
+    pub apps: Vec<apps::App>,
+    pub home_tile: usize,
+    library: Library,
+    apps_stamp: Option<std::time::SystemTime>,
+    /// Set when the launcher should quit, as when it hands the screen to an app.
+    leave: bool,
     pub focus: SettingsFocus,
     pub snapshot: Option<Snapshot>,
     system: System,
@@ -225,6 +233,9 @@ pub struct App {
 impl App {
     pub fn new(data_dir: PathBuf, version: &'static str) -> App {
         let settings_path = data_dir.join("settings.ini");
+        let library = Library::open();
+        let apps_stamp = library.stamp();
+        let apps = library.scan();
         App {
             settings: Settings::load(&settings_path),
             settings_path,
@@ -232,8 +243,14 @@ impl App {
             version,
             system: System::start(data_dir),
             pages: vec![Page::Home],
-            home_row: HomeRow::Buttons,
+            // The most recently played app has focus; without apps, Settings.
+            home_row: if apps.is_empty() { HomeRow::Buttons } else { HomeRow::Tiles },
             home_button: 3,
+            apps,
+            home_tile: 0,
+            library,
+            apps_stamp,
+            leave: false,
             focus: SettingsFocus::default(),
             snapshot: None,
             wifi: WifiUi::default(),
@@ -276,6 +293,45 @@ impl App {
         }
     }
 
+    /// Reads the installed apps again when one was installed or removed,
+    /// keeping focus on the same app.
+    pub fn refresh_apps(&mut self) {
+        let stamp = self.library.stamp();
+        if stamp == self.apps_stamp {
+            return;
+        }
+        self.apps_stamp = stamp;
+        let focused = self.apps.get(self.home_tile).map(|a| a.id().to_string());
+        self.apps = self.library.scan();
+        self.home_tile = focused.and_then(|id| self.apps.iter().position(|a| a.id() == id)).unwrap_or(0);
+        if self.apps.is_empty() && self.home_row == HomeRow::Tiles {
+            self.home_row = HomeRow::Buttons;
+        }
+    }
+
+    /// Starts the app on the shelf at `i`. On Gizlet OS the launcher quits and
+    /// its start script runs the app, then the launcher again; on a computer
+    /// the app opens beside it.
+    fn launch(&mut self, i: usize) {
+        let Some(app) = self.apps.get(i) else { return };
+        let id = app.id().to_string();
+        let name = app.manifest.name_for(self.lang_code()).to_string();
+        let result = if cfg!(feature = "gizlet-os") {
+            crate::cli::request_launch(&id).map(|()| self.leave = true)
+        } else {
+            std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(["run", &id]).spawn()).map(drop)
+        };
+        match result {
+            Ok(()) => self.toast(T::Starting.fmt(self.lang(), &[&name])),
+            Err(e) => self.toast(T::Failed.fmt(self.lang(), &[&e.to_string()])),
+        }
+    }
+
+    /// The language as apps get it in `GIZLET_LANG`.
+    pub fn lang_code(&self) -> &'static str {
+        self.settings.language.app_code()
+    }
+
     fn save(&mut self) {
         if let Err(e) = self.settings.save(&self.settings_path) {
             let msg = T::Failed.fmt(self.lang(), &[&e.to_string()]);
@@ -314,7 +370,12 @@ impl App {
             }
         }
         match self.page() {
-            Page::Home => self.home_input(input),
+            Page::Home => {
+                self.home_input(input);
+                if self.leave {
+                    return false;
+                }
+            }
             Page::Settings => self.settings_input(input),
             Page::ButtonTest => {
                 if input.held(Action::B) {
@@ -441,14 +502,24 @@ impl App {
 
     fn home_input(&mut self, input: &Input) {
         let n = HomeButton::ALL.len();
+        let tiles = self.apps.len();
         for &a in &input.pressed {
             match (a, self.home_row) {
                 (Action::Down, HomeRow::Tiles) => self.home_row = HomeRow::Buttons,
                 (Action::Up, HomeRow::Buttons) => self.home_row = HomeRow::Tiles,
+                (Action::Left, HomeRow::Tiles) if tiles > 0 => self.home_tile = self.home_tile.saturating_sub(1),
+                (Action::Right, HomeRow::Tiles) if tiles > 0 => self.home_tile = (self.home_tile + 1).min(tiles - 1),
                 (Action::Left, HomeRow::Buttons) => self.home_button = (self.home_button + n - 1) % n,
                 (Action::Right, HomeRow::Buttons) => self.home_button = (self.home_button + 1) % n,
+                (Action::A, HomeRow::Tiles) if tiles > 0 => {
+                    self.launch(self.home_tile);
+                    if self.leave {
+                        return;
+                    }
+                }
                 (Action::A, HomeRow::Tiles) => self.toast(self.t(T::LibrarySoon)),
                 (Action::A, HomeRow::Buttons) => match HomeButton::ALL[self.home_button] {
+                    HomeButton::Library if tiles > 0 => self.home_row = HomeRow::Tiles,
                     HomeButton::Library => self.toast(self.t(T::LibrarySoon)),
                     HomeButton::Store => self.toast(self.t(T::StoreSoon)),
                     HomeButton::ButtonTest => self.push(Page::ButtonTest),
