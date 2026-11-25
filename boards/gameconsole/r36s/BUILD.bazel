@@ -25,6 +25,7 @@ platform(
 exports_files([
     "boot/boot.cmd",
     "boot/trust.sha256",
+    "flash.sh",
     "sdcard.cfg",
 ])
 

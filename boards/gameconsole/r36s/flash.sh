@@ -304,13 +304,16 @@ write_card() {
     # And while the password was asked for.
     check_same_disk
     grown_mbr "${raw}" "${bytes}" "${work}/mbr"
+    grown_data "${raw}" "${work}/mbr" "${work}"
     say "$(m "Writing ${target}, about a minute ..." "正在写入 ${target}，大约一分钟……")"
     if [ "${os}" = mac ]; then
         ${sudo} dd if="${raw}" of="${target}" bs=4194304
         ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 2>/dev/null
+        write_grown_data "${work}" "${target}"
     else
         ${sudo} dd if="${raw}" of="${target}" bs=4194304 conv=fsync status=progress
         ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 conv=fsync 2>/dev/null
+        write_grown_data "${work}" "${target}"
         ${sudo} blockdev --rereadpt "${target}" 2>/dev/null || true
     fi
     sync
@@ -321,8 +324,8 @@ write_card() {
 
 # grown_mbr IMAGE DISK_BYTES OUT: writes to OUT the image's first sector with
 # partition 3, the data partition and the last one, extended to the end of the
-# disk (aligned down to 1 MiB; MBR sizes stop at 2 TiB). The card's first boot
-# then only grows the filesystem inside it, in a few seconds.
+# disk (aligned down to 1 MiB; MBR sizes stop at 2 TiB). grown_data then grows
+# the filesystem inside it.
 #
 # Only whole small files are read, never a pipe that closes early: under
 # pipefail the writer's SIGPIPE would end the script without a word.
@@ -341,6 +344,220 @@ grown_mbr() {
         tail -c $((512 - entry - 16)) "$3.orig"
     } > "$3"
     [ "$(wc -c < "$3" | tr -d ' ')" = 512 ] || die "$(m 'cannot prepare the partition table' '无法生成分区表')"
+}
+
+# grown_data IMAGE MBR DIR: grows the image's ext4 data filesystem, offline, to
+# fill partition 3 of the grown MBR, as 4 KiB blocks to write over the card
+# after the image: DIR/blocks holds them, and each line of DIR/list is
+# "CARD_BLOCK INDEX" for block INDEX of DIR/blocks, primary superblock last,
+# so a write cut short leaves the image's filesystem as it was. It takes only
+# od and dd, no e2fsprogs.
+#
+# The image builds the filesystem for this (sdcard.cfg): one group of 32768
+# 4 KiB blocks with meta_bg, 64-byte group descriptors and metadata_csum. Each
+# new group holds its own bitmaps and inode table, marked unused, so none of
+# them is written: only the superblock and its backups, the new group
+# descriptor blocks and the last group's block bitmap are. Another image
+# (an older release) leaves DIR/list empty, and the card's first boot grows
+# its filesystem instead.
+grown_data() {
+    local start sectors base pad i n p g k at ov bb hs gd free flags csum_lo csum_hi
+    local seed bpg ipg itb meta groups part last blocks old_blocks free_add over_add
+    : > "$3/list"
+    : > "$3/blocks"
+    start=$(od -An -tu4 -j 486 -N 4 "$2" | tr -d ' ')
+    sectors=$(od -An -tu4 -j 490 -N 4 "$2" | tr -d ' ')
+    [ $((start % 8)) = 0 ] || return 0
+    base=$((start / 8))
+    dd if="$1" of="$3/head" bs=4096 skip="${base}" count=2 2>/dev/null
+    grow_sb=($(od -An -tu1 -v -j 1024 -N 1024 "$3/head"))
+    [ "${#grow_sb[@]}" = 1024 ] || return 0
+    grow_d=("${grow_sb[@]}")
+    # magic, 4 KiB blocks, block and cluster groups, one group, the layout and
+    # features above, no reserved descriptor blocks; not mounted since.
+    get 0x38 2; [ "${r}" = $((0xEF53)) ] || return 0
+    get 0x18 4; [ "${r}" = 2 ] || return 0
+    get 0x14 4; [ "${r}" = 0 ] || return 0
+    get 0x20 4; bpg=${r}; [ "${bpg}" = 32768 ] || return 0
+    get 0x24 4; [ "${r}" = "${bpg}" ] || return 0
+    get 0x04 4; old_blocks=${r}; [ "${old_blocks}" = "${bpg}" ] || return 0
+    get 0x150 4; [ "${r}" = 0 ] || return 0
+    get 0x5C 4; [ $((r & 0x210)) = 0 ] || return 0                         # no resize_inode, sparse_super2
+    get 0x60 4; [ $((r & 0x290)) = $((0x290)) ] && [ $((r & ~0x22D2)) = 0 ] || return 0  # meta_bg, 64bit, flex_bg
+    p=${r}
+    get 0x64 4; [ $((r & 0x401)) = $((0x401)) ] && [ $((r & 0x210)) = 0 ] || return 0  # metadata_csum, sparse_super; no bigalloc, gdt_csum
+    get 0xFE 2; [ "${r}" = 64 ] || return 0
+    get 0xCE 2; [ "${r}" = 0 ] || return 0
+    get 0x3A 2; [ "${r}" = 1 ] || return 0                                  # cleanly unmounted
+    get 0x104 4; meta=${r}; [ "${meta}" -le 1 ] || return 0
+    get 0x28 4; ipg=${r}
+    get 0x58 2; itb=$((ipg * r / 4096))
+    [ $((ipg * r % 4096)) = 0 ] && [ "${ipg}" -gt 0 ] && [ "${ipg}" -lt 65536 ] || return 0
+    crc_table
+    if [ $((p & 0x2000)) != 0 ]; then
+        get 0x270 4; seed=${r}
+    else
+        c=$((0xFFFFFFFF)); crc32c "${grow_sb[@]:104:16}"; seed=${c}
+    fi
+    # The new size: the partition's whole blocks, less a last group too small
+    # to hold its own metadata.
+    part=$((sectors / 8))
+    groups=$(( (part + bpg - 1) / bpg ))
+    [ "${groups}" -gt 1 ] || return 0
+    grow_supers='0 1'
+    for p in 3 5 7; do
+        n=${p}
+        while [ "${n}" -lt "${groups}" ]; do grow_supers="${grow_supers} ${n}"; n=$((n * p)); done
+    done
+    last=$((part - (groups - 1) * bpg))
+    group_overhead $((groups - 1)) "${meta}" "${itb}"
+    if [ "${last}" -lt $((r + 50)) ]; then groups=$((groups - 1)); last=${bpg}; fi
+    [ "${groups}" -gt 1 ] || return 0
+    blocks=$(( (groups - 1) * bpg + last ))
+    # Group descriptor blocks, 64 descriptors each: the image's group 0, then
+    # the new groups.
+    free_add=0 over_add=0 n=0
+    : > "$3/gdt"
+    dd if="$3/head" bs=64 skip=64 count=1 2>/dev/null >> "$3/gdt"
+    for ((g = 1; g < groups; g++)); do
+        group_overhead "${g}" "${meta}" "${itb}"
+        ov=${r} hs=${grow_hs} gd=${grow_gd}
+        bb=$((g * bpg + hs + gd))
+        if [ "${g}" = $((groups - 1)) ]; then
+            free=$((last - ov)) flags=1          # INODE_UNINIT; e2fsck wants the last block bitmap written
+            block_bitmap "${ov}" "${last}" "$3/bitmap"
+            c=${seed}; crc32c "${grow_d[@]}"
+            csum_lo=$((c & 0xFFFF)) csum_hi=$((c >> 16))
+        else
+            free=$((bpg - ov)) flags=3 csum_lo=0 csum_hi=0   # INODE_UNINIT | BLOCK_UNINIT
+        fi
+        free_add=$((free_add + free)) over_add=$((over_add + ov))
+        grow_d=(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+        put 0 4 "${bb}"; put 4 4 $((bb + 1)); put 8 4 $((bb + 2))
+        put 12 2 "${free}"; put 14 2 "${ipg}"; put 18 2 "${flags}"
+        put 24 2 "${csum_lo}"; put 28 2 "${ipg}"; put 56 2 "${csum_hi}"
+        c=${seed}; crc32c $((g & 255)) $((g >> 8 & 255)) $((g >> 16 & 255)) $((g >> 24 & 255)) "${grow_d[@]}"
+        put 30 2 $((c & 0xFFFF))
+        printf -v p '\\%03o' "${grow_d[@]}"
+        printf "${p}" >> "$3/gdt"
+    done
+    pad=$(( (64 - groups % 64) % 64 ))
+    [ "${pad}" = 0 ] || dd if=/dev/zero bs=64 count="${pad}" 2>/dev/null >> "$3/gdt"
+    # Each descriptor block where the groups that hold it keep it.
+    for ((k = 0; k * 64 < groups; k++)); do
+        if [ "${k}" -lt "${meta}" ]; then
+            for g in ${grow_supers}; do
+                [ "${g}" -lt "${groups}" ] && [ "${g}" -lt $((meta * 64)) ] || continue
+                block_at $((g * bpg + 1 + k)) "$3/gdt" "${k}" "$3"
+            done
+        else
+            for g in $((k * 64)) $((k * 64 + 1)) $((k * 64 + 63)); do
+                [ "${g}" -lt "${groups}" ] || continue
+                group_overhead "${g}" "${meta}" "${itb}"
+                block_at $((g * bpg + grow_hs)) "$3/gdt" "${k}" "$3"
+            done
+        fi
+    done
+    if [ -f "$3/bitmap" ]; then
+        group_overhead $((groups - 1)) "${meta}" "${itb}"
+        block_at $(( (groups - 1) * bpg + grow_hs + grow_gd )) "$3/bitmap" 0 "$3"
+    fi
+    # The superblock: sizes and counts, its backups in the groups that keep one.
+    grow_d=("${grow_sb[@]}")
+    get 0x08 4; put 0x08 4 $((r * blocks / old_blocks)); put 0x154 4 0
+    put 0x04 4 "${blocks}"; put 0x150 4 0
+    put 0x00 4 $((groups * ipg))
+    get 0x10 4; put 0x10 4 $((r + (groups - 1) * ipg))
+    get 0x0C 4; put 0x0C 4 $((r + free_add)); put 0x158 4 0
+    get 0x248 4; [ "${r}" = 0 ] || put 0x248 4 $((r + over_add))
+    for g in ${grow_supers#0 } 0; do
+        [ "${g}" -lt "${groups}" ] || continue
+        put 0x5A 2 $((g & 0xFFFF))
+        c=$((0xFFFFFFFF)); crc32c "${grow_d[@]:0:1020}"
+        put 0x3FC 4 "${c}"
+        printf -v p '\\%03o' "${grow_d[@]}"
+        if [ "${g}" = 0 ]; then
+            # The primary superblock sits 1 KiB into block 0.
+            dd if="$3/head" bs=1024 count=1 2>/dev/null > "$3/super"
+            printf "${p}" >> "$3/super"
+            dd if="$3/head" bs=1024 skip=2 count=2 2>/dev/null >> "$3/super"
+            block_at 0 "$3/super" 0 "$3"
+        else
+            printf "${p}" > "$3/super"
+            dd if=/dev/zero bs=1024 count=3 2>/dev/null >> "$3/super"
+            block_at $((g * bpg)) "$3/super" 0 "$3"
+        fi
+    done
+    # Card blocks from filesystem blocks.
+    while read -r at i; do echo "$((base + at)) ${i}"; done < "$3/list" > "$3/list.card"
+    mv "$3/list.card" "$3/list"
+}
+
+# get OFFSET SIZE: r is the little-endian number at OFFSET of the superblock.
+get() { local i; r=0; for ((i = $2 - 1; i >= 0; i--)); do r=$(( r << 8 | grow_sb[$1 + i] )); done; }
+# put OFFSET SIZE VALUE: stores VALUE little-endian at OFFSET of grow_d.
+put() { local i; for ((i = 0; i < $2; i++)); do grow_d[$1 + i]=$(( $3 >> 8 * i & 255 )); done; }
+
+# group_overhead GROUP FIRST_META_BG INODE_TABLE_BLOCKS: r is the number of
+# metadata blocks at the start of GROUP: grow_hs for a superblock backup,
+# grow_gd group descriptor blocks, the two bitmaps and the inode table.
+group_overhead() {
+    grow_hs=0
+    case " ${grow_supers} " in *" $1 "*) grow_hs=1 ;; esac
+    if [ "$1" -lt $(($2 * 64)) ]; then
+        grow_gd=$((grow_hs * $2))
+    else
+        case $(($1 % 64)) in 0 | 1 | 63) grow_gd=1 ;; *) grow_gd=0 ;; esac
+    fi
+    r=$((grow_hs + grow_gd + 2 + $3))
+}
+
+# block_bitmap USED END FILE: writes to FILE the block bitmap of a group whose
+# first USED blocks are metadata and that ends at block END; grow_d is it.
+block_bitmap() {
+    local i lo v
+    grow_d=()
+    for ((i = 0; i < 4096; i++)); do
+        lo=$((i * 8))
+        if [ $((lo + 8)) -le "$1" ] || [ "${lo}" -ge "$2" ]; then v=255
+        elif [ "${lo}" -ge "$1" ] && [ $((lo + 8)) -le "$2" ]; then v=0
+        else
+            v=0
+            [ $((lo + 8)) -le "$2" ] || v=$(( 255 & ~((1 << ($2 - lo)) - 1) ))
+            [ "${lo}" -ge "$1" ] || v=$(( v | ((1 << ($1 - lo)) - 1) ))
+        fi
+        grow_d[i]=${v}
+    done
+    printf -v v '\\%03o' "${grow_d[@]}"
+    printf "${v}" > "$3"
+}
+
+# block_at FS_BLOCK FILE INDEX DIR: lists block INDEX of FILE for FS_BLOCK.
+block_at() {
+    local n
+    n=$(( $(wc -c < "$4/blocks") / 4096 ))
+    dd if="$2" bs=4096 skip="$3" count=1 2>/dev/null >> "$4/blocks"
+    echo "$1 ${n}" >> "$4/list"
+}
+
+# crc_table: crc_t is the CRC-32C (Castagnoli) table.
+crc_table() {
+    local i j c
+    for ((i = 0; i < 256; i++)); do
+        c=${i}
+        for ((j = 0; j < 8; j++)); do c=$(( c & 1 ? c >> 1 ^ 0x82F63B78 : c >> 1 )); done
+        crc_t[i]=${c}
+    done
+}
+# crc32c BYTE...: continues the CRC-32C in c over the bytes, without the final
+# inversion, as ext4 keeps its checksums.
+crc32c() { local b; for b in "$@"; do c=$(( crc_t[(c ^ b) & 255] ^ c >> 8 )); done; }
+
+# write_grown_data DIR TARGET: writes the blocks grown_data listed.
+write_grown_data() {
+    while read -r at index <&3; do
+        ${sudo} dd if="$1/blocks" of="$2" bs=4096 skip="${index}" seek="${at}" count=1 conv=notrunc 2>/dev/null
+    done 3< "$1/list"
 }
 
 main "$@"
