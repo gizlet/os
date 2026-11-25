@@ -484,16 +484,23 @@ impl LinuxPower {
 }
 
 impl Power for LinuxPower {
+    /// Sleep when the kernel can suspend to RAM.
     fn actions(&self) -> Vec<PowerAction> {
-        vec![PowerAction::Reboot, PowerAction::PowerOff]
+        let can_sleep = read_trim(Path::new("/sys/power/state")).is_some_and(|s| s.split(' ').any(|w| w == "mem"));
+        let mut actions = if can_sleep { vec![PowerAction::Sleep] } else { Vec::new() };
+        actions.extend([PowerAction::Reboot, PowerAction::PowerOff]);
+        actions
     }
 
+    /// gizlet-power puts the device to sleep, so the press that wakes it
+    /// reaches no app.
     fn run(&mut self, action: PowerAction) -> Result<(), String> {
-        let verb = match action {
-            PowerAction::Reboot => "reboot",
-            PowerAction::PowerOff => "poweroff",
+        let args: &[&str] = match action {
+            PowerAction::Sleep => &["kill", "--kill-whom=main", "--signal=SIGUSR1", "gizlet-power.service"],
+            PowerAction::Reboot => &["reboot"],
+            PowerAction::PowerOff => &["poweroff"],
         };
-        run("systemctl", &[verb]).map(|_| ())
+        run("systemctl", args).map(|_| ())
     }
 }
 

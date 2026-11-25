@@ -1,8 +1,8 @@
 /*
  * Whether controls held still count as use. A held button or a stick kept
  * pushed sends no further events, so gizlet-power also looks at what is held
- * now before it dims or turns off the screen. Plain C, without Linux headers,
- * so idle_test.c runs on any computer.
+ * now before it dims the screen or puts the device to sleep. Plain C, without
+ * Linux headers, so idle_test.c runs on any computer.
  */
 #ifndef GIZLET_POWER_IDLE_H
 #define GIZLET_POWER_IDLE_H
@@ -39,7 +39,7 @@ static inline int idle_axis_rest(int trigger, int value, int min, int max) {
     return min + range / 2;
 }
 
-/* How long controls held without any new input keep the screen on: long
+/* How long controls held without any new input keep the device awake: long
  * enough for any held button in a game, short enough that an axis whose rest
  * was guessed wrong cannot keep it on for good. */
 #define IDLE_HELD_LIMIT_MS (10 * 60 * 1000LL)
@@ -49,14 +49,15 @@ static inline int idle_held_counts(long long now, long long last_event) {
     return now - last_event < IDLE_HELD_LIMIT_MS;
 }
 
+/* SCREEN_OFF is time to sleep; the screen stays off when sleep fails. */
 enum screen_state { SCREEN_ON, SCREEN_DIM, SCREEN_OFF };
 
 /* The screen's state at NOW (ms), from the one it is in. SECONDS is the
- * screen-off timeout, 0 for never; it dims DIM_SECONDS before, when the
- * timeout is long enough. HELD says a control is held now: that is use, so
- * the screen never turns off, and the inputs are never grabbed, while a
- * button is down that an app has seen pressed and must see released.
- * *LAST_USE is moved to NOW then. Waking from off is left to presses. */
+ * sleep timeout, 0 for never; it dims DIM_SECONDS before, when the timeout is
+ * long enough. HELD says a control is held now: that is use, so the device
+ * never sleeps, and the inputs are never grabbed, while a button is down that
+ * an app has seen pressed and must see released. *LAST_USE is moved to NOW
+ * then. Waking from off is left to presses. */
 static inline enum screen_state idle_next(enum screen_state s, long long now, long long *last_use, int seconds,
                                           int dim_seconds, int held) {
     if (seconds == 0) return SCREEN_ON;

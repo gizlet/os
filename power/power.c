@@ -1,15 +1,18 @@
 /*
- * gizlet-power [CONFIG]: turns the screen off when the device is idle.
+ * gizlet-power [CONFIG]: puts the device to sleep (suspend to RAM) when it is
+ * idle, on a press of the power key, or on SIGUSR1 (the launcher's Sleep).
  *
  * Every input device with buttons or axes is read alongside its other
- * readers. After `screen_off` seconds without input (CONFIG, by default
+ * readers. After `sleep_after` seconds without input (CONFIG, by default
  * /run/gizlet-data/system/power.ini, which the launcher writes; 0 is never,
- * 300 when unset) the backlight turns off; 15 s before that it dims.
+ * 300 when unset) the device sleeps; 15 s before that the screen dims, and
+ * any input brings the brightness back.
  *
- * - Dimmed: any input brings the brightness back.
- * - Off: the input devices are grabbed, so the press that wakes the screen
- *   reaches no app. A button press turns the backlight on again; the grab is
- *   released once every button is up. Sticks do not wake it.
+ * - Sleep waits until every button is up. The backlight turns off and the
+ *   input devices are grabbed, so the press that wakes the device reaches no
+ *   app; the grab is released a second after waking, once every button is up.
+ * - When the kernel cannot sleep, the screen stays off instead, and a button
+ *   press turns it on again. Sticks do not wake it.
  *
  * It runs on the system, not in the launcher, so the timer also runs while an
  * app has the screen. The file is read again whenever it changes.
@@ -33,8 +36,13 @@
 
 #define MAX_DEVICES 32
 #define DIM_SECONDS 15
-#define DEFAULT_SCREEN_OFF 300
+#define DEFAULT_SLEEP_AFTER 300
 #define RESCAN_MS 2000
+/* After waking, input is ignored this long: the power key's own press and
+ * release arrive as the device resumes. */
+#define SETTLE_MS 1000
+/* How often a pending sleep checks whether every button is up. */
+#define PENDING_MS 50
 #define BITS(n) (((n) + 7) / 8)
 
 struct device {
@@ -53,7 +61,7 @@ static char backlight[256];
 static enum screen_state screen = SCREEN_ON;
 static int saved_brightness = -1;
 static int grabbed;
-static volatile sig_atomic_t stopping;
+static volatile sig_atomic_t stopping, sleep_requested;
 
 static long long now_ms(void) {
     struct timespec t;
@@ -104,28 +112,28 @@ static int find_backlight(void) {
     return found;
 }
 
-/* screen_off from CONFIG; reread only when the file changes. */
-static int screen_off_seconds(const char *config) {
+/* sleep_after from CONFIG; reread only when the file changes. */
+static int sleep_after_seconds(const char *config) {
     static struct timespec seen = {-1, 0};
-    static int seconds = DEFAULT_SCREEN_OFF;
+    static int seconds = DEFAULT_SLEEP_AFTER;
     struct stat st;
     if (stat(config, &st) != 0) {
-        seconds = DEFAULT_SCREEN_OFF;
+        seconds = DEFAULT_SLEEP_AFTER;
         seen.tv_sec = -1;
         return seconds;
     }
     if (st.st_mtim.tv_sec == seen.tv_sec && st.st_mtim.tv_nsec == seen.tv_nsec) return seconds;
     seen = st.st_mtim;
-    seconds = DEFAULT_SCREEN_OFF;
+    seconds = DEFAULT_SLEEP_AFTER;
     FILE *f = fopen(config, "re");
     if (!f) return seconds;
     char line[128];
     while (fgets(line, sizeof line, f)) {
         int v;
-        if (sscanf(line, " screen_off = %d", &v) == 1 && v >= 0) seconds = v;
+        if (sscanf(line, " sleep_after = %d", &v) == 1 && v >= 0) seconds = v;
     }
     fclose(f);
-    printf("gizlet-power: screen off after %s%d s\n", seconds ? "" : "never, ", seconds);
+    printf("gizlet-power: sleep after %s%d s\n", seconds ? "" : "never, ", seconds);
     fflush(stdout);
     return seconds;
 }
@@ -157,6 +165,24 @@ static void set_screen(enum screen_state next) {
     printf("gizlet-power: screen %s\n", names[next]);
     fflush(stdout);
     screen = next;
+}
+
+/* Turns the screen off and suspends to RAM; returns once the device wakes,
+ * 1 if it slept. When it cannot, the screen stays off. */
+static int suspend(void) {
+    set_screen(SCREEN_OFF);
+    sync();
+    int fd = open("/sys/power/state", O_WRONLY | O_CLOEXEC);
+    int slept = fd >= 0 && write(fd, "mem\n", 4) == 4;
+    int err = errno;
+    if (fd >= 0) close(fd);
+    if (slept) {
+        puts("gizlet-power: woke up");
+    } else {
+        fprintf(stderr, "gizlet-power: cannot sleep: %s; the screen stays off\n", strerror(err));
+    }
+    fflush(stdout);
+    return slept;
 }
 
 static void close_device(int i) {
@@ -228,10 +254,12 @@ static int controls_held(void) {
 }
 
 /* Whether EV counts as use: a button press, a hat, or a stick or trigger moved
- * by an eighth of its range since the last use, so sensor noise does not. */
-static int is_activity(struct device *d, const struct input_event *ev, int *pressed) {
+ * by an eighth of its range since the last use, so sensor noise does not.
+ * *PRESSED is set on a press, *POWER on a press of the power key. */
+static int is_activity(struct device *d, const struct input_event *ev, int *pressed, int *power) {
     if (ev->type == EV_KEY) {
         if (ev->value == 1) *pressed = 1;
+        if (ev->value == 1 && ev->code == KEY_POWER) *power = 1;
         return ev->value != 0;
     }
     if (ev->type != EV_ABS || ev->code >= ABS_CNT) return 0;
@@ -244,8 +272,11 @@ static int is_activity(struct device *d, const struct input_event *ev, int *pres
 }
 
 static void on_signal(int sig) {
-    (void)sig;
-    stopping = 1;
+    if (sig == SIGUSR1) {
+        sleep_requested = 1;
+    } else {
+        stopping = 1;
+    }
 }
 
 int main(int argc, char **argv) {
@@ -257,26 +288,47 @@ int main(int argc, char **argv) {
     struct sigaction sa = {.sa_handler = on_signal};
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGUSR1, &sa, NULL);
 
-    long long last_use = now_ms(), last_event = last_use, last_scan = 0;
+    long long last_use = now_ms(), last_event = last_use, last_scan = 0, settle_until = 0;
+    /* A sleep asked for by the power key or SIGUSR1, once every button is up. */
+    int pending = 0;
     while (!stopping) {
         long long t = now_ms();
         if (t - last_scan >= RESCAN_MS) {
             rescan();
             last_scan = t;
         }
-        int seconds = screen_off_seconds(config);
+        int seconds = sleep_after_seconds(config);
+        if (sleep_requested) {
+            sleep_requested = 0;
+            pending = 1;
+        }
+        if (screen == SCREEN_OFF) pending = 0;
         long long off_at = last_use + (long long)seconds * 1000;
         long long dim_at = off_at - (seconds > DIM_SECONDS * 2 ? DIM_SECONDS * 1000 : 0);
-        /* What is held is only read when the screen is due to dim or turn off. */
+        /* What is held is only read when the device is due to dim or sleep. */
         int held = seconds && screen != SCREEN_OFF && t >= dim_at && idle_held_counts(t, last_event) && controls_held();
-        set_screen(idle_next(screen, t, &last_use, seconds, DIM_SECONDS, held));
+        /* Off, after a failed sleep, waits for a press. */
+        enum screen_state next = screen == SCREEN_OFF ? SCREEN_OFF : idle_next(screen, t, &last_use, seconds, DIM_SECONDS, held);
+        if ((next == SCREEN_OFF && screen != SCREEN_OFF) || (pending && !any_key_down())) {
+            pending = 0;
+            if (suspend()) {
+                last_use = last_event = now_ms();
+                settle_until = last_use + SETTLE_MS;
+                set_screen(SCREEN_ON);
+            }
+            continue;
+        }
+        set_screen(next);
         off_at = last_use + (long long)seconds * 1000;
         dim_at = off_at - (seconds > DIM_SECONDS * 2 ? DIM_SECONDS * 1000 : 0);
 
         long long wait = RESCAN_MS;
         if (seconds && screen == SCREEN_ON && dim_at - t < wait) wait = dim_at - t;
         if (seconds && screen == SCREEN_DIM && off_at - t < wait) wait = off_at - t;
+        if (pending && PENDING_MS < wait) wait = PENDING_MS;
+        if (grabbed && screen != SCREEN_OFF && t < settle_until && settle_until - t < wait) wait = settle_until - t;
         if (wait < 0) wait = 0;
         struct pollfd fds[MAX_DEVICES];
         for (int i = 0; i < ndevices; i++) fds[i] = (struct pollfd){.fd = devices[i].fd, .events = POLLIN};
@@ -286,27 +338,35 @@ int main(int argc, char **argv) {
             break;
         }
 
-        int used = 0, pressed = 0;
+        int used = 0, pressed = 0, power = 0;
         for (int i = ndevices - 1; i >= 0; i--) {
             if (!(fds[i].revents & (POLLIN | POLLERR | POLLHUP))) continue;
             struct input_event ev[64];
             ssize_t len;
             while ((len = read(devices[i].fd, ev, sizeof ev)) > 0) {
-                for (size_t k = 0; k < (size_t)len / sizeof ev[0]; k++) used |= is_activity(&devices[i], &ev[k], &pressed);
+                for (size_t k = 0; k < (size_t)len / sizeof ev[0]; k++) {
+                    used |= is_activity(&devices[i], &ev[k], &pressed, &power);
+                }
             }
             if (len < 0 && errno != EAGAIN && errno != EINTR) close_device(i);
         }
+        t = now_ms();
+        /* What woke the device is not use, nor a new press of the power key. */
+        if (t < settle_until) used = pressed = power = 0;
         if (screen == SCREEN_OFF) {
             if (pressed) {
-                last_use = last_event = now_ms();
+                last_use = last_event = t;
                 set_screen(SCREEN_ON);
             }
-        } else if (used) {
-            last_use = last_event = now_ms();
-            set_screen(SCREEN_ON);
+        } else {
+            if (used) {
+                last_use = last_event = t;
+                set_screen(SCREEN_ON);
+            }
+            if (power) pending = 1;
         }
-        /* The press that woke the screen stays with us until it is let go. */
-        if (grabbed && screen != SCREEN_OFF && !any_key_down()) grab(0);
+        /* The press that woke the device stays with us until it is let go. */
+        if (grabbed && screen != SCREEN_OFF && t >= settle_until && !any_key_down()) grab(0);
     }
     if (grabbed) grab(0);
     set_screen(SCREEN_ON);
