@@ -24,6 +24,8 @@ const MAX_TOTAL_BYTES: u64 = 8 << 30;
 const MAX_MANIFEST_BYTES: u64 = 64 << 10;
 /// CHECKSUMS is read whole: one line per file is far below this.
 const MAX_CHECKSUMS_BYTES: u64 = 4 << 20;
+/// The zip directory is read whole: 20,000 entries with long names fit well below this.
+const MAX_DIRECTORY_BYTES: u64 = 16 << 20;
 /// Asks the launcher on the screen to start an app: it writes the app's ID here
 /// and quits, and its start script runs the app, then the launcher again.
 pub const LAUNCH_REQUEST: &str = "/run/gizlet-launch";
@@ -498,6 +500,9 @@ fn entries(file: &mut File) -> Result<Vec<Entry>, String> {
     if cd_offset + cd_size > len {
         return bad("a damaged zip directory");
     }
+    if cd_size > MAX_DIRECTORY_BYTES {
+        return bad("a zip directory larger than 16 MiB");
+    }
     let mut cd = vec![0u8; cd_size as usize];
     file.seek(SeekFrom::Start(cd_offset)).map_err(|e| e.to_string())?;
     file.read_exact(&mut cd).map_err(|e| e.to_string())?;
@@ -942,6 +947,27 @@ mod tests {
             assert!(name_problem(bad).is_some(), "{bad}");
         }
         assert!(name_problem("bin/hello").is_none());
+    }
+
+    #[test]
+    fn rejects_huge_directory() {
+        let dir = temp("huge-dir");
+        let lib = Library::new(dir.join("prefix"));
+        // A sparse file whose end record declares a directory just over the limit.
+        let path = dir.join("huge.gzl");
+        let cd = MAX_DIRECTORY_BYTES + 1;
+        let mut f = File::create(&path).unwrap();
+        f.set_len(cd).unwrap();
+        f.seek(SeekFrom::End(0)).unwrap();
+        let mut eocd = 0x0605_4b50u32.to_le_bytes().to_vec();
+        eocd.extend_from_slice(&[0, 0, 0, 0, 1, 0, 1, 0]);
+        eocd.extend_from_slice(&(cd as u32).to_le_bytes());
+        eocd.extend_from_slice(&0u32.to_le_bytes());
+        eocd.extend_from_slice(&[0, 0]);
+        f.write_all(&eocd).unwrap();
+        drop(f);
+        assert!(lib.install(&path).unwrap_err().contains("larger than 16 MiB"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
