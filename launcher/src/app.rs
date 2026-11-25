@@ -1,0 +1,929 @@
+//! The launcher's state and what each control does. Pages in `ui` only draw it.
+
+use crate::i18n::{human_size, T};
+use crate::input::{Action, Input, TextEvent};
+use crate::keyboard::{self, Keyboard};
+use crate::settings::{Language, Power, Settings, Theme};
+use crate::system::{Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
+use std::path::PathBuf;
+
+pub const TOAST_SECONDS: f32 = 2.8;
+/// How long Back is held to leave the button test.
+pub const TEST_EXIT_SECONDS: f32 = 1.2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Page {
+    Home,
+    Settings,
+    ButtonTest,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HomeRow {
+    Tiles,
+    Buttons,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HomeButton {
+    Library,
+    Store,
+    ButtonTest,
+    Settings,
+    Power,
+}
+
+impl HomeButton {
+    pub const ALL: [HomeButton; 5] =
+        [HomeButton::Library, HomeButton::Store, HomeButton::ButtonTest, HomeButton::Settings, HomeButton::Power];
+
+    pub fn title(self) -> T {
+        match self {
+            HomeButton::Library => T::Library,
+            HomeButton::Store => T::Store,
+            HomeButton::ButtonTest => T::ButtonTest,
+            HomeButton::Settings => T::Settings,
+            HomeButton::Power => T::Power,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Category {
+    Network,
+    Ssh,
+    Display,
+    Sound,
+    Battery,
+    Controls,
+    Language,
+    System,
+}
+
+impl Category {
+    pub const ALL: [Category; 8] = [
+        Category::Network,
+        Category::Ssh,
+        Category::Display,
+        Category::Sound,
+        Category::Battery,
+        Category::Controls,
+        Category::Language,
+        Category::System,
+    ];
+
+    pub fn title(self) -> T {
+        match self {
+            Category::Network => T::CatNetwork,
+            Category::Ssh => T::CatSsh,
+            Category::Display => T::CatDisplay,
+            Category::Sound => T::CatSound,
+            Category::Battery => T::CatBattery,
+            Category::Controls => T::CatControls,
+            Category::Language => T::CatLanguage,
+            Category::System => T::CatSystem,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ItemId {
+    None,
+    WifiPower,
+    WifiNetwork(String),
+    WifiScan,
+    WifiDisconnect,
+    Ssh,
+    SshPassword,
+    Brightness,
+    Theme,
+    ScreenOff,
+    Volume,
+    BatteryPercent,
+    ButtonTest,
+    SwapAb,
+    Language(Language),
+    Clock24,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ItemValue {
+    /// A heading; not focusable.
+    Section,
+    /// A message with an optional second line; not focusable.
+    Notice { body: String },
+    /// A label with a value on the right.
+    Info(String),
+    Button,
+    Toggle(bool),
+    Slider(f32),
+    Radio(bool),
+    Choice(String),
+    Network { signal: u8, secured: bool, status: Option<String> },
+    /// A level bar with its value written above it; not focusable.
+    Bar { value: String, fraction: f32, warn: bool },
+    /// A line with a spinner; not focusable.
+    Busy,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Item {
+    pub id: ItemId,
+    pub label: String,
+    pub value: ItemValue,
+}
+
+impl Item {
+    fn new(id: ItemId, label: impl Into<String>, value: ItemValue) -> Item {
+        Item { id, label: label.into(), value }
+    }
+
+    fn info(label: impl Into<String>, value: impl Into<String>) -> Item {
+        Item::new(ItemId::None, label, ItemValue::Info(value.into()))
+    }
+
+    fn section(label: impl Into<String>) -> Item {
+        Item::new(ItemId::None, label, ItemValue::Section)
+    }
+
+    fn notice(label: impl Into<String>, body: impl Into<String>) -> Item {
+        Item::new(ItemId::None, label, ItemValue::Notice { body: body.into() })
+    }
+
+    pub fn focusable(&self) -> bool {
+        !matches!(self.value, ItemValue::Section | ItemValue::Notice { .. } | ItemValue::Busy | ItemValue::Bar { .. })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SettingsFocus {
+    pub category: usize,
+    pub item: usize,
+    pub in_content: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DialogAction {
+    Power(PowerAction),
+    Quit,
+    WifiDisconnect,
+    WifiForget(String),
+    Close,
+}
+
+pub struct Dialog {
+    pub title: String,
+    pub buttons: Vec<(String, DialogAction)>,
+    pub focus: usize,
+    pub opened: f64,
+}
+
+pub struct Toast {
+    pub text: String,
+    pub age: f32,
+}
+
+#[derive(Default)]
+pub struct WifiUi {
+    pub scanning: bool,
+    pub networks: Option<Vec<WifiNetwork>>,
+    pub connecting: Option<String>,
+    /// Turning Wi-Fi on or off, until the device reports it.
+    pub switching: Option<bool>,
+}
+
+pub struct App {
+    pub settings: Settings,
+    settings_path: PathBuf,
+    pub power: Power,
+    pub version: &'static str,
+    pages: Vec<Page>,
+    pub home_row: HomeRow,
+    pub home_button: usize,
+    pub focus: SettingsFocus,
+    pub snapshot: Option<Snapshot>,
+    system: System,
+    pub wifi: WifiUi,
+    pub ssh_switching: Option<bool>,
+    pub dialog: Option<Dialog>,
+    pub keyboard: Option<Keyboard>,
+    pub toasts: Vec<Toast>,
+    pub test_hold: f32,
+    pub time: f64,
+    pub gamepads: Vec<String>,
+    pub can_quit: bool,
+}
+
+impl App {
+    pub fn new(data_dir: PathBuf, version: &'static str) -> App {
+        let settings_path = data_dir.join("settings.ini");
+        App {
+            settings: Settings::load(&settings_path),
+            settings_path,
+            power: Power::load(Power::path()),
+            version,
+            system: System::start(data_dir),
+            pages: vec![Page::Home],
+            home_row: HomeRow::Buttons,
+            home_button: 3,
+            focus: SettingsFocus::default(),
+            snapshot: None,
+            wifi: WifiUi::default(),
+            ssh_switching: None,
+            dialog: None,
+            keyboard: None,
+            toasts: Vec::new(),
+            test_hold: 0.0,
+            time: 0.0,
+            gamepads: Vec::new(),
+            can_quit: true,
+        }
+    }
+
+    pub fn lang(&self) -> Language {
+        self.settings.language.resolve()
+    }
+
+    pub fn t(&self, t: T) -> &'static str {
+        t.get(self.lang())
+    }
+
+    pub fn page(&self) -> Page {
+        *self.pages.last().unwrap_or(&Page::Home)
+    }
+
+    pub fn depth(&self) -> usize {
+        self.pages.len()
+    }
+
+    pub fn text_input_active(&self) -> bool {
+        self.keyboard.is_some()
+    }
+
+    pub fn toast(&mut self, text: impl Into<String>) {
+        self.toasts.push(Toast { text: text.into(), age: 0.0 });
+        if self.toasts.len() > 3 {
+            self.toasts.remove(0);
+        }
+    }
+
+    fn save(&mut self) {
+        if let Err(e) = self.settings.save(&self.settings_path) {
+            let msg = T::Failed.fmt(self.lang(), &[&e.to_string()]);
+            self.toast(msg);
+        }
+    }
+
+    pub fn focused_category(&self) -> Category {
+        Category::ALL[self.focus.category.min(Category::ALL.len() - 1)]
+    }
+
+    /// Advances by `dt` seconds with this frame's input. Returns false to quit.
+    pub fn update(&mut self, input: &Input, dt: f32) -> bool {
+        self.time += dt as f64;
+        for t in &mut self.toasts {
+            t.age += dt;
+        }
+        self.toasts.retain(|t| t.age < TOAST_SECONDS);
+        for event in self.system.poll() {
+            self.on_event(event);
+        }
+        self.auto_scan();
+
+        if self.keyboard.is_some() {
+            self.keyboard_input(input);
+            return true;
+        }
+        if self.dialog.is_some() {
+            return self.dialog_input(input);
+        }
+        if self.page() != Page::ButtonTest {
+            for (a, step) in [(Action::VolumeUp, 0.05), (Action::VolumeDown, -0.05)] {
+                if input.pressed(a) {
+                    self.nudge_volume(step);
+                }
+            }
+        }
+        match self.page() {
+            Page::Home => self.home_input(input),
+            Page::Settings => self.settings_input(input),
+            Page::ButtonTest => {
+                if input.held(Action::B) {
+                    self.test_hold += dt;
+                    if self.test_hold >= TEST_EXIT_SECONDS {
+                        self.test_hold = 0.0;
+                        self.pages.pop();
+                    }
+                } else {
+                    self.test_hold = 0.0;
+                }
+            }
+        }
+        true
+    }
+
+    fn on_event(&mut self, event: Event) {
+        let l = self.lang();
+        match event {
+            Event::Snapshot(s) => {
+                if let Ok(w) = &s.wifi {
+                    if self.wifi.switching == Some(w.on) {
+                        self.wifi.switching = None;
+                    }
+                    if !w.on || !w.adapter {
+                        self.wifi.networks = None;
+                        self.wifi.scanning = false;
+                    }
+                }
+                if let Ok(ssh) = &s.ssh {
+                    if self.ssh_switching == Some(ssh.on) {
+                        self.ssh_switching = None;
+                    }
+                }
+                self.snapshot = Some(*s);
+            }
+            Event::WifiNetworks(result) => {
+                self.wifi.scanning = false;
+                match result {
+                    Ok(mut nets) => {
+                        nets.sort_by(|a, b| b.signal.cmp(&a.signal));
+                        self.wifi.networks = Some(nets);
+                    }
+                    Err(e) => {
+                        self.wifi.networks.get_or_insert_with(Vec::new);
+                        self.toast(T::Failed.fmt(l, &[&e]));
+                    }
+                }
+            }
+            Event::WifiConnect { ssid, result } => {
+                self.wifi.connecting = None;
+                match result {
+                    Ok(()) => {
+                        self.toast(T::WifiConnectedTo.fmt(l, &[&ssid]));
+                        self.scan();
+                    }
+                    Err(e) => self.toast(T::WifiConnectFailed.fmt(l, &[&ssid, &e])),
+                }
+            }
+            Event::Failed(e) => {
+                self.wifi.switching = None;
+                self.ssh_switching = None;
+                self.toast(T::Failed.fmt(l, &[&e]));
+            }
+        }
+    }
+
+    fn wifi_ready(&self) -> bool {
+        matches!(self.snapshot.as_ref().map(|s| &s.wifi), Some(Ok(w)) if w.on && w.adapter)
+    }
+
+    /// Looks for networks when the Network page shows Wi-Fi without a list.
+    fn auto_scan(&mut self) {
+        let showing = self.page() == Page::Settings && self.focused_category() == Category::Network;
+        if showing && self.wifi_ready() && self.wifi.networks.is_none() && !self.wifi.scanning {
+            self.scan();
+        }
+    }
+
+    fn scan(&mut self) {
+        if self.wifi_ready() && !self.wifi.scanning {
+            self.wifi.scanning = true;
+            self.system.send(Request::WifiScan);
+        }
+    }
+
+    fn nudge_volume(&mut self, step: f32) {
+        if let Some(Ok(v)) = self.snapshot.as_mut().map(|s| &mut s.volume) {
+            *v = (*v + step).clamp(0.0, 1.0);
+            self.system.send(Request::SetVolume(*v));
+        }
+    }
+
+    pub fn push(&mut self, page: Page) {
+        self.pages.push(page);
+        if page == Page::Settings {
+            self.focus = SettingsFocus::default();
+        }
+        self.test_hold = 0.0;
+    }
+
+    fn power_dialog(&mut self) {
+        let mut buttons: Vec<(String, DialogAction)> = Vec::new();
+        if let Some(s) = &self.snapshot {
+            for a in &s.power {
+                let label = match a {
+                    PowerAction::Reboot => T::Reboot,
+                    PowerAction::PowerOff => T::PowerOff,
+                };
+                buttons.push((self.t(label).into(), DialogAction::Power(*a)));
+            }
+        }
+        if self.can_quit {
+            buttons.push((self.t(T::QuitLauncher).into(), DialogAction::Quit));
+        }
+        self.dialog = Some(Dialog { title: self.t(T::PowerTitle).into(), buttons, focus: 0, opened: self.time });
+    }
+
+    fn home_input(&mut self, input: &Input) {
+        let n = HomeButton::ALL.len();
+        for &a in &input.pressed {
+            match (a, self.home_row) {
+                (Action::Down, HomeRow::Tiles) => self.home_row = HomeRow::Buttons,
+                (Action::Up, HomeRow::Buttons) => self.home_row = HomeRow::Tiles,
+                (Action::Left, HomeRow::Buttons) => self.home_button = (self.home_button + n - 1) % n,
+                (Action::Right, HomeRow::Buttons) => self.home_button = (self.home_button + 1) % n,
+                (Action::A, HomeRow::Tiles) => self.toast(self.t(T::LibrarySoon)),
+                (Action::A, HomeRow::Buttons) => match HomeButton::ALL[self.home_button] {
+                    HomeButton::Library => self.toast(self.t(T::LibrarySoon)),
+                    HomeButton::Store => self.toast(self.t(T::StoreSoon)),
+                    HomeButton::ButtonTest => self.push(Page::ButtonTest),
+                    HomeButton::Settings => self.push(Page::Settings),
+                    HomeButton::Power => self.power_dialog(),
+                },
+                (Action::Start, _) => self.push(Page::Settings),
+                _ => {}
+            }
+        }
+    }
+
+    fn settings_input(&mut self, input: &Input) {
+        for &a in &input.pressed {
+            let items = self.settings_items(self.focused_category());
+            if !self.focus.in_content {
+                let n = Category::ALL.len();
+                match a {
+                    Action::Up => self.focus.category = (self.focus.category + n - 1) % n,
+                    Action::Down => self.focus.category = (self.focus.category + 1) % n,
+                    Action::A | Action::Right => {
+                        if let Some(i) = items.iter().position(Item::focusable) {
+                            self.focus.item = i;
+                            self.focus.in_content = true;
+                        }
+                    }
+                    Action::B => {
+                        self.pages.pop();
+                        return;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            let sel = self.focus.item.min(items.len().saturating_sub(1));
+            let item = items.get(sel).cloned();
+            match a {
+                Action::Up | Action::Down => {
+                    let focusable: Vec<usize> = (0..items.len()).filter(|&i| items[i].focusable()).collect();
+                    if let Some(pos) = focusable.iter().position(|&i| i >= sel) {
+                        let next = if a == Action::Up { pos.checked_sub(1) } else { Some(pos + usize::from(focusable[pos] == sel)) };
+                        if let Some(&i) = next.and_then(|p| focusable.get(p)) {
+                            self.focus.item = i;
+                        }
+                    }
+                }
+                Action::Left | Action::Right => {
+                    let step = if a == Action::Left { -1.0 } else { 1.0 };
+                    match item.as_ref().map(|i| (&i.id, &i.value)) {
+                        Some((id, ItemValue::Slider(v))) => self.slide(id, *v + step * 0.05),
+                        Some((ItemId::Theme, _)) => self.toggle_theme(),
+                        Some((ItemId::ScreenOff, _)) => self.cycle_screen_off(step as i32),
+                        _ if a == Action::Left => self.focus.in_content = false,
+                        _ => {}
+                    }
+                }
+                Action::A => {
+                    if let Some(item) = item {
+                        self.activate(&item);
+                    }
+                }
+                Action::Y if self.focused_category() == Category::Network => {
+                    self.wifi.networks = None;
+                    self.scan();
+                }
+                Action::X => {
+                    if let Some(ItemId::WifiNetwork(ssid)) = item.as_ref().map(|i| &i.id) {
+                        let saved = self.wifi.networks.iter().flatten().any(|n| &n.ssid == ssid && n.known);
+                        if saved {
+                            let connected = matches!(&item.as_ref().map(|i| &i.value), Some(ItemValue::Network { status: Some(s), .. }) if s == self.t(T::WifiConnected));
+                            self.network_menu(&ssid.clone(), connected);
+                        }
+                    }
+                }
+                Action::B => self.focus.in_content = false,
+                _ => {}
+            }
+        }
+        // The list can shrink under the focus, as when a scan finishes.
+        if self.focus.in_content {
+            let items = self.settings_items(self.focused_category());
+            if !items.get(self.focus.item).is_some_and(Item::focusable) {
+                let sel = self.focus.item;
+                let best = (0..items.len()).filter(|&i| items[i].focusable()).min_by_key(|&i| i.abs_diff(sel));
+                match best {
+                    Some(i) => self.focus.item = i,
+                    None => self.focus.in_content = false,
+                }
+            }
+        }
+    }
+
+    fn slide(&mut self, id: &ItemId, v: f32) {
+        let v = (v * 20.0).round() / 20.0;
+        let v = v.clamp(0.0, 1.0);
+        let Some(s) = self.snapshot.as_mut() else { return };
+        match id {
+            ItemId::Brightness => {
+                s.brightness = Ok(v);
+                self.system.send(Request::SetBrightness(v));
+            }
+            ItemId::Volume => {
+                s.volume = Ok(v);
+                self.system.send(Request::SetVolume(v));
+            }
+            _ => {}
+        }
+    }
+
+    fn cycle_screen_off(&mut self, step: i32) {
+        self.power.cycle(step);
+        if let Err(e) = self.power.save() {
+            let msg = T::Failed.fmt(self.lang(), &[&e.to_string()]);
+            self.toast(msg);
+        }
+    }
+
+    /// The screen-off choice as shown: minutes, or never.
+    pub fn screen_off_label(&self) -> String {
+        match self.power.screen_off {
+            0 => self.t(T::Never).to_string(),
+            s => T::Minutes.fmt(self.lang(), &[&(s / 60).to_string()]),
+        }
+    }
+
+    fn toggle_theme(&mut self) {
+        self.settings.theme = match self.settings.theme {
+            Theme::Dark => Theme::Light,
+            Theme::Light => Theme::Dark,
+        };
+        self.save();
+    }
+
+    fn activate(&mut self, item: &Item) {
+        let current = match &item.value {
+            ItemValue::Toggle(on) => *on,
+            _ => false,
+        };
+        match &item.id {
+            ItemId::WifiPower => {
+                self.wifi.switching = Some(!current);
+                self.system.send(Request::WifiPower(!current));
+            }
+            ItemId::Ssh => {
+                self.ssh_switching = Some(!current);
+                self.system.send(Request::Ssh(!current));
+            }
+            ItemId::SshPassword => {
+                let current = match self.snapshot.as_ref().map(|s| &s.ssh) {
+                    Some(Ok(s)) => s.password.clone().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                self.keyboard = Some(Keyboard::ssh_password(self.t(T::SshPasswordTitle).into(), &current));
+            }
+            ItemId::WifiScan => {
+                self.wifi.networks = None;
+                self.scan();
+            }
+            ItemId::WifiDisconnect => self.system.send(Request::WifiDisconnect),
+            ItemId::WifiNetwork(ssid) => self.choose_network(ssid),
+            ItemId::Theme => self.toggle_theme(),
+            ItemId::ScreenOff => self.cycle_screen_off(1),
+            ItemId::BatteryPercent => {
+                self.settings.battery_percent = !self.settings.battery_percent;
+                self.save();
+            }
+            ItemId::ButtonTest => self.push(Page::ButtonTest),
+            ItemId::SwapAb => {
+                self.settings.swap_ab = !self.settings.swap_ab;
+                self.save();
+            }
+            ItemId::Language(lang) => {
+                self.settings.language = *lang;
+                self.save();
+            }
+            ItemId::Clock24 => {
+                self.settings.clock_24h = !self.settings.clock_24h;
+                self.save();
+            }
+            ItemId::Brightness | ItemId::Volume | ItemId::None => {}
+        }
+    }
+
+    fn choose_network(&mut self, ssid: &str) {
+        if self.wifi.connecting.is_some() {
+            return;
+        }
+        let connected = matches!(self.snapshot.as_ref().map(|s| &s.wifi), Some(Ok(w)) if w.link.ssid.as_deref() == Some(ssid));
+        let network = self.wifi.networks.as_ref().and_then(|n| n.iter().find(|n| n.ssid == ssid)).cloned();
+        if connected {
+            self.network_menu(ssid, true);
+        } else if network.is_some_and(|n| n.known || !n.secured) {
+            // Saved and open networks need no passphrase.
+            self.connect(ssid, None);
+        } else {
+            let title = T::WifiPassphrase.fmt(self.lang(), &[ssid]);
+            self.keyboard = Some(Keyboard::passphrase(title, ssid.into()));
+        }
+    }
+
+    /// Disconnect (when connected), Forget and Close for a saved network.
+    fn network_menu(&mut self, ssid: &str, connected: bool) {
+        let mut buttons = Vec::new();
+        if connected {
+            buttons.push((self.t(T::WifiDisconnect).into(), DialogAction::WifiDisconnect));
+        }
+        buttons.push((self.t(T::WifiForget).into(), DialogAction::WifiForget(ssid.into())));
+        buttons.push((self.t(T::Close).into(), DialogAction::Close));
+        self.dialog = Some(Dialog { title: ssid.into(), buttons, focus: 0, opened: self.time });
+    }
+
+    fn connect(&mut self, ssid: &str, passphrase: Option<String>) {
+        self.wifi.connecting = Some(ssid.into());
+        self.system.send(Request::WifiConnect { ssid: ssid.into(), passphrase });
+    }
+
+    fn dialog_input(&mut self, input: &Input) -> bool {
+        let Some(d) = self.dialog.as_mut() else { return true };
+        let n = d.buttons.len().max(1);
+        for &a in &input.pressed {
+            match a {
+                Action::Up | Action::Left => d.focus = (d.focus + n - 1) % n,
+                Action::Down | Action::Right => d.focus = (d.focus + 1) % n,
+                Action::B => {
+                    self.dialog = None;
+                    return true;
+                }
+                Action::A => {
+                    let action = d.buttons.get(d.focus).map(|b| b.1.clone()).unwrap_or(DialogAction::Close);
+                    self.dialog = None;
+                    match action {
+                        DialogAction::Quit => return false,
+                        DialogAction::Power(p) => self.system.send(Request::Power(p)),
+                        DialogAction::WifiDisconnect => self.system.send(Request::WifiDisconnect),
+                        DialogAction::WifiForget(ssid) => {
+                            self.system.send(Request::WifiForget(ssid));
+                            self.wifi.networks = None;
+                        }
+                        DialogAction::Close => {}
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+
+    fn keyboard_input(&mut self, input: &Input) {
+        let Some(kb) = self.keyboard.as_mut() else { return };
+        let mut submit = None;
+        let mut cancel = false;
+        for e in &input.text {
+            match e {
+                TextEvent::Char(c) => kb.type_char(*c),
+                TextEvent::Backspace => kb.backspace(),
+                TextEvent::Submit => submit = Some(kb.text.clone()),
+                TextEvent::Cancel => cancel = true,
+            }
+        }
+        for &a in &input.pressed {
+            match a {
+                Action::Up => kb.move_by(0, -1),
+                Action::Down => kb.move_by(0, 1),
+                Action::Left => kb.move_by(-1, 0),
+                Action::Right => kb.move_by(1, 0),
+                Action::A => {
+                    if let keyboard::Outcome::Submit(t) = kb.press() {
+                        submit = Some(t);
+                    }
+                }
+                // B deletes; on an empty field it closes the keyboard.
+                Action::B if kb.text.is_empty() => cancel = true,
+                Action::B => kb.backspace(),
+                Action::Y => kb.type_char(' '),
+                Action::X => kb.masked = !kb.masked,
+                Action::Start => submit = Some(kb.text.clone()),
+                _ => {}
+            }
+        }
+        if cancel {
+            self.keyboard = None;
+        } else if let Some(text) = submit {
+            let purpose = kb.purpose.clone();
+            self.keyboard = None;
+            match purpose {
+                keyboard::Purpose::WifiPassphrase(ssid) => self.connect(&ssid, Some(text)),
+                keyboard::Purpose::SshPassword if text.is_empty() => {}
+                keyboard::Purpose::SshPassword => {
+                    self.system.send(Request::SshPassword(text));
+                    self.toast(self.t(T::SshPasswordSaved));
+                }
+            }
+        }
+    }
+
+    fn missing(&self, m: &Missing, no_hw: T, no_hw_body: Option<T>) -> Item {
+        let l = self.lang();
+        match m {
+            Missing::NoHardware => Item::notice(no_hw.get(l), no_hw_body.map(|b| b.get(l)).unwrap_or("")),
+            Missing::NoService(name) => Item::notice(T::MissingService.fmt(l, &[name]), T::MissingServiceBody.get(l)),
+            Missing::ManagedBySystem => Item::notice(T::ManagedBySystem.get(l), T::ManagedBySystemBody.get(l)),
+            Missing::Error(e) => Item::notice(T::DeviceError.fmt(l, &[e]), ""),
+        }
+    }
+
+    /// The rows of a settings category, from the current state.
+    pub fn settings_items(&self, cat: Category) -> Vec<Item> {
+        let l = self.lang();
+        let t = |k: T| k.get(l).to_string();
+        let mut items = Vec::new();
+        let Some(snap) = self.snapshot.as_ref() else {
+            items.push(Item::new(ItemId::None, t(T::WifiScanning), ItemValue::Busy));
+            return items;
+        };
+        match cat {
+            Category::Network => {
+                match &snap.wifi {
+                    Err(m) => items.push(self.missing(m, T::WifiNoHardware, Some(T::WifiNoHardwareBody))),
+                    Ok(w) => self.wifi_items(w, &mut items),
+                }
+            }
+            Category::Ssh => {
+                match &snap.ssh {
+                    Err(m) => items.push(self.missing(m, T::Ssh, None)),
+                    Ok(s) => {
+                        let on = self.ssh_switching.unwrap_or(s.on);
+                        items.push(Item::new(ItemId::Ssh, t(T::Ssh), ItemValue::Toggle(on)));
+                        let status = if s.running { t(T::SshRunning) } else { t(T::SshStopped) };
+                        items.push(Item::info(t(T::BatteryState), status));
+                        let password = s.password.clone().unwrap_or_else(|| t(T::SshPasswordUnset));
+                        items.push(Item::new(ItemId::SshPassword, t(T::SshPassword), ItemValue::Info(password)));
+                        if s.running {
+                            let login = snap.ip.as_ref().map(|ip| format!("ssh root@{ip}")).unwrap_or_else(|| t(T::SshNeedsNetwork));
+                            items.push(Item::info(t(T::SshLogin), login));
+                            let keys = match s.keys {
+                                Some(0) | None => t(T::SshNoKeys),
+                                Some(n) => T::SshKeyCount.fmt(l, &[&n.to_string()]),
+                            };
+                            items.push(Item::info(t(T::SshKeys), keys));
+                        }
+                    }
+                }
+            }
+            Category::Display => {
+                match &snap.brightness {
+                    Ok(v) => items.push(Item::new(ItemId::Brightness, t(T::Brightness), ItemValue::Slider(*v))),
+                    Err(m) => items.push(self.missing(m, T::NoBacklight, None)),
+                }
+                let theme = match self.settings.theme {
+                    Theme::Dark => t(T::ThemeDark),
+                    Theme::Light => t(T::ThemeLight),
+                };
+                items.push(Item::new(ItemId::Theme, t(T::ThemeLabel), ItemValue::Choice(theme)));
+                // Only with a backlight to turn off.
+                if snap.brightness.is_ok() {
+                    items.push(Item::new(ItemId::ScreenOff, t(T::ScreenOff), ItemValue::Choice(self.screen_off_label())));
+                }
+            }
+            Category::Sound => match &snap.volume {
+                Ok(v) => items.push(Item::new(ItemId::Volume, t(T::Volume), ItemValue::Slider(*v))),
+                Err(m) => items.push(self.missing(m, T::NoAudio, Some(T::NoAudioBody))),
+            },
+            Category::Battery => {
+                match &snap.battery {
+                    Ok(b) => {
+                        items.push(Item::new(
+                            ItemId::None,
+                            t(T::BatteryLevel),
+                            ItemValue::Bar { value: format!("{}%", b.percent), fraction: b.percent as f32 / 100.0, warn: b.percent <= 15 },
+                        ));
+                        let state = match b.charge {
+                            crate::system::Charge::Charging => t(T::Charging),
+                            crate::system::Charge::Full => t(T::Full),
+                            crate::system::Charge::Discharging => t(T::Discharging),
+                        };
+                        items.push(Item::info(t(T::BatteryState), state));
+                    }
+                    Err(m) => items.push(self.missing(m, T::NoBattery, Some(T::NoBatteryBody))),
+                }
+                items.push(Item::new(ItemId::BatteryPercent, t(T::BatteryPercent), ItemValue::Toggle(self.settings.battery_percent)));
+            }
+            Category::Controls => {
+                items.push(Item::new(ItemId::ButtonTest, t(T::ButtonTestOpen), ItemValue::Button));
+                items.push(Item::new(ItemId::SwapAb, t(T::SwapAb), ItemValue::Toggle(self.settings.swap_ab)));
+                items.push(Item::section(t(T::Gamepads)));
+                if self.gamepads.is_empty() {
+                    items.push(Item::notice(t(T::NoGamepads), ""));
+                }
+                for (i, name) in self.gamepads.iter().enumerate() {
+                    items.push(Item::info(format!("#{}", i + 1), name.clone()));
+                }
+            }
+            Category::Language => {
+                for lang in Language::ALL {
+                    let label = match lang {
+                        Language::Auto => t(T::LangAuto),
+                        Language::ZhCn => "简体中文".into(),
+                        Language::En => "English".into(),
+                    };
+                    items.push(Item::new(ItemId::Language(lang), label, ItemValue::Radio(self.settings.language == lang)));
+                }
+            }
+            Category::System => {
+                items.push(Item::new(ItemId::Clock24, t(T::Clock24), ItemValue::Toggle(self.settings.clock_24h)));
+                items.push(Item::section(t(T::About)));
+                items.push(Item::info(t(T::Version), self.version));
+                let unknown = || t(T::Unknown);
+                items.push(Item::info(t(T::Device), snap.info.model.clone().unwrap_or_else(unknown)));
+                items.push(Item::info(t(T::OperatingSystem), snap.info.os.clone()));
+                items.push(Item::info(t(T::Kernel), snap.info.kernel.clone()));
+                items.push(Item::info(t(T::Arch), snap.info.arch.clone()));
+                items.push(Item::info(t(T::Cpus), snap.info.cpus.to_string()));
+                items.push(Item::info(t(T::Memory), snap.info.memory_bytes.map(human_size).unwrap_or_else(unknown)));
+                items.push(Item::info(t(T::Hostname), snap.info.hostname.clone()));
+                items.push(Item::info(t(T::IpAddress), snap.ip.clone().unwrap_or_else(|| t(T::WifiNotConnected))));
+                if let Some(st) = snap.storage {
+                    let used = st.total.saturating_sub(st.free);
+                    items.push(Item::new(
+                        ItemId::None,
+                        t(T::Storage),
+                        ItemValue::Bar {
+                            value: T::StorageUsed.fmt(l, &[&human_size(used), &human_size(st.total)]),
+                            fraction: if st.total > 0 { used as f32 / st.total as f32 } else { 0.0 },
+                            warn: st.total > 0 && used * 10 > st.total * 9,
+                        },
+                    ));
+                }
+                if snap.simulated {
+                    items.push(Item::info(t(T::Simulated), t(T::SimulatedOn)));
+                }
+            }
+        }
+        items
+    }
+
+    fn wifi_items(&self, w: &crate::system::WifiState, items: &mut Vec<Item>) {
+        let l = self.lang();
+        let t = |k: T| k.get(l).to_string();
+        let on = self.wifi.switching.unwrap_or(w.on);
+        items.push(Item::new(ItemId::WifiPower, t(T::Wifi), ItemValue::Toggle(on)));
+        if self.wifi.switching == Some(true) && !w.on {
+            items.push(Item::new(ItemId::None, t(T::WifiStarting), ItemValue::Busy));
+            return;
+        }
+        if !w.on {
+            items.push(Item::notice(t(T::WifiOffBody), ""));
+            return;
+        }
+        if !w.adapter {
+            items.push(Item::notice(t(T::WifiNoHardware), t(T::WifiNoHardwareBody)));
+            return;
+        }
+        items.push(Item::section(t(T::WifiCurrent)));
+        match &w.link.ssid {
+            Some(ssid) => {
+                items.push(Item::info(t(T::Wifi), ssid.clone()));
+                items.push(Item::new(ItemId::WifiDisconnect, t(T::WifiDisconnect), ItemValue::Button));
+            }
+            None => items.push(Item::info(t(T::Wifi), t(T::WifiNotConnected))),
+        }
+        items.push(Item::section(t(T::WifiAvailable)));
+        if self.wifi.scanning && self.wifi.networks.is_none() {
+            items.push(Item::new(ItemId::None, t(T::WifiScanning), ItemValue::Busy));
+        }
+        if let Some(nets) = &self.wifi.networks {
+            if nets.is_empty() {
+                items.push(Item::notice(t(T::WifiNone), ""));
+            }
+            for n in nets {
+                let status = if self.wifi.connecting.as_deref() == Some(n.ssid.as_str()) {
+                    Some(t(T::WifiConnecting))
+                } else if w.link.ssid.as_deref() == Some(n.ssid.as_str()) {
+                    Some(t(T::WifiConnected))
+                } else if n.known {
+                    Some(t(T::WifiSaved))
+                } else {
+                    None
+                };
+                items.push(Item::new(
+                    ItemId::WifiNetwork(n.ssid.clone()),
+                    n.ssid.clone(),
+                    ItemValue::Network { signal: n.signal, secured: n.secured, status },
+                ));
+            }
+        }
+        if self.wifi.scanning && self.wifi.networks.is_some() {
+            items.push(Item::new(ItemId::None, t(T::WifiScanning), ItemValue::Busy));
+        } else if !self.wifi.scanning {
+            items.push(Item::new(ItemId::WifiScan, t(T::WifiScan), ItemValue::Button));
+        }
+    }
+}

@@ -1,0 +1,6 @@
+package(default_visibility = ["//visibility:public"])
+
+# The Gizlet OS base every board shares: Debian trixie arm64 (packages.json,
+# locked in packages.lock.json) with systemd, plus the files under etc/ and
+# usr/, installed at the same paths. rootfs.bzl lists them for a target.
+exports_files(["packages.lock.json"] + glob(["etc/**", "usr/**"]))

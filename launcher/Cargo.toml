@@ -1,0 +1,26 @@
+[package]
+name = "gizlet-launcher"
+description = "Gizlet OS's launcher: home, settings and a button test, drawn with raylib"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "gizlet-launcher"
+path = "src/main.rs"
+
+[features]
+# Gizlet OS: link the software-rendered DRM raylib built for the card (see
+# BUILD.bazel) instead of letting raylib-sys build a desktop raylib.
+gizlet-os = ["raylib-sys/nobuild"]
+
+[dependencies]
+raylib-sys = "6.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+lto = "thin"
+strip = true

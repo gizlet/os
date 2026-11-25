@@ -1,0 +1,96 @@
+#!/bin/sh
+# gizlet-switch: the settings the launcher changes, kept on the data partition
+# because the read-only base cannot enable units or change /etc.
+#
+#   gizlet-switch wifi|ssh [on|off]     show or change a service: wifi is iwd, ssh is sshd
+#   gizlet-switch ssh-password [NEW]    show or set root's password for ssh logins
+#   gizlet-switch boot                  start what is on (gizlet-switches.service)
+#   gizlet-switch apply-password        install the stored password (gizlet-ssh)
+#
+# The password is kept readable by root so the launcher can show it, and is
+# installed as root's /etc/shadow entry through a bind mount of a copy.
+set -eu
+dir=/run/gizlet-data/system/switches
+password_file=/run/gizlet-data/system/ssh/password
+shadow=/run/gizlet-ssh/shadow
+usage() {
+    echo 'usage: gizlet-switch wifi|ssh [on|off] | ssh-password [NEW] | boot | apply-password' >&2
+    exit 2
+}
+unit_of() {
+    case "$1" in
+        wifi) echo iwd.service ;;
+        ssh) echo ssh.service ;;
+        *) usage ;;
+    esac
+}
+need_data() {
+    [ -f /run/gizlet-data.ready ] || { echo 'gizlet-switch: the data partition is not mounted' >&2; exit 1; }
+}
+
+# Writes /etc/shadow's root entry with the stored password's hash, or locked without one.
+apply_password() {
+    hash='*'
+    if [ -s "$password_file" ]; then
+        hash=$(openssl passwd -6 -stdin < "$password_file")
+    fi
+    mkdir -p -m 0755 /run/gizlet-ssh
+    (
+        umask 077
+        # Rewrite the copy in place: once bind-mounted, its inode must stay.
+        awk -F: -v OFS=: -v hash="$hash" '$1 == "root" { $2 = hash } { print }' /etc/shadow > "$shadow.new"
+        if mountpoint -q /etc/shadow; then
+            cat "$shadow.new" > "$shadow"
+            rm "$shadow.new"
+        else
+            mv "$shadow.new" "$shadow"
+            chmod 0640 "$shadow"
+            chgrp shadow "$shadow" 2>/dev/null || :
+            mount --bind "$shadow" /etc/shadow
+        fi
+    )
+}
+
+case "${1:-}" in
+    boot)
+        for name in wifi ssh; do
+            [ -e "$dir/$name" ] && systemctl --no-block start "$(unit_of "$name")"
+        done
+        exit 0
+        ;;
+    apply-password)
+        apply_password
+        exit 0
+        ;;
+    ssh-password)
+        if [ $# -eq 1 ]; then
+            [ -f "$password_file" ] && cat "$password_file"
+            exit 0
+        fi
+        [ $# -eq 2 ] && [ -n "$2" ] || usage
+        need_data
+        mkdir -p -m 0700 "$(dirname "$password_file")"
+        (umask 077 && printf '%s' "$2" > "$password_file.new" && mv "$password_file.new" "$password_file")
+        sync
+        apply_password
+        exit 0
+        ;;
+esac
+[ $# -ge 1 ] && [ $# -le 2 ] || usage
+unit=$(unit_of "$1")
+case "${2:-}" in
+    '') if [ -e "$dir/$1" ]; then echo on; else echo off; fi ;;
+    on)
+        need_data
+        mkdir -p "$dir"
+        : > "$dir/$1"
+        sync
+        systemctl start "$unit"
+        ;;
+    off)
+        rm -f "$dir/$1"
+        sync
+        systemctl stop "$unit"
+        ;;
+    *) usage ;;
+esac

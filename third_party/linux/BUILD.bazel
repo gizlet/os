@@ -1,0 +1,8 @@
+exports_files(
+    [
+        "COPYING",
+        "GPL-2.0",
+        "Linux-syscall-note",
+    ],
+    visibility = ["//visibility:public"],
+)

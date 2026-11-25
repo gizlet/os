@@ -1,0 +1,18 @@
+#!/bin/sh
+# gizlet-run PROGRAM [ARGUMENTS]: runs PROGRAM against this Gizlet runtime.
+#
+# The runtime's own glibc loader starts the program with the runtime's
+# libraries, so it does not depend on the read-only base's glibc. EGL, GLES and
+# GBM come from the runtime's Mesa: the GPU's driver where the kernel offers
+# one (Panfrost on the R36S), llvmpipe on the CPU otherwise.
+set -eu
+runtime=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+export __EGL_VENDOR_LIBRARY_DIRS="$runtime/share/glvnd/egl_vendor.d"
+export LIBGL_DRIVERS_PATH="$runtime/lib/dri"
+export GBM_BACKENDS_PATH="$runtime/lib/gbm"
+# Sound: raylib opens the runtime's libasound, which reads ALSA's
+# configuration from the runtime rather than the base.
+export ALSA_CONFIG_DIR="$runtime/share/alsa"
+export ALSA_CONFIG_PATH="$runtime/share/alsa/alsa.conf"
+[ $# -ge 1 ] || { echo 'usage: gizlet-run PROGRAM [ARGUMENTS]' >&2; exit 2; }
+exec "$runtime/lib/ld-linux-aarch64.so.1" --library-path "$runtime/lib" "$@"

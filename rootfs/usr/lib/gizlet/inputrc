@@ -1,0 +1,3 @@
+# Readline for the recovery shell on the serial console: no bracketed-paste
+# escapes around each command's output.
+set enable-bracketed-paste off

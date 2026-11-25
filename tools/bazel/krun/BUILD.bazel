@@ -1,0 +1,98 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load(":defs.bzl", "cargo_binary", "hypervisor_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# libkrun's guest init, a static AArch64 Linux musl program. libkrun embeds
+# it and exposes it in each VM's root as /init.krun. The shared Cargo config
+# patches git crates this project does not use, which Cargo records in its lock.
+cargo_binary(
+    name = "krun-init",
+    srcs = ["@libkrun//:workspace"],
+    bin = "krun-init",
+    locked = False,
+    manifest = "@libkrun//:init/init-binary/Cargo.toml",
+    target = "aarch64-unknown-linux-musl",
+    target_std = "@rust_std_aarch64_unknown_linux_musl//:rust_std",
+    visibility = ["//visibility:private"],
+)
+
+# libkrun 2.0 and the launcher, linked into one host executable. The added
+# workspace member and the patched git crates update Cargo.lock in the action.
+cargo_binary(
+    name = "launcher",
+    srcs = ["@libkrun//:workspace"],
+    bin = "krun-vm",
+    env_files = {":krun-init": "KRUN_INIT_BINARY_PATH"},
+    locked = False,
+    manifest = "@libkrun//:Cargo.toml",
+    package = "krun-vm",
+    visibility = ["//visibility:private"],
+)
+
+# The guest kernel, loaded by libkrun at VM start.
+cc_binary(
+    name = "libkrunfw.5.dylib",
+    srcs = ["@libkrunfw//:kernel.c"],
+    copts = [
+        "-O0",
+        "-DABI_VERSION=5",
+    ],
+    linkopts = select({
+        "@platforms//os:macos": ["-Wl,-install_name,libkrunfw.5.dylib"],
+        "//conditions:default": ["-Wl,-soname,libkrunfw.so.5"],
+    }),
+    linkshared = True,
+)
+
+hypervisor_binary(
+    name = "krun-vm-libkrun",
+    binary = ":launcher",
+    codesign = select({
+        "@platforms//os:macos": True,
+        "//conditions:default": False,
+    }),
+    entitlements = "hypervisor.entitlements",
+    visibility = ["//visibility:private"],
+)
+
+# On AArch64 Linux the host already runs the stages' architecture, so they run
+# in the build root inside Linux namespaces instead of a VM: no KVM needed.
+cc_binary(
+    name = "krun-vm-namespace",
+    srcs = ["namespace/namespace.c"],
+    copts = [
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+# What krun_action and vm_test run, chosen by the host: a libkrun microVM on
+# macOS, namespaces on Linux. Both take the same command line.
+alias(
+    name = "krun-vm",
+    actual = select({
+        "@platforms//os:macos": ":krun-vm-libkrun",
+        "//conditions:default": ":krun-vm-namespace",
+    }),
+)
+
+# The guest kernel; the namespace backend has none.
+alias(
+    name = "krunfw",
+    actual = select({
+        "@platforms//os:macos": ":libkrunfw.5.dylib",
+        "//conditions:default": ":no-krunfw",
+    }),
+)
+
+genrule(
+    name = "no-krunfw",
+    outs = ["no-krunfw.txt"],
+    cmd = "echo 'The namespace backend runs no guest kernel.' > $@",
+    visibility = ["//visibility:private"],
+)

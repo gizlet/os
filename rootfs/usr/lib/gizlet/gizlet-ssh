@@ -1,0 +1,34 @@
+#!/bin/sh
+# Prepares sshd (see /etc/ssh/sshd_config.d/gizlet.conf): root's password set
+# in the launcher, the public keys in authorized_keys on the FAT boot
+# partition, and this card's host key, kept on the data partition when it is
+# mounted.
+set -u
+say() { echo "Gizlet OS: $*"; echo "gizlet-ssh: $*" >> /run/gizlet-boot.log; }
+dir=/run/gizlet-ssh
+mkdir -p -m 0755 "$dir"
+rm -f "$dir/authorized_keys"
+fat=/run/gizlet-ssh-bootfs
+mkdir -p "$fat"
+# Mounts of the boot partition take this lock (see gizlet-mount-boot).
+exec 9> /run/gizlet-bootfs.lock
+flock 9
+if /usr/lib/gizlet/gizlet-mount-boot "$fat" ro; then
+    [ -f "$fat/authorized_keys" ] && cp "$fat/authorized_keys" "$dir/authorized_keys"
+    umount "$fat"
+fi
+exec 9>&-
+if [ -f "$dir/authorized_keys" ]; then
+    chmod 0600 "$dir/authorized_keys"
+else
+    say 'no authorized_keys on the boot partition; only the password logs in'
+fi
+keys=$dir
+[ -f /run/gizlet-data.ready ] && keys=/run/gizlet-data/system/ssh
+key=$keys/ssh_host_ed25519_key
+[ -f "$key" ] || ssh-keygen -q -t ed25519 -N '' -C '' -f "$key" || say 'cannot create the ssh host key'
+[ "$keys" = "$dir" ] || ln -sf "$key" "$dir/ssh_host_ed25519_key"
+# The password set in the launcher or setup.ini (gizlet-switch ssh-password).
+/usr/lib/gizlet/gizlet-switch apply-password || say 'cannot install the ssh password'
+say 'ssh ready on port 22'
+exit 0

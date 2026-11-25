@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Gizlet OS on the Game Console R36S. ROCKNIX's device tree describes the
+ * board with the original ST7703 panel; other panels are device tree
+ * overlays applied by boot.scr (see r36s-v30-panel4.dtso).
+ */
+#include "rk3326-gameconsole-r36s.dts"
+
+/*
+ * The OTG port is a USB host, as in the stock firmware: OTG_SWITCH supplies
+ * VBUS from boot. On V30 boards the on-board RTL8188EU WiFi shares this bus.
+ */
+&otg_switch {
+	regulator-boot-on;
+};
+
+&u2phy_otg {
+	status = "okay";
+};
+
+&usb20_otg {
+	dr_mode = "host";
+};
+
+/*
+ * The stock V30 tree names LDO9 vcc_wifi and keeps it on at 3.3 V; ROCKNIX
+ * leaves it unused. The WiFi does not enumerate without it.
+ */
+&rk817 {
+	regulators {
+		LDO_REG9 {
+			regulator-name = "vcc_wifi";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+	};
+};
+
+/*
+ * The host-port PHY is already enabled upstream. Its EHCI/OHCI controllers
+ * expose USB devices wired to that port.
+ */
+&usb_host0_ehci {
+	status = "okay";
+};
+
+&usb_host0_ohci {
+	status = "okay";
+};

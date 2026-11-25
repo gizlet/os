@@ -1,0 +1,73 @@
+#!/bin/sh
+# Imports setup.ini from the FAT boot partition once, at boot, before
+# gizlet-switches.service starts what is turned on. The result is the same as
+# doing it in the launcher's settings, which show it afterwards:
+#
+#   wifi_ssid=Network name
+#   wifi_passphrase=its passphrase (8 to 63 characters; leave out for an open network)
+#   ssh=on
+#   ssh_password=root's password for ssh
+#
+# The network is saved for iwd to join on its own, Wi-Fi and ssh are switched
+# on and the password is set with gizlet-switch, as the launcher does. The
+# file is then renamed setup.ini.done without the passphrase and password, so
+# later changes in the launcher stay; a new setup.ini is imported again.
+set -u
+say() { echo "Gizlet OS: $*"; echo "gizlet-setup: $*" >> /run/gizlet-boot.log; }
+switch=/usr/lib/gizlet/gizlet-switch
+networks=/var/lib/iwd
+
+fat=/run/gizlet-setup-bootfs
+mkdir -p "$fat"
+# Mounts of the boot partition take this lock (see gizlet-mount-boot).
+exec 9> /run/gizlet-bootfs.lock
+flock 9
+/usr/lib/gizlet/gizlet-mount-boot "$fat" rw || exit 0
+setup=
+if [ -f "$fat/setup.ini" ]; then
+    setup=$(tr -d '\r' < "$fat/setup.ini")
+    printf '%s\n' "$setup" | grep -v -e '^wifi_passphrase=' -e '^ssh_password=' > "$fat/setup.ini.done"
+    rm "$fat/setup.ini"
+    sync
+fi
+umount "$fat"
+exec 9>&-
+[ -n "$setup" ] || exit 0
+
+# value KEY: everything after the first = on KEY's line.
+value() {
+    printf '%s\n' "$setup" | sed -n "s/^$1=//p" | head -n 1
+}
+
+ssid=$(value wifi_ssid)
+passphrase=$(value wifi_passphrase)
+if [ -n "$ssid" ]; then
+    # iwd names a network file after its SSID, or =hex when the SSID has other characters.
+    case "$ssid" in
+        *[!A-Za-z0-9_' '-]*) name="=$(printf '%s' "$ssid" | od -An -tx1 | tr -d ' \n')" ;;
+        *) name=$ssid ;;
+    esac
+    mkdir -p "$networks"
+    if [ -z "$passphrase" ]; then
+        printf '[Settings]\nAutoConnect=true\n' > "$networks/$name.open"
+        say "Wi-Fi network $ssid saved"
+    elif [ "${#passphrase}" -lt 8 ] || [ "${#passphrase}" -gt 63 ]; then
+        say "the Wi-Fi passphrase in setup.ini must have 8 to 63 characters"
+    else
+        # iwd adds the derived key to this file once it connects.
+        (umask 077 && printf '[Security]\nPassphrase=%s\n\n[Settings]\nAutoConnect=true\n' "$passphrase" > "$networks/$name.psk")
+        say "Wi-Fi network $ssid saved"
+    fi
+    # The switch file is what `gizlet-switch wifi on` keeps; gizlet-switch boot starts iwd next.
+    mkdir -p /run/gizlet-data/system/switches && : > /run/gizlet-data/system/switches/wifi
+fi
+password=$(value ssh_password)
+if [ -n "$password" ]; then
+    "$switch" ssh-password "$password" && say 'ssh password set'
+fi
+case "$(value ssh)" in
+    on) mkdir -p /run/gizlet-data/system/switches && : > /run/gizlet-data/system/switches/ssh && say 'ssh turned on' ;;
+    off) rm -f /run/gizlet-data/system/switches/ssh && say 'ssh turned off' ;;
+esac
+sync
+exit 0

@@ -1,31 +1,48 @@
 module(name = "gizlet_os")
 
-bazel_dep(name = "gizos", version = "0.0.0")
-bazel_dep(name = "hermetic_cc_toolchain", version = "4.2.0")
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "rules_cc", version = "0.2.17")
-bazel_dep(name = "rules_python", version = "2.2.0")
-bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "rules_cc", version = "0.2.28")
+bazel_dep(name = "rules_rust", version = "0.75.0")
+bazel_dep(name = "rules_shell", version = "0.10.0")
 
-r36s_sources = use_repo_rule("//third_party/r36s:repositories.bzl", "r36s_sources")
-
-r36s_sources(name = "r36s_sources")
-
-git_override(
-    module_name = "gizos",
-    commit = "0ac3bfdc2bafa78bfc89965931b5ce22faeff795",
-    remote = "https://github.com/GizClaw/gizos.git",
+# Rust compiles the libkrun VM launcher for the build host.
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.100.0"],
 )
+use_repo(rust, "rust_toolchains")
 
-rockchip = use_extension(
-    "@gizos//tools/bazel/native/rockchip:repositories.bzl",
-    "rockchip_repositories",
-)
-use_repo(rockchip, "gizos_rk3326_legacy_rkbin")
+register_toolchains("@rust_toolchains//:all")
 
-# Select the static AArch64 musl toolchain for the installed Booter.
-zig_toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
-use_repo(zig_toolchains, "zig_sdk")
+# libkrun and its guest kernel run the native image stages in a microVM.
+krun = use_extension("//tools/bazel/krun:repositories.bzl", "krun_repositories")
+use_repo(krun, "libkrun", "libkrunfw", "rust_std_aarch64_unknown_linux_musl")
 
-python = use_extension("@rules_python//python/extensions:python.bzl", "python")
-python.toolchain(python_version = "3.11")
+# The launcher's crates, vendored by checksum, and the build VM's Rust toolchain.
+cargo = use_extension("//tools/bazel/cargo:repositories.bzl", "cargo")
+use_repo(cargo, "launcher_crates", "rust_aarch64_linux")
+
+# Debian bookworm arm64 tools for the build VM, pinned by snapshot and SHA-256.
+debian = use_extension("//tools/bazel/debian:repositories.bzl", "debian")
+use_repo(debian, "debian_bookworm_arm64", "debian_trixie_arm64_base", "debian_trixie_arm64_runtime")
+
+
+# Pinned upstream sources, one repository per upstream. Boards select from them.
+linux = use_extension("//third_party/linux:repositories.bzl", "linux")
+use_repo(linux, "linux")
+
+hardkernel_uboot = use_extension("//third_party/u-boot:repositories.bzl", "hardkernel_uboot")
+use_repo(hardkernel_uboot, "hardkernel_uboot")
+
+rkbin = use_extension("//third_party/rkbin:repositories.bzl", "rkbin")
+use_repo(rkbin, "rkbin")
+
+rocknix = use_extension("//third_party/rocknix:repositories.bzl", "rocknix")
+use_repo(rocknix, "rocknix")
+
+rocknix_joypad = use_extension("//third_party/rocknix-joypad:repositories.bzl", "rocknix_joypad")
+use_repo(rocknix_joypad, "rocknix_joypad")
+
+linux_firmware = use_extension("//third_party/linux-firmware:repositories.bzl", "linux_firmware")
+use_repo(linux_firmware, "linux_firmware")

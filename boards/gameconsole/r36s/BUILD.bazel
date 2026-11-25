@@ -1,0 +1,180 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools/bazel/rockchip:defs.bzl", "rockchip_legacy_uboot", "rockchip_linux_kernel")
+
+package(default_visibility = ["//visibility:public"])
+
+# The Game Console R36S. This package builds the board's kernel, device trees
+# and boot chain from the pins in third_party; targets/ composes the card.
+
+constraint_setting(name = "board")
+
+constraint_value(
+    name = "r36s",
+    constraint_setting = ":board",
+)
+
+platform(
+    name = "r36s_platform",
+    constraint_values = [
+        ":r36s",
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+exports_files([
+    "boot/boot.cmd",
+    "boot/trust.sha256",
+    "sdcard.cfg",
+])
+
+_EPOCH = 1704067200
+
+_ROCKNIX_PKG = "@rocknix//:projects/ROCKNIX/packages/linux/patches/"
+
+_ROCKNIX_RK3326 = "@rocknix//:projects/ROCKNIX/devices/RK3326/patches/linux/"
+
+_ROCKNIX_DTS = "@rocknix//:projects/ROCKNIX/devices/RK3326/linux/dts/rockchip/"
+
+_ROCKNIX_UBOOT = "@rocknix//:projects/ROCKNIX/devices/RK3326/packages/u-boot-legacy/"
+
+# The RK3326 kernel patch set of ROCKNIX for Linux 7.1.2, in the order its
+# build applies it: package patch dirs "mainline", "mainline-rockchip" and "7.0"
+# (PKG_PATCH_DIRS order), then the device's own patches; files sorted within
+# each directory. The kernel target applies it with fuzz 2, as ROCKNIX's plain
+# `patch -p1` does.
+filegroup(
+    name = "kernel_patches",
+    srcs = [
+        _ROCKNIX_PKG + "mainline/0003-pwm-add-pwm_set_period.patch",
+        _ROCKNIX_PKG + "mainline/0004-input-adc-keys-redirect-keycode-316-to-rocknix-joypa.patch",
+        _ROCKNIX_PKG + "mainline/0005-Bluetooth-btrtl-Add-the-support-for-RTL8733BU.patch",
+        _ROCKNIX_PKG + "mainline-rockchip/001-power-supply-rk817-charger-Fix-NVRAM-SoC-Value.patch",
+        _ROCKNIX_PKG + "mainline-rockchip/002-power-supply-rk817-battery-resolve-boot-soc-from-counter.patch",
+        _ROCKNIX_PKG + "mainline-rockchip/005-power-supply-rk817-charger-correct-gauge-across-sleep.patch",
+        _ROCKNIX_PKG + "mainline-rockchip/006-dt-bindings-power-supply-rk817-charger-add-rockchip-gate-function-disable.patch",
+        _ROCKNIX_PKG + "mainline-rockchip/007-power-supply-rk817-clear-sys-can-sd-register-by-default.patch",
+        _ROCKNIX_PKG + "mainline-rockchip/008-power-supply-rk817-bound-the-boot-soc-with-the-ocv-table.patch",
+        _ROCKNIX_PKG + "7.0/0006-hid-playstation-expose-DualSense-Edge-Fn-and-back-paddles.patch",
+        _ROCKNIX_PKG + "7.0/0010-msm-resource-cleanup.patch",
+        _ROCKNIX_PKG + "7.0/9998-silence-initramfs-unpack-warn.patch",
+        _ROCKNIX_PKG + "7.0/9999-fix-rust-build-error.patch",
+        _ROCKNIX_RK3326 + "0008-mmc-sd-retry-a-failed-resume-after-a-power-cycle.patch",
+        _ROCKNIX_RK3326 + "001-panel-updates.patch",
+        _ROCKNIX_RK3326 + "002-gpiolib-of-legacy-api.patch",
+        _ROCKNIX_RK3326 + "003-input-add-input-polldev-driver.patch",
+        _ROCKNIX_RK3326 + "003-usb-dwc2-gadget-fix-null-deref-on-register-restore.patch",
+        _ROCKNIX_RK3326 + "004-input-drivers.patch",
+        _ROCKNIX_RK3326 + "004-usb-dwc2-skip-pm-callbacks-after-failed-core-reset.patch",
+        _ROCKNIX_RK3326 + "005-unigue-gpio-guid.patch",
+        _ROCKNIX_RK3326 + "007-ogs-panel-timings.patch",
+        _ROCKNIX_RK3326 + "008-esp-8089-wifi.patch",
+        _ROCKNIX_RK3326 + "010-dwc2-track-vbus-supply-state.patch",
+        _ROCKNIX_RK3326 + "023-px30s-tsadc-support.patch",
+        _ROCKNIX_RK3326 + "024-px30s-gpu-power-domain-workaround.patch",
+        _ROCKNIX_RK3326 + "025-px30s-dsi-dphy-timing-table.patch",
+        _ROCKNIX_RK3326 + "026-px30s-cpuinfo-soc-detection.patch",
+        _ROCKNIX_RK3326 + "027-px30s-io-domain-pmuio1.patch",
+        _ROCKNIX_RK3326 + "028-px30s-usb2phy-tuning.patch",
+        _ROCKNIX_RK3326 + "030-pwm-vibra-kick-stuck-boot-state.patch",
+        _ROCKNIX_RK3326 + "031-px30s-suspend-wakeup-config.patch",
+        _ROCKNIX_RK3326 + "032-px30s-otp-read-protocol.patch",
+        _ROCKNIX_RK3326 + "033-px30s-ddrphy-clock-topology.patch",
+        _ROCKNIX_RK3326 + "034-px30s-cru-suspend-resume-restore.patch",
+        _ROCKNIX_RK3326 + "035-dwc2-release-vbus-supply-on-role-switch.patch",
+        _ROCKNIX_RK3326 + "036-px30-dmc-devfreq.patch",
+        _ROCKNIX_RK3326 + "037-px30-dmc-pass-dram-settings-to-bl31.patch",
+        _ROCKNIX_RK3326 + "039-drm-rockchip-vop-add-afbc-support-for-px30.patch",
+    ],
+)
+
+# ROCKNIX's RK3326 device trees that gizlet-r36s.dts builds on. rk3326.dtsi
+# replaces the mainline one, as ROCKNIX's build copies the whole directory.
+filegroup(
+    name = "rocknix_dts",
+    srcs = [
+        _ROCKNIX_DTS + "rk3326-device-group-r36.dtsi",
+        _ROCKNIX_DTS + "rk3326-gameconsole-r36s.dts",
+        _ROCKNIX_DTS + "rk3326-gameconsole-r3xs.dtsi",
+        _ROCKNIX_DTS + "rk3326.dtsi",
+    ],
+)
+
+rockchip_linux_kernel(
+    name = "kernel",
+    archive = "@linux//:linux-7.1.2.tar.xz",
+    build_user = "gizlet",
+    # Built in: ROCKNIX's panel driver that reads its init sequence from the
+    # device tree, the joypad driver of the upstream R36S tree, and the
+    # firmware of the on-board RTL8188EU WiFi (and the RTL8188FU of other units).
+    builtin_sources = {
+        "@rocknix//:projects/ROCKNIX/packages/linux-drivers/generic-dsi/sources/panel-generic-dsi.c": "drivers/gpu/drm/panel/panel-generic-dsi.c",
+        "@rocknix_joypad//:rocknix-singleadc-joypad.c": "drivers/input/joystick/rocknix-singleadc-joypad.c",
+        "@rocknix_joypad//:rocknix-joypad.h": "drivers/input/joystick/rocknix-joypad.h",
+        "@linux_firmware//:rtl8188eufw.bin": "firmware/rtlwifi/rtl8188eufw.bin",
+        "@linux_firmware//:rtl8188fufw.bin": "firmware/rtlwifi/rtl8188fufw.bin",
+    },
+    config = "kernel/kernel.config",
+    dtb = "r36s.dtb",
+    dtb_target = "rockchip/gizlet-r36s.dtb",
+    dts_dirs = {":rocknix_dts": "rockchip"},
+    dts_files = {
+        "kernel/gizlet-r36s.dts": "rockchip/gizlet-r36s.dts",
+        "kernel/panels/r36s-v30-panel4.dtso": "rockchip/r36s-v30-panel4.dtso",
+    },
+    extra_dtb_targets = ["rockchip/r36s-v30-panel4.dtbo"],
+    extra_dtbs = ["r36s-v30-panel4.dtbo"],
+    image = "Image",
+    # ROCKNIX applies this set with plain `patch -p1`, whose default fuzz is 2.
+    patch_fuzz = 2,
+    patches = [":kernel_patches"],
+    source_date_epoch = _EPOCH,
+    target_compatible_with = [":r36s"],
+)
+
+# Rockchip RK3326 legacy firmware: DDR 333 MHz v2.11, miniloader v1.40 and BL31 v1.34.
+alias(
+    name = "bl31",
+    actual = "@rkbin//:bin/rk33/rk3326_bl31_v1.34.elf",
+)
+
+rockchip_legacy_uboot(
+    name = "bootloader",
+    archive = "@hardkernel_uboot//:hardkernel-uboot-2492a3e467e332e2350d987234ce6123700b3392.tar.gz",
+    bl31 = ":bl31",
+    boot_command = "boot/boot.cmd",
+    build_user = "gizlet",
+    ddr = "@rkbin//:bin/rk33/rk3326_ddr_333MHz_v2.11.bin",
+    defconfig = ":uboot_defconfig",
+    idbloader = "idbloader.img",
+    load_address = "0x00200000",
+    miniloader = "@rkbin//:bin/rk33/rk3326_miniloader_v1.40.bin",
+    mkimage_soc = "px30",
+    patches = [
+        _ROCKNIX_UBOOT + "patches/01-fix-building.patch",
+        "boot/rk3326_trust.patch",
+    ],
+    script = "boot.scr",
+    script_name = "Gizlet R36S Panel 0",
+    source_date_epoch = _EPOCH,
+    target_compatible_with = [":r36s"],
+    trust = "trust.img",
+    trust_checksum = "boot/trust.sha256",
+    trust_ini = "boot/trust.ini",
+    uboot = "uboot.img",
+)
+
+# The defconfig keeps its upstream name: the U-Boot stage requires <board>_defconfig.
+alias(
+    name = "uboot_defconfig",
+    actual = _ROCKNIX_UBOOT + "sources/configs/rocknix_rk3326_defconfig",
+)
+
+# flash.sh's card identity against a stub diskutil: a card ending in an ext4
+# partition without a UUID, and a failing diskutil. Runs on any computer.
+sh_test(
+    name = "flash_test",
+    srcs = ["flash_test.sh"],
+    args = ["$(rootpath flash.sh)"],
+    data = ["flash.sh"],
+)

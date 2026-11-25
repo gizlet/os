@@ -1,0 +1,36 @@
+{
+ "snapshot": "20261120T000000Z",
+ "suite": "trixie",
+ "architecture": "arm64",
+ "packages": [
+  "alsa-utils",
+  "dbus",
+  "dosfstools",
+  "e2fsprogs",
+  "fdisk",
+  "iproute2",
+  "iputils-ping",
+  "iwd",
+  "kmod",
+  "less",
+  "libdrm2",
+  "openssh-server",
+  "openssl",
+  "procps",
+  "systemd",
+  "systemd-resolved",
+  "systemd-sysv",
+  "systemd-timesyncd",
+  "udev",
+  "usbutils",
+  "vim-tiny"
+ ],
+ "prefer": {
+  "awk": "mawk",
+  "dbus-system-bus": "dbus-daemon",
+  "default-dbus-system-bus": "dbus-daemon",
+  "default-logind": "systemd",
+  "logind": "systemd"
+ },
+ "exclude": []
+}

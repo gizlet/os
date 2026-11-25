@@ -1,0 +1,19 @@
+{
+ "snapshot": "20261120T000000Z",
+ "suite": "trixie",
+ "architecture": "arm64",
+ "required": false,
+ "packages": [
+  "libasound2t64",
+  "libc6",
+  "libdrm2",
+  "libegl-mesa0",
+  "libegl1",
+  "libgbm1",
+  "libgl1-mesa-dri",
+  "libgles2",
+  "mesa-libgallium"
+ ],
+ "prefer": {},
+ "exclude": []
+}

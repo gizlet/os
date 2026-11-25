@@ -1,0 +1,108 @@
+#!/bin/sh
+# Mounts the data partition: ext4 partition 3 of the very disk that supplied
+# the read-only base (partition 2), with the image's filesystem UUID. Its
+# gizlet/ and home/ directories become /opt/gizlet and /home; state that must
+# survive a reboot (ssh host key, WiFi networks) lives under system/.
+#
+# The image's data filesystem is small. The card writers (flash.sh, flash.ps1)
+# extend its partition to the end of the card; a card written another way has
+# it extended here, as long as it is the last partition. On first boot the
+# filesystem is then grown to its partition before it is mounted.
+set -eu
+# save-boot-log copies these messages to the boot partition.
+say() { echo "Gizlet OS: $*"; echo "$*" >> /run/gizlet-boot.log; }
+trap 'echo "gizlet-mount-data exit $?" >> /run/gizlet-boot.log' EXIT
+
+# Locate partition 3 on the very disk that supplied the mounted SquashFS (p2).
+root_device=
+while read -r id parent device fsroot target rest; do
+    if [ "$target" = / ]; then root_device=$device; break; fi
+done < /proc/self/mountinfo
+sysroot=$(readlink -f "/sys/dev/block/$root_device")
+[ "$(cat "$sysroot/partition")" = 2 ] || { say 'unexpected system partition'; exit 1; }
+data_dev=
+for sibling in "${sysroot%/*}"/*; do
+    if [ -f "$sibling/partition" ] && [ "$(cat "$sibling/partition")" = 3 ]; then
+        data_dev=/dev/${sibling##*/}
+        break
+    fi
+done
+[ -b "$data_dev" ] || { say 'data partition missing'; exit 1; }
+identity=$(blkid "$data_dev")
+case " $identity " in
+    *' UUID="17605036-fda0-4633-a95b-2ed27409a90c" '*) ;;
+    *) say 'unexpected data filesystem'; exit 1 ;;
+esac
+# Grow partition 3 in the MBR when the card has unused space after it.
+disk_sys=${sysroot%/*}
+disk=/dev/${disk_sys##*/}
+part_sys=/sys/class/block/${data_dev##*/}
+start=$(cat "$part_sys/start")
+end=$((start + $(cat "$part_sys/size")))
+total=$(cat "$disk_sys/size")
+last=yes
+for sibling in "$disk_sys"/*; do
+    [ -f "$sibling/start" ] && [ "$(cat "$sibling/start")" -gt "$start" ] && last=
+done
+if [ "$last" = yes ] && [ $((total - end)) -gt 2048 ]; then
+    if echo ', +' | sfdisk -q -N 3 --no-reread --no-tell-kernel "$disk" && partx -u --nr 3 "$disk"; then
+        say "data partition grown to $(( ($(cat "$part_sys/size") * 512) >> 20 )) MiB"
+    else
+        say 'cannot grow the data partition'
+    fi
+fi
+# Grow the filesystem to its partition while it is unmounted: resize2fs then
+# leaves the new inode tables unwritten (they are marked unused), where the
+# kernel's online resize would write zeros over all of them.
+field() { dumpe2fs -h "$data_dev" 2>/dev/null | sed -n "s/^$1:[[:space:]]*//p"; }
+blocks=$(field 'Block count') block_size=$(field 'Block size')
+fs_bytes=$(( ${blocks:-0} * ${block_size:-0} ))
+if [ "$fs_bytes" -gt 0 ] && [ $(( $(cat "$part_sys/size") * 512 - fs_bytes )) -gt 1048576 ]; then
+    # resize2fs wants a freshly checked filesystem; 0 and 1 mean clean or repaired.
+    status=0
+    e2fsck -fp "$data_dev" > /dev/null 2>&1 || status=$?
+    if [ "$status" -le 1 ] && resize2fs "$data_dev" > /dev/null 2>&1; then
+        say "data filesystem grown to fill its partition"
+    else
+        say 'cannot grow the data filesystem'
+    fi
+fi
+store=/run/gizlet-data
+mkdir -m 0700 "$store"
+# noinit_itable: the kernel would otherwise zero the inode tables of a grown
+# filesystem in the background, tens of seconds of SD card writes on the first
+# boot that stall everything else, the launcher's install among them. The
+# group checksums already mark those tables unused, so they need no zeroing.
+mount -t ext4 -o rw,nodev,nosuid,noinit_itable "$data_dev" "$store"
+# mount(8) can fall back to read-only mode when the card is write protected.
+writable=
+while read -r id parent device fsroot target opts rest; do
+    if [ "$target" = "$store" ]; then
+        case ,$opts, in *,rw,*) writable=yes ;; esac
+    fi
+done < /proc/self/mountinfo
+if [ "$writable" != yes ]; then
+    say 'writable data partition required'
+    umount "$store"
+    exit 1
+fi
+for directory in gizlet home; do
+    if [ ! -d "$store/$directory" ] || [ -L "$store/$directory" ]; then
+        say "invalid data directory $directory"
+        umount "$store"
+        exit 1
+    fi
+done
+mount -o bind "$store/gizlet" /opt/gizlet || { umount "$store"; exit 1; }
+mount -o bind "$store/home" /home || { umount /opt/gizlet; umount "$store"; exit 1; }
+mkdir -p -m 0700 "$store/system/ssh" "$store/system/iwd"
+mkdir -p /var/lib/iwd
+mount -o bind "$store/system/iwd" /var/lib/iwd
+# Gizlet runtimes are read-only SquashFS images, each mounted beside its file:
+# runtime/1.sqfs at runtime/1. A runtime that fails to mount is left out.
+for image in /opt/gizlet/runtime/*.sqfs; do
+    [ -f "$image" ] || continue
+    mkdir -p "${image%.sqfs}"
+    mount -t squashfs -o ro,nodev,nosuid "$image" "${image%.sqfs}" || say "cannot mount ${image##*/}"
+done
+: > /run/gizlet-data.ready

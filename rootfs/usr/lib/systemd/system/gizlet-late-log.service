@@ -1,0 +1,6 @@
+[Unit]
+Description=Gizlet OS state 15 s after boot on the boot partition (gizlet-late.log)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/gizlet/save-boot-log late

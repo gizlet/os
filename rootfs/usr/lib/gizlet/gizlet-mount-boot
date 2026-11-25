@@ -1,0 +1,23 @@
+#!/bin/sh
+# gizlet-mount-boot DIR ro|rw: mount the FAT boot partition on DIR.
+#
+# The caller holds /run/gizlet-bootfs.lock: a second mount of the same device
+# with other options fails while one is held. The first mount of a boot checks
+# the partition with fsck.fat: a card powered off while it was mounted keeps
+# its dirty flag, which Linux never clears on its own, and every later mount
+# warns "Volume was not properly unmounted" on the console.
+set -u
+dir=$1
+mode=$2
+dev=$(/usr/lib/gizlet/gizlet-boot-device) || exit 1
+checked=/run/gizlet-bootfs.checked
+if [ ! -e "$checked" ]; then
+    # 0: clean, 1: repaired. Anything else is reported and the mount is tried anyway.
+    fsck.fat -a -w "$dev" > /run/gizlet-bootfs.fsck 2>&1
+    status=$?
+    [ "$status" -le 1 ] || echo "gizlet-mount-boot: fsck.fat exit $status" >> /run/gizlet-boot.log
+    : > "$checked"
+fi
+options=nodev,nosuid,noexec
+[ "$mode" = rw ] && options=rw,$options,flush || options=ro,$options
+mount -t vfat -o "$options" "$dev" "$dir"

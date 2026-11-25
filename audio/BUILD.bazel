@@ -1,0 +1,17 @@
+load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# Routes sound to the speaker or the headphone jack, following the jack; run
+# by gizlet-audio-jack.service. Static, like the Booter.
+debian_cc_binary(
+    name = "audio-jack",
+    srcs = ["audio-jack.c"],
+    copts = [
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+)
