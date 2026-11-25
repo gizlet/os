@@ -30,9 +30,9 @@ The board guide covers the storage contract, local recovery and application setu
 
 ## CI and code review
 
-Pull requests to `main` must pass two checks. For every push to a pull request whose branch is in this repository, `.github/workflows/triage.yml` starts both. Fork pull requests start neither automatically and are never built.
+Pull requests to `main` must pass two checks. Neither starts on its own: a user with write access comments `/test`, `/codex-review`, or both on their own lines, and `.github/workflows/triage.yml` starts the matching workflow for the current head (👀 on the comment). Every new push needs new commands. Fork pull requests are refused and never built.
 
-- `Bazel build and test (R36S)` runs the build and both tests above (`.github/workflows/build.yml`). It runs on the self-hosted ARM64 Linux runner that the `RUNNERS` organization variable maps to `linux-arm64`, with Bazel caches in `BAZEL_CACHE_DIR` on that runner; without the variable it falls back to GitHub's Ubuntu 24.04 ARM64 runner. Triage, Codex review and the check start/finish jobs run on GitHub-hosted runners. A user with write access can rerun it by commenting `/test`.
-- `Codex Code Review` reviews the diff (`.github/workflows/codex-review.yml`). A user with write access can rerun it by commenting `/codex-review`.
+- `Bazel build and test (R36S)` runs the build and both tests above (`.github/workflows/build.yml`). It runs on the self-hosted ARM64 Linux runner that the `RUNNERS` organization variable maps to `linux-arm64`, with Bazel caches in `BAZEL_CACHE_DIR` on that runner; without the variable it falls back to GitHub's Ubuntu 24.04 ARM64 runner. Triage, Codex review and the check start/finish jobs run on GitHub-hosted runners.
+- `Codex Code Review` reviews the diff (`.github/workflows/codex-review.yml`).
 
 Both workflows run from `main` and use the shared [Gizlet workflows](https://github.com/gizlet/.github). Pushes to `main` build directly and refresh the Bazel caches.
