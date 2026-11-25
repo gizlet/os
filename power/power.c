@@ -44,8 +44,9 @@
  * release arrive as the device resumes. */
 #define SETTLE_MS 1000
 /* How often a pending sleep checks whether the controls are released, and how
- * long it waits for that: a stick whose rest was guessed wrong must not keep
- * the device awake. */
+ * long it waits for sticks: one whose rest was guessed wrong must not keep the
+ * device awake. Buttons report their state exactly, so it always waits for
+ * them. */
 #define PENDING_MS 50
 #define PENDING_LIMIT_MS 10000
 #define BITS(n) (((n) + 7) / 8)
@@ -304,8 +305,8 @@ int main(int argc, char **argv) {
     sigaction(SIGUSR1, &sa, NULL);
 
     long long last_use = now_ms(), last_event = last_use, last_scan = 0, settle_until = 0;
-    /* A sleep asked for by the power key or SIGUSR1, once the controls are
-     * released (or after PENDING_LIMIT_MS). */
+    /* A sleep asked for by the power key or SIGUSR1, once every button is up
+     * and every stick at rest (sticks only up to PENDING_LIMIT_MS). */
     int pending = 0;
     long long pending_since = 0;
     while (!stopping) {
@@ -327,7 +328,8 @@ int main(int argc, char **argv) {
         int held = seconds && screen != SCREEN_OFF && t >= dim_at && idle_held_counts(t, last_event) && controls_held();
         /* Off, after a failed sleep, waits for a press. */
         enum screen_state next = screen == SCREEN_OFF ? SCREEN_OFF : idle_next(screen, t, &last_use, seconds, DIM_SECONDS, held);
-        if ((next == SCREEN_OFF && screen != SCREEN_OFF) || (pending && (t - pending_since >= PENDING_LIMIT_MS || !controls_held()))) {
+        int released = pending && !any_key_down() && (t - pending_since >= PENDING_LIMIT_MS || !controls_held());
+        if ((next == SCREEN_OFF && screen != SCREEN_OFF) || released) {
             pending = 0;
             if (suspend()) {
                 last_use = last_event = now_ms();
