@@ -23,6 +23,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <linux/input.h>
 #include <poll.h>
 #include <signal.h>
@@ -45,7 +46,8 @@
 #define SETTLE_MS 1000
 /* How often a pending sleep checks whether the controls are released, and how
  * long it waits for sticks: one whose rest was guessed wrong must not keep the
- * device awake. Buttons report their state exactly, so it always waits for
+ * device awake, and a stick still held is replayed when the grab ends
+ * (resync). Buttons report their state exactly, so it always waits for
  * them. */
 #define PENDING_MS 50
 #define PENDING_LIMIT_MS 10000
@@ -59,6 +61,8 @@ struct device {
     int last[ABS_CNT];
     /* Where each axis rests (idle_axis_rest). */
     int rest[ABS_CNT];
+    /* Each axis's value when the inputs were grabbed: what other readers saw. */
+    int seen[ABS_CNT];
 };
 
 static struct device devices[MAX_DEVICES];
@@ -152,8 +156,42 @@ static int sleep_after_seconds(const char *config) {
     return seconds;
 }
 
+/* Tells every reader of D where its axes are now, if they moved while it was
+ * grabbed (idle_resync). Readers that cache axis values from events, such as
+ * the launcher, would otherwise keep a stick held that was let go. */
+static void resync(struct device *d) {
+    struct input_event ev[2 * ABS_CNT + 2];
+    int n = 0, second[ABS_CNT], moved = 0;
+    for (int a = 0; a < ABS_CNT; a++) {
+        struct input_absinfo now;
+        int values[2];
+        second[a] = INT_MIN;
+        if (!test_bit(d->abs, a) || ioctl(d->fd, EVIOCGABS(a), &now) < 0 || !idle_resync(d->seen[a], now.value, values)) continue;
+        ev[n++] = (struct input_event){.type = EV_ABS, .code = a, .value = values[0]};
+        second[a] = values[1];
+        moved = 1;
+    }
+    if (!moved) return;
+    ev[n++] = (struct input_event){.type = EV_SYN, .code = SYN_REPORT};
+    for (int a = 0; a < ABS_CNT; a++) {
+        if (second[a] != INT_MIN) ev[n++] = (struct input_event){.type = EV_ABS, .code = a, .value = second[a]};
+    }
+    ev[n++] = (struct input_event){.type = EV_SYN, .code = SYN_REPORT};
+    if (write(d->fd, ev, n * sizeof ev[0]) < 0) fprintf(stderr, "gizlet-power: cannot resync %s: %s\n", d->name, strerror(errno));
+}
+
 static void grab(int on) {
-    for (int i = 0; i < ndevices; i++) ioctl(devices[i].fd, EVIOCGRAB, on);
+    for (int i = 0; i < ndevices; i++) {
+        struct device *d = &devices[i];
+        if (on) {
+            for (int a = 0; a < ABS_CNT; a++) {
+                struct input_absinfo now;
+                if (test_bit(d->abs, a) && ioctl(d->fd, EVIOCGABS(a), &now) >= 0) d->seen[a] = now.value;
+            }
+        }
+        ioctl(d->fd, EVIOCGRAB, on);
+        if (!on) resync(d);
+    }
     grabbed = on;
 }
 
@@ -254,7 +292,9 @@ static void rescan(void) {
         int open_already = 0;
         for (int i = 0; i < ndevices; i++) open_already |= strcmp(devices[i].name, e->d_name) == 0;
         if (open_already) continue;
-        int fd = openat(dirfd(dir), e->d_name, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        /* Writable to replay axes after a grab (resync). */
+        int fd = openat(dirfd(dir), e->d_name, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0) fd = openat(dirfd(dir), e->d_name, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd < 0) continue;
         unsigned char types[BITS(EV_CNT)] = {0};
         /* Switches are left out: grabbing the headphone jack would hide it
@@ -272,7 +312,7 @@ static void rescan(void) {
             for (int a = 0; a < ABS_CNT; a++) {
                 if (test_bit(d->abs, a) && ioctl(fd, EVIOCGABS(a), &d->info[a]) >= 0) {
                     int trigger = a == ABS_Z || a == ABS_RZ || a == ABS_GAS || a == ABS_BRAKE;
-                    d->last[a] = d->info[a].value;
+                    d->last[a] = d->seen[a] = d->info[a].value;
                     d->rest[a] = idle_axis_rest(trigger, d->info[a].value, d->info[a].minimum, d->info[a].maximum);
                 }
             }

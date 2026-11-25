@@ -49,6 +49,18 @@ static inline int idle_held_counts(long long now, long long last_event) {
     return now - last_event < IDLE_HELD_LIMIT_MS;
 }
 
+/* What to replay to every reader of an axis when the inputs are released:
+ * SEEN is its value when they were grabbed, NOW its value now. While grabbed,
+ * the kernel kept the axis at NOW and told no other reader, and it drops an
+ * event that repeats the value it holds; so a change is replayed as SEEN, then
+ * NOW. Returns how many values it put in OUT. */
+static inline int idle_resync(int seen, int now, int out[2]) {
+    if (seen == now) return 0;
+    out[0] = seen;
+    out[1] = now;
+    return 2;
+}
+
 /* SCREEN_OFF is time to sleep; the screen stays off when sleep fails. */
 enum screen_state { SCREEN_ON, SCREEN_DIM, SCREEN_OFF };
 
