@@ -15,36 +15,57 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 
-/// App icons, loaded once per file and kept until the launcher quits.
+/// Which version of a file an icon was loaded from: an update or a
+/// reinstall writes a new file, with another time or size.
+type FileId = Option<(std::time::SystemTime, u64)>;
+
+fn file_id(path: &Path) -> FileId {
+    std::fs::metadata(path).ok().and_then(|m| Some((m.modified().ok()?, m.len())))
+}
+
+/// App icons, each loaded once per version of its file.
 #[derive(Default)]
 pub struct Icons {
-    loaded: HashMap<PathBuf, ffi::Texture2D>,
+    loaded: HashMap<PathBuf, (FileId, ffi::Texture2D)>,
 }
 
 impl Icons {
     /// The icon at `path`, or `None` when it cannot be read as an image.
+    /// A file changed since it was loaded is loaded again.
     pub fn get(&mut self, path: &Path) -> Option<ffi::Texture2D> {
-        let tex = *self.loaded.entry(path.to_path_buf()).or_insert_with(|| {
-            let Ok(c) = CString::new(path.to_string_lossy().as_bytes()) else {
-                return ffi::Texture2D { id: 0, width: 0, height: 0, mipmaps: 0, format: 0 };
-            };
-            unsafe {
-                let mut tex = ffi::LoadTexture(c.as_ptr());
-                if tex.id != 0 {
-                    // Icons are drawn far smaller than they are stored.
-                    ffi::GenTextureMipmaps(&mut tex);
-                    ffi::SetTextureFilter(tex, ffi::TextureFilter::TEXTURE_FILTER_TRILINEAR as i32);
-                }
-                tex
+        let id = file_id(path);
+        if let Some((old_id, old)) = self.loaded.get(path) {
+            if *old_id == id {
+                return (old.id != 0).then_some(*old);
             }
-        });
+            if old.id != 0 {
+                unsafe { ffi::UnloadTexture(*old) };
+            }
+        }
+        let tex = load(path);
+        self.loaded.insert(path.to_path_buf(), (id, tex));
         (tex.id != 0).then_some(tex)
+    }
+}
+
+fn load(path: &Path) -> ffi::Texture2D {
+    let Ok(c) = CString::new(path.to_string_lossy().as_bytes()) else {
+        return ffi::Texture2D { id: 0, width: 0, height: 0, mipmaps: 0, format: 0 };
+    };
+    unsafe {
+        let mut tex = ffi::LoadTexture(c.as_ptr());
+        if tex.id != 0 {
+            // Icons are drawn far smaller than they are stored.
+            ffi::GenTextureMipmaps(&mut tex);
+            ffi::SetTextureFilter(tex, ffi::TextureFilter::TEXTURE_FILTER_TRILINEAR as i32);
+        }
+        tex
     }
 }
 
 impl Drop for Icons {
     fn drop(&mut self) {
-        for tex in self.loaded.values().filter(|t| t.id != 0) {
+        for (_, tex) in self.loaded.values().filter(|(_, t)| t.id != 0) {
             unsafe { ffi::UnloadTexture(*tex) };
         }
     }

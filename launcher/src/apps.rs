@@ -22,6 +22,8 @@ pub const CHECKSUMS: &str = "CHECKSUMS";
 const MAX_ENTRIES: usize = 20_000;
 const MAX_TOTAL_BYTES: u64 = 8 << 30;
 const MAX_MANIFEST_BYTES: u64 = 64 << 10;
+/// CHECKSUMS is read whole: one line per file is far below this.
+const MAX_CHECKSUMS_BYTES: u64 = 4 << 20;
 /// Asks the launcher on the screen to start an app: it writes the app's ID here
 /// and quits, and its start script runs the app, then the launcher again.
 pub const LAUNCH_REQUEST: &str = "/run/gizlet-launch";
@@ -328,22 +330,14 @@ impl Library {
         self.apps_dir().join(format!(".old-{id}"))
     }
 
-    /// Holds `<prefix>/apps/.lock` until dropped: installs, removals and
+    /// Holds an exclusive lock on `<prefix>/apps/.lock` until dropped
+    /// (`flock` on Unix, `LockFileEx` on Windows): installs, removals and
     /// recovery each take it, so none sees another half done. Without
     /// `wait`, `None` when another process holds it.
     fn lock(&self, wait: bool) -> Option<Lock> {
         let file = File::options().create(true).truncate(false).write(true).open(self.apps_dir().join(".lock")).ok()?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            let op = libc::LOCK_EX | if wait { 0 } else { libc::LOCK_NB };
-            while unsafe { libc::flock(file.as_raw_fd(), op) } != 0 {
-                if !wait || io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
-                    return None;
-                }
-            }
-        }
-        Some(Lock(file))
+        let locked = if wait { file.lock().is_ok() } else { file.try_lock().is_ok() };
+        locked.then_some(Lock(file))
     }
 
     /// Finishes what a crash or power loss cut short, with the lock held: a
@@ -630,8 +624,10 @@ pub fn unpack(package: &Path, dest: &Path) -> Result<Manifest, String> {
         Some(e) if e.size > MAX_MANIFEST_BYTES => return Err(format!("{what} has a manifest.toml larger than 64 KiB")),
         Some(_) => {}
     }
-    if !list.iter().any(|e| e.name == CHECKSUMS && !e.dir) {
-        return Err(format!("{what} has no CHECKSUMS"));
+    match list.iter().find(|e| e.name == CHECKSUMS && !e.dir) {
+        None => return Err(format!("{what} has no CHECKSUMS")),
+        Some(e) if e.size > MAX_CHECKSUMS_BYTES => return Err(format!("{what} has a CHECKSUMS larger than 4 MiB")),
+        Some(_) => {}
     }
 
     fs::create_dir_all(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
@@ -884,6 +880,9 @@ mod tests {
         let sums = format!("{}  manifest.toml\n{}  bin/hello\n", sum(m.as_bytes()), sum(b"other"));
         fs::write(&path, zip(&[("manifest.toml", m.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755), ("CHECKSUMS", sums.as_bytes(), 0o100644)])).unwrap();
         assert!(lib.install(&path).unwrap_err().contains("checksum"));
+        let huge = vec![b' '; (MAX_CHECKSUMS_BYTES + 1) as usize];
+        fs::write(&path, zip(&[("manifest.toml", m.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755), ("CHECKSUMS", &huge, 0o100644)])).unwrap();
+        assert!(lib.install(&path).unwrap_err().contains("larger than 4 MiB"));
         assert!(lib.scan().is_empty());
         assert_eq!(leftovers(&lib), 0, "failed installs leave nothing behind");
         let _ = fs::remove_dir_all(&dir);
