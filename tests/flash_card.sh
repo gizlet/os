@@ -25,11 +25,8 @@ if [ -n "${update}" ]; then
     exit 0
 fi
 rm -f "${card}"
-dd if="${image}" of="${card}" bs=4194304 2>/dev/null
 truncate -s "${bytes}" "${card}"
-grown_mbr "${image}" "${bytes}" "${work}/mbr"
-grown_data "${image}" "${work}/mbr" "${work}"
-dd if="${work}/mbr" of="${card}" bs=512 count=1 conv=notrunc 2>/dev/null
-write_grown_data "${work}" "${card}"
+raw=${image} target=${card} disk=${card} os=linux
+erase_card 2>/dev/null
 [ -z "${FLASH_CARD_KEEP:-}" ] || cp "${work}/list" "${work}/blocks" "${FLASH_CARD_KEEP}"
 wc -l < "${work}/list" | tr -d ' '

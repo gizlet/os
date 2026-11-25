@@ -350,19 +350,7 @@ write_card() {
     if [ "${mode}" = update ]; then
         update_card
     else
-        grown_mbr "${raw}" "${bytes}" "${work}/mbr"
-        grown_data "${raw}" "${work}/mbr" "${work}"
-        say "$(m "Writing ${target}, about a minute ..." "正在写入 ${target}，大约一分钟……")"
-        if [ "${os}" = mac ]; then
-            ${sudo} dd if="${raw}" of="${target}" bs=4194304
-            ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 2>/dev/null
-            write_grown_data "${work}" "${target}"
-        else
-            ${sudo} dd if="${raw}" of="${target}" bs=4194304 conv=fsync status=progress
-            ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 conv=fsync 2>/dev/null
-            write_grown_data "${work}" "${target}"
-            ${sudo} blockdev --rereadpt "${target}" 2>/dev/null || true
-        fi
+        erase_card
     fi
     sync
     [ "${os}" != mac ] || diskutil eject "${disk}" >/dev/null 2>&1 || true
@@ -377,7 +365,7 @@ write_card() {
 # grown_mbr IMAGE DISK_BYTES OUT: writes to OUT the image's first sector with
 # partition 3, the data partition and the last one, extended to the end of the
 # disk (aligned down to 1 MiB; MBR sizes stop at 2 TiB). grown_data then grows
-# the filesystem inside it.
+# the filesystem inside it, and erase_card writes both.
 #
 # Only whole small files are read, never a pipe that closes early: under
 # pipefail the writer's SIGPIPE would end the script without a word.
@@ -396,6 +384,62 @@ grown_mbr() {
         tail -c $((512 - entry - 16)) "$3.orig"
     } > "$3"
     [ "$(wc -c < "$3" | tr -d ' ')" = 512 ] || die "$(m 'cannot prepare the partition table' '无法生成分区表')"
+}
+
+# erase_card: writes the image ${raw} over the whole card ${target} of
+# ${bytes} bytes, with the data partition and its filesystem grown to fill it.
+# The grown filesystem's blocks past the image go first; then the image, with
+# the grown partition table and the grown blocks inside it patched into a
+# copy, in one write. macOS mounts the card's boot partition again once that
+# write ends, so nothing may follow it. Until it ends, the card's old table
+# stands, and the old filesystem, if any, is erased anyway.
+erase_card() {
+    local at index image_bytes patched
+    grown_mbr "${raw}" "${bytes}" "${work}/mbr"
+    grown_data "${raw}" "${work}/mbr" "${work}"
+    image_bytes=$(wc -c < "${raw}" | tr -d ' ')
+    patched=${work}/card.img
+    [ "${raw}" = "${patched}" ] || cp "${raw}" "${patched}" || die "$(m 'cannot copy the image' '无法复制镜像')"
+    dd if="${work}/mbr" of="${patched}" bs=512 count=1 conv=notrunc 2>/dev/null
+    : > "${work}/past"
+    while read -r at index <&3; do
+        if [ $(( (at + 1) * 4096 )) -le "${image_bytes}" ]; then
+            dd if="${work}/blocks" of="${patched}" bs=4096 skip="${index}" seek="${at}" count=1 conv=notrunc 2>/dev/null
+        else
+            echo "${at} ${index}" >> "${work}/past"
+        fi
+    done 3< "${work}/list"
+    while read -r at index <&3; do
+        card_dd quiet if="${work}/blocks" of="${target}" bs=4096 skip="${index}" seek="${at}" count=1 conv=notrunc
+    done 3< "${work}/past"
+    say "$(m "Writing ${target}, about a minute ..." "正在写入 ${target}，大约一分钟……")"
+    if [ "${os}" = mac ]; then
+        card_dd loud if="${patched}" of="${target}" bs=4194304 conv=notrunc
+    else
+        card_dd loud if="${patched}" of="${target}" bs=4194304 conv=notrunc,fsync status=progress
+        ${sudo} blockdev --rereadpt "${target}" 2>/dev/null || true
+    fi
+}
+
+# card_dd quiet|loud ARG...: dd onto the card, as root when needed; loud shows
+# dd's own output. On macOS the disk is unmounted first each time: macOS
+# mounts the card's partitions again when it sees their table change, and then
+# refuses to write the disk (Resource busy). A failed write is tried again, up
+# to five times, and then stops the writer with dd's error.
+card_dd() {
+    local loud=$1 try error=''
+    shift
+    for try in 1 2 3 4 5; do
+        [ "${os}" != mac ] || diskutil unmountDisk "${disk}" >/dev/null 2>&1 || true
+        if [ "${loud}" = loud ]; then
+            ${sudo} dd "$@" && return 0
+        else
+            error=$(${sudo} dd "$@" 2>&1) && return 0
+        fi
+        sleep 1
+    done
+    [ -z "${error}" ] || say "${error}"
+    die "$(m "cannot write ${target}; write the card again before using it" "无法写入 ${target}；请重新写卡后再使用")"
 }
 
 # update_card: updates Gizlet OS on ${target} from the image ${raw}. It writes
@@ -417,11 +461,11 @@ update_card() {
     { cat "${work}/mbr"; dd if="${raw}" bs=512 skip=1 count=2047 2>/dev/null; } > "${work}/first"
     say "$(m "Updating ${target} ..." "正在更新 ${target}……")"
     if [ "${os}" = mac ]; then
-        ${sudo} dd if="${raw}" of="${target}" bs=1048576 skip=1 seek=1 count=$((start / 2048 - 1)) conv=notrunc
-        ${sudo} dd if="${work}/first" of="${target}" bs=1048576 count=1 conv=notrunc 2>/dev/null
+        card_dd loud if="${raw}" of="${target}" bs=1048576 skip=1 seek=1 count=$((start / 2048 - 1)) conv=notrunc
+        card_dd quiet if="${work}/first" of="${target}" bs=1048576 count=1 conv=notrunc
     else
-        ${sudo} dd if="${raw}" of="${target}" bs=1048576 skip=1 seek=1 count=$((start / 2048 - 1)) conv=notrunc,fsync status=progress
-        ${sudo} dd if="${work}/first" of="${target}" bs=1048576 count=1 conv=notrunc,fsync 2>/dev/null
+        card_dd loud if="${raw}" of="${target}" bs=1048576 skip=1 seek=1 count=$((start / 2048 - 1)) conv=notrunc,fsync status=progress
+        card_dd quiet if="${work}/first" of="${target}" bs=1048576 count=1 conv=notrunc,fsync
         ${sudo} blockdev --rereadpt "${target}" 2>/dev/null || true
     fi
     restore_boot_files
@@ -735,11 +779,5 @@ crc_table() {
 # inversion, as ext4 keeps its checksums.
 crc32c() { local b; for b in "$@"; do c=$(( crc_t[(c ^ b) & 255] ^ c >> 8 )); done; }
 
-# write_grown_data DIR TARGET: writes the blocks grown_data listed.
-write_grown_data() {
-    while read -r at index <&3; do
-        ${sudo} dd if="$1/blocks" of="$2" bs=4096 skip="${index}" seek="${at}" count=1 conv=notrunc 2>/dev/null
-    done 3< "$1/list"
-}
 
 main "$@"
