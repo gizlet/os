@@ -244,10 +244,11 @@ def scenarios(image, kernel_name, work):
         console.expect(b"boot entry finished with status 1")
         console.expect(PROMPT)
         # Its device probe runs without a display: no battery, backlight, sound or WiFi adapter here.
+        # The kernel suspends to RAM, so Sleep is offered.
         console.enter("/opt/gizlet/launcher/gizlet-launcher --probe")
         for line in (b"battery: Err(NoHardware)", b"brightness: Err(NoHardware)", b"volume: Err(NoHardware)",
                      b"wifi: Ok(WifiState { on: false, adapter: false", b"ssh: Ok(SshState { on: false, running: false",
-                     b"power: [Reboot, PowerOff]"):
+                     b"power: [Sleep, Reboot, PowerOff]"):
             console.expect(line)
         console.expect(PROMPT)
         # A fresh card keeps UTC until a time zone is chosen; network time runs without a network.
