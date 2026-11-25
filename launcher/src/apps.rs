@@ -364,9 +364,21 @@ impl Library {
         }
     }
 
-    /// Held shared by every run of `id` and inherited by the app's process,
-    /// so it stays held until the app and its children exit.
-    pub fn hold_running(&self, id: &str) -> io::Result<File> {
+    /// The app `id` for running, with its running lock held shared. The lock
+    /// is taken before the app is read, so no install or removal changes it
+    /// between reading its manifest and starting it; hand it to the app's
+    /// process so it stays held until the app and its children exit.
+    pub fn open_for_run(&self, id: &str) -> Result<(App, File), String> {
+        if !is_valid_id(id) {
+            return Err(format!("{id:?} is not an app ID"));
+        }
+        let running = self.hold_running(id).map_err(|e| format!("cannot mark {id} running: {e}"))?;
+        Ok((self.get(id)?, running))
+    }
+
+    /// The lock file stays when an app is removed: a run waiting on it must
+    /// lock the same file an install will try.
+    fn hold_running(&self, id: &str) -> io::Result<File> {
         let file = File::options().create(true).truncate(false).write(true).open(self.running_path(id))?;
         file.lock_shared()?;
         Ok(file)
@@ -427,7 +439,6 @@ impl Library {
         let trash = self.apps_dir().join(format!(".remove-{}-{}", id, std::process::id()));
         fs::rename(&app.dir, &trash).map_err(|e| format!("{}: {e}", app.dir.display()))?;
         fs::remove_dir_all(&trash).map_err(|e| format!("{}: {e}", trash.display()))?;
-        let _ = fs::remove_file(self.running_path(id));
         drop(not_running);
         if saves {
             let dir = self.saves(id);
@@ -1003,8 +1014,9 @@ mod tests {
         let dir = temp("running");
         let lib = Library::new(dir.join("prefix"));
         let pkg = package(&dir, &manifest("dev.example.hello", &device_target()), &[]);
-        let app = lib.install(&pkg).unwrap();
-        let running = lib.hold_running("dev.example.hello").unwrap();
+        lib.install(&pkg).unwrap();
+        // Starting holds the lock before reading the app, then until it exits.
+        let (app, running) = lib.open_for_run("dev.example.hello").unwrap();
         assert!(lib.install(&pkg).unwrap_err().contains("is running"));
         assert!(lib.remove("dev.example.hello", false).unwrap_err().contains("is running"));
         assert!(app.entry().is_file(), "the running copy stays in place");
@@ -1012,7 +1024,13 @@ mod tests {
         drop(running);
         lib.install(&pkg).unwrap();
         lib.remove("dev.example.hello", false).unwrap();
-        assert!(!lib.running_path("dev.example.hello").exists());
+        assert!(lib.open_for_run("dev.example.hello").unwrap_err().contains("not installed"));
+        // The lock file outlives removal, so a run already waiting on it locks
+        // the file the next install checks.
+        let waiting = lib.hold_running("dev.example.hello").unwrap();
+        lib.install(&pkg).unwrap_err();
+        drop(waiting);
+        lib.install(&pkg).unwrap();
         let _ = fs::remove_dir_all(&dir);
     }
 
