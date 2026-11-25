@@ -46,11 +46,53 @@ cc_binary(
 )
 
 hypervisor_binary(
-    name = "krun-vm",
+    name = "krun-vm-libkrun",
     binary = ":launcher",
     codesign = select({
         "@platforms//os:macos": True,
         "//conditions:default": False,
     }),
     entitlements = "hypervisor.entitlements",
+    visibility = ["//visibility:private"],
+)
+
+# On AArch64 Linux the host already runs the stages' architecture, so they run
+# in the build root inside Linux namespaces instead of a VM: no KVM needed.
+cc_binary(
+    name = "krun-vm-namespace",
+    srcs = ["namespace/namespace.c"],
+    copts = [
+        "-std=c11",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+# What krun_action and vm_test run, chosen by the host: a libkrun microVM on
+# macOS, namespaces on Linux. Both take the same command line.
+alias(
+    name = "krun-vm",
+    actual = select({
+        "@platforms//os:macos": ":krun-vm-libkrun",
+        "//conditions:default": ":krun-vm-namespace",
+    }),
+)
+
+# The guest kernel; the namespace backend has none.
+alias(
+    name = "krunfw",
+    actual = select({
+        "@platforms//os:macos": ":libkrunfw.5.dylib",
+        "//conditions:default": ":no-krunfw",
+    }),
+)
+
+genrule(
+    name = "no-krunfw",
+    outs = ["no-krunfw.txt"],
+    cmd = "echo 'The namespace backend runs no guest kernel.' > $@",
+    visibility = ["//visibility:private"],
 )

@@ -37,6 +37,12 @@ install_tree /in/executables 0755
 [ -z "$disable" ] || chroot "$root" systemctl disable $disable
 [ -z "$mask" ] || chroot "$root" systemctl mask $mask
 
+# The kernel mounts devtmpfs on /dev before init. mmdebstrap's device nodes are
+# left out: they need mknod, which the namespace backend cannot do, and the
+# image must be the same from both backends.
+rm -rf "$root/dev"
+mkdir -m 0755 "$root/dev"
+
 # Per-card identity is created at boot.
 rm -f "$root"/etc/ssh/ssh_host_*
 : > "$root/etc/machine-id"

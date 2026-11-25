@@ -151,7 +151,7 @@ hypervisor_binary = rule(
 
 KRUN_ATTRS = {
     "_krun_vm": attr.label(default = Label("//tools/bazel/krun:krun-vm"), cfg = "exec", executable = True),
-    "_krunfw": attr.label(default = Label("//tools/bazel/krun:libkrunfw.5.dylib"), cfg = "exec", allow_single_file = True),
+    "_krunfw": attr.label(default = Label("//tools/bazel/krun:krunfw"), cfg = "exec", allow_single_file = True),
 }
 
 def _quote(value):
@@ -167,12 +167,13 @@ def _run_script(root_dir, env, command):
     # libkrun passes the command line through the kernel command line, which
     # cannot carry arbitrary quoting. The real command travels as this script,
     # which also reports the exit status that libkrun drops for a disk root.
+    # The namespace backend (KRUN_BACKEND=namespace) mounts /tmp and /out itself.
     _, mount, path = _guest(root_dir)
     return "\n".join(
         ["set -u", "export PATH=" + path] +
         ["export %s=%s" % (name, _quote(value)) for name, value in sorted(env.items())] +
         [
-            "if %s -t tmpfs -o mode=1777,size=85%% tmpfs /tmp && %s -t virtiofs out /out && cd /tmp; then" % (mount, mount),
+            "if { [ \"${KRUN_BACKEND:-}\" = namespace ] || { %s -t tmpfs -o mode=1777,size=85%% tmpfs /tmp && %s -t virtiofs out /out; }; } && cd /tmp; then" % (mount, mount),
             "    " + " ".join([_quote(arg) for arg in command]),
             "    status=$?",
             "else",
@@ -186,7 +187,9 @@ def _run_script(root_dir, env, command):
 
 def _entry(root_dir):
     shell, mount, _ = _guest(root_dir)
-    return shell.split(" ") + ["-c", "%s -t virtiofs in /in && exec %s /in/.krun-run" % (mount, shell)]
+    # No quotes: this travels on the guest kernel's command line. /in is
+    # already there when the namespace backend runs it.
+    return shell.split(" ") + ["-c", "{ [ -e /in/.krun-run ] || %s -t virtiofs in /in; } && exec %s /in/.krun-run" % (mount, shell)]
 
 def krun_action(ctx, *, command, inputs, outputs, mnemonic, root_dir = None, root_disk = None, env = {}, cpus = 4, mem = 6144, progress_message = None):
     """Runs `command` in a microVM.

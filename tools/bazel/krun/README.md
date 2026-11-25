@@ -1,6 +1,11 @@
 # Build VM
 
-The native image stages and image tests run in a libkrun microVM so that one Bazel command builds and tests the card on an Apple silicon Mac. AArch64 Linux hosts with KVM are a libkrun target as well, but not yet verified with these rules. Every part of the VM is built by Bazel from pinned sources. [VM launcher](vm/main.rs) · [Rules](defs.bzl) · [Sources](repositories.bzl)
+The native image stages and image tests run in the pinned Debian bookworm arm64 build root, so one Bazel command builds and tests the card on an Apple silicon Mac or an AArch64 Linux host with the same tools. Bazel picks how by the host:
+
+- **macOS:** a libkrun microVM. Every part of the VM is built by Bazel from pinned sources.
+- **AArch64 Linux:** Linux namespaces. The host already runs the stages' architecture, so no VM and no `/dev/kvm` are needed, and the stages see the same root, `/in`, `/out` and `/tmp`. This includes containers such as a Kubernetes runner pod.
+
+[VM launcher](vm/main.rs) · [Namespace launcher](namespace/namespace.c) · [Rules](defs.bzl) · [Sources](repositories.bzl)
 
 | Part | Source and build |
 | --- | --- |
@@ -18,3 +23,16 @@ python3 -I tools/bazel/debian/update_lock.py tools/bazel/debian/packages.json
 ```
 
 Set `KRUN_VM_DEBUG=1` in the host environment to see libkrun and guest kernel logs.
+
+## Linux hosts
+
+The namespace launcher needs, on the host:
+
+- User namespaces, which container runtimes allow by default. A Kubernetes pod needs no privileges or devices.
+- `unsquashfs` (Debian's `squashfs-tools`). Linux does not mount SquashFS in a user namespace, so the build root image is unpacked once, beside the image, and reused.
+- 65536 user and group IDs, because the card's base keeps package file owners:
+  - **As root**, as in many containers, nothing else is needed.
+  - **As a normal user**, give the user a range in `/etc/subuid` and `/etc/subgid`, and install `uidmap` for `newuidmap`. In a container the kernel refuses that map when the user creates the namespace, so the launcher then runs itself again with passwordless `sudo -n`, as a CI runner's user has. Root then creates the namespace with the same map, and what it leaves behind belongs to the user. Without a range for the user, root maps IDs from 100000.
+  - Without either, only the user is mapped, and building the base fails where packages chown files.
+
+`/tmp` in a stage is a directory on disk beside its outputs, not memory, and `--cpus` and `--mem` do not apply.
