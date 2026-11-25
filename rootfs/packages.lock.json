@@ -44,6 +44,13 @@
    "version": "5.2.37-2+b10"
   },
   {
+   "name": "bluez",
+   "path": "pool/main/b/bluez/bluez_5.82-1.1_arm64.deb",
+   "sha256": "be1d24dd87fd6cd1b45431cd517bf103fffec026aee42fbeab3533633b546ac4",
+   "size": 1279600,
+   "version": "5.82-1.1"
+  },
+  {
    "name": "bsdutils",
    "path": "pool/main/u/util-linux/bsdutils_2.41.5-0+deb13u1_arm64.deb",
    "sha256": "9afcc3e049a66d7f703d092f845c800b767fb9afe9e681e1483eec163aadcb18",
@@ -268,6 +275,13 @@
    "version": "1.2.14-1+deb13u1"
   },
   {
+   "name": "libatomic1",
+   "path": "pool/main/g/gcc-14/libatomic1_14.2.0-19_arm64.deb",
+   "sha256": "7ccff90234484bf21ae5ecb79d25b6a84b2f4038f65dd139085b2e3a937cd8dc",
+   "size": 10128,
+   "version": "14.2.0-19"
+  },
+  {
    "name": "libatopology2t64",
    "path": "pool/main/a/alsa-lib/libatopology2t64_1.2.14-1+deb13u1_arm64.deb",
    "sha256": "8e9dd1458d0b990f6391c0612e38a26adba4fdc138a6a911be905acc9e499ccd",
@@ -415,6 +429,13 @@
    "version": "2.4.124-2"
   },
   {
+   "name": "libdw1t64",
+   "path": "pool/main/e/elfutils/libdw1t64_0.192-4_arm64.deb",
+   "sha256": "67efcbd99255a3468f6612a7719083ea1bed967d0bfae39863b5f0e190e0c5ec",
+   "size": 236836,
+   "version": "0.192-4"
+  },
+  {
    "name": "libedit2",
    "path": "pool/main/libe/libedit/libedit2_3.1-20250104-1_arm64.deb",
    "sha256": "496c31df89fac9cb7e98102fcc21daf887376dcd9914f6322c86dd5bd4360ff1",
@@ -457,6 +478,13 @@
    "version": "2.41.5-0+deb13u1"
   },
   {
+   "name": "libffi8",
+   "path": "pool/main/libf/libffi/libffi8_3.4.8-2_arm64.deb",
+   "sha256": "d84a783b818f2386627604e64b793eb4ac5bb9ea1ba321a194a1c9c82fe09a01",
+   "size": 21260,
+   "version": "3.4.8-2"
+  },
+  {
    "name": "libfftw3-single3",
    "path": "pool/main/f/fftw3/libfftw3-single3_3.3.10-2+b1_arm64.deb",
    "sha256": "874b10ccab6219bcae210cc9ff9298389e266ad7308be086956c859ae1aa8ba5",
@@ -476,6 +504,13 @@
    "sha256": "1108bc87879833d6d9a145f22a4a15cddb34e065b4b5f4b97bee586adbac2851",
    "size": 54104,
    "version": "14.2.0-19"
+  },
+  {
+   "name": "libglib2.0-0t64",
+   "path": "pool/main/g/glib2.0/libglib2.0-0t64_2.84.4-3~deb13u5_arm64.deb",
+   "sha256": "d446f0ea85fb9dc411219ce861e59e5eabe1981c796918771a7d2aa97cc72481",
+   "size": 1428508,
+   "version": "2.84.4-3~deb13u5"
   },
   {
    "name": "libgmp10",

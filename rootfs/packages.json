@@ -4,6 +4,7 @@
  "architecture": "arm64",
  "packages": [
   "alsa-utils",
+  "bluez",
   "dbus",
   "dosfstools",
   "e2fsprogs",
