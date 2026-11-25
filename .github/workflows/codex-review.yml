@@ -1,8 +1,6 @@
 name: Codex review
 
 on:
-  issue_comment:
-    types: [created]
   workflow_dispatch:
     inputs:
       pull_request_number:
@@ -10,7 +8,7 @@ on:
         required: true
         type: string
       head_sha:
-        description: Expected pull-request head, set by automatic triggers.
+        description: Expected pull-request head, set by triage.
         required: false
         default: ''
         type: string
@@ -20,11 +18,8 @@ permissions:
 
 jobs:
   review:
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      || (github.event.issue.pull_request && contains(github.event.comment.body, '/codex-review'))
     concurrency:
-      group: codex-review-${{ github.event.issue.number || inputs.pull_request_number }}
+      group: codex-review-${{ inputs.pull_request_number }}
       cancel-in-progress: false
     permissions:
       checks: write
