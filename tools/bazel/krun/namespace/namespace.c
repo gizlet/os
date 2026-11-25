@@ -570,6 +570,10 @@ static void clean_up(void) {
 int main(int argc, char **argv) {
     original_argv = argv;
     atexit(clean_up);
+    /* Bazel runs actions with no PATH. The host tools (unsquashfs, newuidmap,
+     * sudo) and what sudo runs need one: sudo without secure_path, as in the
+     * GitHub Actions runner image, would not find a bare command name. */
+    if (!getenv("PATH")) setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
     parse(argc, argv);
     struct utsname u;
     if (uname(&u) || strcmp(u.machine, "aarch64")) {
