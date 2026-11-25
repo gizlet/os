@@ -179,15 +179,20 @@ pub fn is_valid_id(id: &str) -> bool {
 }
 
 /// Why `name` is not a canonical relative path: `/`-separated, no empty, `.` or `..` parts.
+/// `:` is refused too, so no name is a Windows drive path (`C:/...`) or alternate stream.
 fn name_problem(name: &str) -> Option<&'static str> {
     if name.is_empty() {
         return Some("is empty");
     }
-    if name.starts_with('/') || name.contains('\\') || name.contains('\0') {
+    if name.starts_with('/') || name.contains(['\\', '\0', ':']) {
         return Some("is not a relative path");
     }
     if name.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
         return Some("has an empty, . or .. part");
+    }
+    // Whatever this platform's paths make of it, every part must stay below the folder.
+    if !Path::new(name).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        return Some("is not a relative path");
     }
     None
 }
@@ -221,7 +226,9 @@ pub struct Library {
 }
 
 impl Library {
+    /// The prefix is made absolute, since apps run in their own folder.
     pub fn new(prefix: PathBuf) -> Library {
+        let prefix = std::path::absolute(&prefix).unwrap_or(prefix);
         Library { prefix }
     }
 
@@ -249,6 +256,7 @@ impl Library {
     /// Installed apps, most recently played first, then most recently installed.
     /// Folders without a valid manifest are skipped.
     pub fn scan(&self) -> Vec<App> {
+        self.recover();
         let played = self.played();
         let mut apps: Vec<App> = fs::read_dir(self.apps_dir())
             .into_iter()
@@ -280,6 +288,7 @@ impl Library {
         if !is_valid_id(id) {
             return Err(format!("{id:?} is not an app ID"));
         }
+        self.recover();
         let dir = self.apps_dir().join(id);
         if !dir.is_dir() {
             return Err(format!("{id} is not installed"));
@@ -301,6 +310,28 @@ impl Library {
         result
     }
 
+    /// The previous version of `id` while an update replaces it.
+    fn backup(&self, id: &str) -> PathBuf {
+        self.apps_dir().join(format!(".old-{id}"))
+    }
+
+    /// Finishes updates cut short by a crash or power loss: a backup whose
+    /// app folder is missing goes back in place, one beside a complete
+    /// update is deleted.
+    fn recover(&self) {
+        let Ok(entries) = fs::read_dir(self.apps_dir()) else { return };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(id) = name.strip_prefix(".old-").filter(|id| is_valid_id(id)) else { continue };
+            let dest = self.apps_dir().join(id);
+            if dest.exists() {
+                let _ = fs::remove_dir_all(e.path());
+            } else if fs::rename(e.path(), &dest).is_ok() {
+                sync();
+            }
+        }
+    }
+
     fn install_staged(&self, package: &Path, staging: &Path) -> Result<App, String> {
         let manifest = unpack(package, staging)?;
         let (device, tier) = (device_target(), device_tier());
@@ -310,8 +341,10 @@ impl Library {
         if manifest.tier == "full" && tier != "full" {
             return Err(format!("{} needs a full-tier device; this one is {tier}", manifest.id));
         }
+        self.recover();
         let dest = self.apps_dir().join(&manifest.id);
-        let old = self.apps_dir().join(format!(".old-{}-{}", manifest.id, std::process::id()));
+        // A fixed name, so the next scan or install restores it if this one is cut short.
+        let old = self.backup(&manifest.id);
         let had_old = dest.exists();
         if had_old {
             fs::rename(&dest, &old).map_err(|e| format!("{}: {e}", dest.display()))?;
@@ -322,10 +355,10 @@ impl Library {
             }
             return Err(format!("{}: {e}", dest.display()));
         }
+        sync();
         if had_old {
             let _ = fs::remove_dir_all(&old);
         }
-        sync();
         self.load(&dest)
     }
 
@@ -814,6 +847,37 @@ mod tests {
         assert!(lib.scan().is_empty());
         assert_eq!(fs::read_dir(lib.apps_dir()).unwrap().count(), 0, "failed installs leave nothing behind");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn interrupted_update_is_recovered() {
+        let dir = temp("recover");
+        let lib = Library::new(dir.join("prefix"));
+        let pkg = package(&dir, &manifest("dev.example.hello", &device_target()), &[]);
+        lib.install(&pkg).unwrap();
+        // Cut short after the installed copy became the backup.
+        fs::rename(lib.apps_dir().join("dev.example.hello"), lib.backup("dev.example.hello")).unwrap();
+        assert_eq!(lib.scan().len(), 1);
+        assert!(!lib.backup("dev.example.hello").exists());
+        // Cut short after the new copy was in place.
+        fs::create_dir_all(lib.backup("dev.example.hello")).unwrap();
+        lib.install(&pkg).unwrap();
+        assert!(!lib.backup("dev.example.hello").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn relative_prefix_is_absolute() {
+        let lib = Library::new(PathBuf::from("./data"));
+        assert!(lib.apps_dir().is_absolute());
+    }
+
+    #[test]
+    fn names_stay_inside() {
+        for bad in ["C:/Users/x.txt", "c:x", "bin/a.txt:stream", "/abs", "a//b", "a/../b", "a\\b"] {
+            assert!(name_problem(bad).is_some(), "{bad}");
+        }
+        assert!(name_problem("bin/hello").is_none());
     }
 
     #[test]

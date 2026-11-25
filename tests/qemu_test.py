@@ -129,6 +129,9 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.command("ip addr add 10.0.2.15/24 dev eth0 && ip link set eth0 up")
         # gizlet-switches.service imports setup.ini while the console is already up.
         console.command("for i in $(seq 60); do [ \"$(systemctl show -P ActiveState gizlet-switches)\" = activating ] || break; sleep 1; done")
+        # sshd says it is ready through the journal, which also writes to this
+        # console: let that line out before checking exact output.
+        console.command("for i in $(seq 60); do systemctl is-active -q ssh && break; sleep 1; done; journalctl --sync")
         console.enter("cat '/var/lib/iwd/=54657374204e657421.psk'; /usr/lib/gizlet/gizlet-switch wifi; /usr/lib/gizlet/gizlet-switch ssh; echo \"[$(/usr/lib/gizlet/gizlet-switch ssh-password)]\"")
         console.expect(b"[Security]\r\nPassphrase=passphrase-123\r\n\r\n[Settings]\r\nAutoConnect=true\r\non\r\non\r\n[gizlet test]\r\n")
         console.expect(PROMPT)
