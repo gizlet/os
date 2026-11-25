@@ -181,22 +181,62 @@ static void set_screen(enum screen_state next) {
     screen = next;
 }
 
-/* Turns the screen off and suspends to RAM; returns once the device wakes,
- * 1 if it slept. When it cannot, the screen stays off. */
-static int suspend(void) {
+/* Whether a button was pressed since the inputs were grabbed. The events are
+ * read and dropped: no app sees them. */
+static int pressed_while_grabbed(void) {
+    int pressed = 0;
+    for (int i = 0; i < ndevices; i++) {
+        struct input_event ev[64];
+        ssize_t len;
+        while ((len = read(devices[i].fd, ev, sizeof ev)) > 0) {
+            for (size_t k = 0; k < (size_t)len / sizeof ev[0]; k++) pressed |= ev[k].type == EV_KEY && ev[k].value == 1;
+        }
+    }
+    return pressed;
+}
+
+enum suspend_result { SUSPEND_FAILED, SUSPEND_SLEPT, SUSPEND_CANCELLED };
+
+/* Turns the screen off and suspends to RAM; returns once the device wakes.
+ * A press or a kernel wakeup event while it gets ready (sync can take
+ * seconds) cancels it, through /sys/power/wakeup_count. When it cannot
+ * sleep, the screen stays off. */
+static enum suspend_result suspend(void) {
+    /* Reading blocks while a wakeup event is in progress. */
+    char count[32];
+    ssize_t count_len = -1;
+    int cfd = open("/sys/power/wakeup_count", O_RDONLY | O_CLOEXEC);
+    if (cfd >= 0) {
+        count_len = read(cfd, count, sizeof count - 1);
+        close(cfd);
+    }
     set_screen(SCREEN_OFF);
     sync();
-    int fd = open("/sys/power/state", O_WRONLY | O_CLOEXEC);
-    int slept = fd >= 0 && write(fd, "mem\n", 4) == 4;
-    int err = errno;
-    if (fd >= 0) close(fd);
-    if (slept) {
+    int cancelled = pressed_while_grabbed();
+    /* Writing the count back fails when a wakeup event came since. */
+    if (!cancelled && count_len > 0) {
+        cfd = open("/sys/power/wakeup_count", O_WRONLY | O_CLOEXEC);
+        cancelled = cfd >= 0 && write(cfd, count, count_len) != count_len;
+        if (cfd >= 0) close(cfd);
+    }
+    int slept = 0, err = 0;
+    if (!cancelled) {
+        int fd = open("/sys/power/state", O_WRONLY | O_CLOEXEC);
+        slept = fd >= 0 && write(fd, "mem\n", 4) == 4;
+        err = errno;
+        if (fd >= 0) close(fd);
+        /* The kernel gave up on a wakeup event during suspend. */
+        if (!slept && err == EBUSY) cancelled = 1;
+    }
+    if (cancelled) {
+        puts("gizlet-power: sleep cancelled by a wakeup");
+    } else if (slept) {
         puts("gizlet-power: woke up");
     } else {
         fprintf(stderr, "gizlet-power: cannot sleep: %s; the screen stays off\n", strerror(err));
     }
     fflush(stdout);
-    return slept;
+    return cancelled ? SUSPEND_CANCELLED : slept ? SUSPEND_SLEPT : SUSPEND_FAILED;
 }
 
 static void close_device(int i) {
@@ -331,9 +371,11 @@ int main(int argc, char **argv) {
         int released = pending && !any_key_down() && (t - pending_since >= PENDING_LIMIT_MS || !controls_held());
         if ((next == SCREEN_OFF && screen != SCREEN_OFF) || released) {
             pending = 0;
-            if (suspend()) {
+            enum suspend_result r = suspend();
+            if (r != SUSPEND_FAILED) {
                 last_use = last_event = now_ms();
-                settle_until = last_use + SETTLE_MS;
+                /* A cancelled sleep did not resume, so nothing needs to settle. */
+                if (r == SUSPEND_SLEPT) settle_until = last_use + SETTLE_MS;
                 set_screen(SCREEN_ON);
             }
             continue;
