@@ -152,16 +152,16 @@ impl Settings {
     }
 }
 
-/// The system's power settings, which gizlet-power reads: `screen_off`, the
-/// seconds without input before the screen turns off, 0 for never.
+/// The system's power settings, which gizlet-power reads: `sleep_after`, the
+/// seconds without input before the device sleeps, 0 for never.
 pub struct Power {
     path: PathBuf,
-    pub screen_off: u32,
+    pub sleep_after: u32,
 }
 
 impl Power {
-    /// The choices offered, in order: 1, 3, 5 and 10 minutes, then never.
-    pub const SCREEN_OFF: [u32; 5] = [60, 180, 300, 600, 0];
+    /// The choices offered, in order: 1, 3, 5, 10 and 30 minutes, then never.
+    pub const SLEEP_AFTER: [u32; 6] = [60, 180, 300, 600, 1800, 0];
     /// gizlet-power's default when the file has no value.
     const DEFAULT: u32 = 300;
 
@@ -175,24 +175,24 @@ impl Power {
         }
     }
 
+    /// `screen_off`, the key before `sleep_after`, is read when that is absent.
     pub fn load(path: PathBuf) -> Power {
-        let screen_off = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| {
-                t.lines().find_map(|l| {
-                    let (k, v) = l.split_once('=')?;
-                    (k.trim() == "screen_off").then(|| v.trim().parse().ok()).flatten()
-                })
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let value = |key: &str| {
+            text.lines().find_map(|l| {
+                let (k, v) = l.split_once('=')?;
+                (k.trim() == key).then(|| v.trim().parse().ok()).flatten()
             })
-            .unwrap_or(Power::DEFAULT);
-        Power { path, screen_off }
+        };
+        let sleep_after = value("sleep_after").or_else(|| value("screen_off")).unwrap_or(Power::DEFAULT);
+        Power { path, sleep_after }
     }
 
     /// The next choice after the current one, `step` places on (±1).
     pub fn cycle(&mut self, step: i32) {
-        let n = Power::SCREEN_OFF.len() as i32;
-        let at = Power::SCREEN_OFF.iter().position(|&s| s == self.screen_off).unwrap_or(2) as i32;
-        self.screen_off = Power::SCREEN_OFF[(at + step).rem_euclid(n) as usize];
+        let n = Power::SLEEP_AFTER.len() as i32;
+        let at = Power::SLEEP_AFTER.iter().position(|&s| s == self.sleep_after).unwrap_or(2) as i32;
+        self.sleep_after = Power::SLEEP_AFTER[(at + step).rem_euclid(n) as usize];
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -200,7 +200,7 @@ impl Power {
             std::fs::create_dir_all(dir)?;
         }
         let tmp = self.path.with_extension("tmp");
-        std::fs::write(&tmp, format!("# Seconds without input before the screen turns off; 0 is never.\nscreen_off = {}\n", self.screen_off))?;
+        std::fs::write(&tmp, format!("# Seconds without input before the device sleeps; 0 is never.\nsleep_after = {}\n", self.sleep_after))?;
         std::fs::rename(&tmp, &self.path)
     }
 }
@@ -236,17 +236,23 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("gizlet-power-{}", std::process::id()));
         let path = dir.join("power.ini");
         let mut p = Power::load(path.clone());
-        assert_eq!(p.screen_off, 300);
+        assert_eq!(p.sleep_after, 300);
         p.cycle(1);
-        assert_eq!(p.screen_off, 600);
+        assert_eq!(p.sleep_after, 600);
         p.cycle(1);
-        assert_eq!(p.screen_off, 0);
+        assert_eq!(p.sleep_after, 1800);
         p.cycle(1);
-        assert_eq!(p.screen_off, 60);
+        assert_eq!(p.sleep_after, 0);
+        p.cycle(1);
+        assert_eq!(p.sleep_after, 60);
         p.cycle(-1);
-        assert_eq!(p.screen_off, 0);
+        assert_eq!(p.sleep_after, 0);
         p.save().unwrap();
-        assert_eq!(Power::load(path).screen_off, 0);
+        assert_eq!(Power::load(path.clone()).sleep_after, 0);
+        std::fs::write(&path, "screen_off = 0\n").unwrap();
+        assert_eq!(Power::load(path.clone()).sleep_after, 0, "the old key still counts");
+        std::fs::write(&path, "screen_off = 0\nsleep_after = 600\n").unwrap();
+        assert_eq!(Power::load(path).sleep_after, 600, "the new key wins");
         let _ = std::fs::remove_dir_all(dir);
     }
 

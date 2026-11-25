@@ -99,6 +99,13 @@ pub fn restart(p: &Painter, cx: f32, cy: f32, s: f32, c: Color) {
     p.triangle((ax - s * 0.16, ay - s * 0.1), (ax + s * 0.02, ay + s * 0.16), (ax + s * 0.12, ay - s * 0.16), c);
 }
 
+/// A crescent moon, for sleep; `hole` is the background it sits on.
+pub fn moon(p: &Painter, cx: f32, cy: f32, s: f32, c: Color, hole: Color) {
+    let r = s * 0.36;
+    p.circle(cx, cy, r, c);
+    p.circle(cx + r * 0.55, cy - r * 0.45, r * 0.82, hole);
+}
+
 pub fn lock(p: &Painter, cx: f32, cy: f32, s: f32, c: Color) {
     let w = s * 0.62;
     let h = s * 0.46;

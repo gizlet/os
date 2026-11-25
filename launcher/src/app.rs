@@ -102,7 +102,7 @@ pub enum ItemId {
     SshPassword,
     Brightness,
     Theme,
-    ScreenOff,
+    SleepAfter,
     Volume,
     BatteryPercent,
     ButtonTest,
@@ -427,6 +427,7 @@ impl App {
         if let Some(s) = &self.snapshot {
             for a in &s.power {
                 let label = match a {
+                    PowerAction::Sleep => T::Sleep,
                     PowerAction::Reboot => T::Reboot,
                     PowerAction::PowerOff => T::PowerOff,
                 };
@@ -500,7 +501,7 @@ impl App {
                     match item.as_ref().map(|i| (&i.id, &i.value)) {
                         Some((id, ItemValue::Slider(v))) => self.slide(id, *v + step * 0.05),
                         Some((ItemId::Theme, _)) => self.toggle_theme(),
-                        Some((ItemId::ScreenOff, _)) => self.cycle_screen_off(step as i32),
+                        Some((ItemId::SleepAfter, _)) => self.cycle_sleep_after(step as i32),
                         _ if a == Action::Left => self.focus.in_content = false,
                         _ => {}
                     }
@@ -558,7 +559,7 @@ impl App {
         }
     }
 
-    fn cycle_screen_off(&mut self, step: i32) {
+    fn cycle_sleep_after(&mut self, step: i32) {
         self.power.cycle(step);
         if let Err(e) = self.power.save() {
             let msg = T::Failed.fmt(self.lang(), &[&e.to_string()]);
@@ -566,9 +567,9 @@ impl App {
         }
     }
 
-    /// The screen-off choice as shown: minutes, or never.
-    pub fn screen_off_label(&self) -> String {
-        match self.power.screen_off {
+    /// The sleep choice as shown: minutes, or never.
+    pub fn sleep_after_label(&self) -> String {
+        match self.power.sleep_after {
             0 => self.t(T::Never).to_string(),
             s => T::Minutes.fmt(self.lang(), &[&(s / 60).to_string()]),
         }
@@ -610,7 +611,7 @@ impl App {
             ItemId::WifiDisconnect => self.system.send(Request::WifiDisconnect),
             ItemId::WifiNetwork(ssid) => self.choose_network(ssid),
             ItemId::Theme => self.toggle_theme(),
-            ItemId::ScreenOff => self.cycle_screen_off(1),
+            ItemId::SleepAfter => self.cycle_sleep_after(1),
             ItemId::BatteryPercent => {
                 self.settings.battery_percent = !self.settings.battery_percent;
                 self.save();
@@ -809,10 +810,6 @@ impl App {
                     Theme::Light => t(T::ThemeLight),
                 };
                 items.push(Item::new(ItemId::Theme, t(T::ThemeLabel), ItemValue::Choice(theme)));
-                // Only with a backlight to turn off.
-                if snap.brightness.is_ok() {
-                    items.push(Item::new(ItemId::ScreenOff, t(T::ScreenOff), ItemValue::Choice(self.screen_off_label())));
-                }
             }
             Category::Sound => match &snap.volume {
                 Ok(v) => items.push(Item::new(ItemId::Volume, t(T::Volume), ItemValue::Slider(*v))),
@@ -834,6 +831,10 @@ impl App {
                         items.push(Item::info(t(T::BatteryState), state));
                     }
                     Err(m) => items.push(self.missing(m, T::NoBattery, Some(T::NoBatteryBody))),
+                }
+                // Only where the device can sleep.
+                if snap.power.contains(&PowerAction::Sleep) {
+                    items.push(Item::new(ItemId::SleepAfter, t(T::SleepAfter), ItemValue::Choice(self.sleep_after_label())));
                 }
                 items.push(Item::new(ItemId::BatteryPercent, t(T::BatteryPercent), ItemValue::Toggle(self.settings.battery_percent)));
             }

@@ -154,7 +154,7 @@ struct FakePower;
 
 impl Power for FakePower {
     fn actions(&self) -> Vec<PowerAction> {
-        vec![PowerAction::Reboot, PowerAction::PowerOff]
+        vec![PowerAction::Sleep, PowerAction::Reboot, PowerAction::PowerOff]
     }
     fn run(&mut self, action: PowerAction) -> Result<(), String> {
         Err(format!("simulated {action:?}"))

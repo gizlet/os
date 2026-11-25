@@ -127,7 +127,10 @@ def check_ssh(private, boot_offset, kernel, root, work):
         # gizlet-switches.service imports setup.ini while the console is already up.
         console.command("for i in $(seq 60); do [ \"$(systemctl show -P ActiveState gizlet-switches)\" = activating ] || break; sleep 1; done")
         console.enter("cat '/var/lib/iwd/=54657374204e657421.psk'; /usr/lib/gizlet/gizlet-switch wifi; /usr/lib/gizlet/gizlet-switch ssh; echo \"[$(/usr/lib/gizlet/gizlet-switch ssh-password)]\"")
-        console.expect(b"[Security]\r\nPassphrase=passphrase-123\r\n\r\n[Settings]\r\nAutoConnect=true\r\non\r\non\r\n[gizlet test]\r\n")
+        # Line by line: services such as gizlet-ssh may print to the console in between.
+        for line in (b"[Security]\r\nPassphrase=passphrase-123", b"\r\n[Settings]\r\nAutoConnect=true", b"\r\non",
+                     b"\r\non", b"\r\n[gizlet test]\r\n"):
+            console.expect(line)
         console.expect(PROMPT)
         # setup.ini is imported once: renamed, without the passphrase and password.
         console.enter("mount -o ro /dev/vda1 /mnt && cat /mnt/setup.ini.done; ls /mnt/setup.ini; umount /mnt")
@@ -244,6 +247,7 @@ def scenarios(image, kernel_name, work):
         console.expect(b"boot entry finished with status 1")
         console.expect(PROMPT)
         # Its device probe runs without a display: no battery, backlight, sound or WiFi adapter here.
+        # No Sleep either: gizlet-power, which suspends, needs a backlight.
         console.enter("/opt/gizlet/launcher/gizlet-launcher --probe")
         for line in (b"battery: Err(NoHardware)", b"brightness: Err(NoHardware)", b"volume: Err(NoHardware)",
                      b"wifi: Ok(WifiState { on: false, adapter: false", b"ssh: Ok(SshState { on: false, running: false",
