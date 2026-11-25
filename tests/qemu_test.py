@@ -352,6 +352,22 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.expect(PROMPT)
         console.stop()
     check_ssh(private, parts["boot"][1], kernel, root, work)
+    # flash.sh's update rewrites the system and keeps the data partition: the
+    # user's file and time zone stay. A factory launcher entry gets the base's launcher.
+    subprocess.run(["bash", flash_card, "--update", flash, image, private], check=True)
+    with boot(private, kernel, root) as console:
+        console.expect(PROMPT)
+        console.enter("cat /home/check; /usr/lib/gizlet/gizlet-switch timezone")
+        console.expect(b"\r\npersistent-user-file\r\nAmerica/New_York\r\n")
+        console.expect(PROMPT)
+        console.command("mkdir -p /opt/gizlet/launcher/bin && echo old > /opt/gizlet/launcher/bin/gizlet-launcher")
+        console.command("printf '%s\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
+        console.enter("exit")
+        console.expect(b"updated the factory launcher")
+        console.expect(b"Gizlet launcher: no display")
+        console.expect(PROMPT)
+        console.stop()
+    print("an update keeps the data partition and brings the factory launcher up to date")
     # A card missing its data partition must not pick a valid data volume on another disk.
     # The second disk is the real, populated data partition as a standalone virtual disk.
     index, offset, size = parts["data"]

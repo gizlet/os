@@ -4,9 +4,11 @@ Usage: rootfs_test.py IMAGE BOOTER CONFIG_JSON FLASH_SH FLASH_CARD_SH
 
 CONFIG_JSON names the data filesystem UUID and the license notices required
 under /usr/share/licenses. FLASH_SH, the card writer, grows the data
-filesystem to fill cards of several sizes, and e2fsck checks each.
+filesystem to fill cards of several sizes, and e2fsck checks each; its update
+keeps a card's data partition.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -70,11 +72,56 @@ def check_flash_growth(flash, flash_card, image, work):
         data.unlink()
 
 
+def digest(path, offset, size):
+    """SHA-256 of SIZE bytes at OFFSET of a sparse file, reading only its data."""
+    sha = hashlib.sha256()
+    with open(path, "rb") as source:
+        position = offset
+        while position < offset + size:
+            try:
+                begin = min(os.lseek(source.fileno(), position, os.SEEK_DATA), offset + size)
+            except OSError:
+                begin = offset + size
+            sha.update(b"hole %d %d" % (position, begin))
+            if begin >= offset + size:
+                break
+            end = min(os.lseek(source.fileno(), begin, os.SEEK_HOLE), offset + size)
+            source.seek(begin)
+            sha.update(source.read(end - begin))
+            position = end
+    return sha.hexdigest()
+
+
+def check_flash_update(flash, flash_card, image, work):
+    """flash.sh's update rewrites the system and keeps the data partition; it refuses another card."""
+    card_file = work / "update.img"
+    output("bash", flash_card, flash, image, card_file, str(1 << 30))
+    _, offset, size = card.partitions(card_file)[0]["data"]
+    data = digest(card_file, offset, size)
+    run("bash", flash_card, "--update", flash, image, card_file)
+    assert digest(card_file, offset, size) == data, "the update changed the data partition"
+    # Everything before the data partition but the partition table is the image's.
+    with open(image, "rb") as source, open(card_file, "rb") as target:
+        assert source.read(offset)[512:] == target.read(offset)[512:], "the update did not write the image's system"
+    assert card.partitions(card_file)[0]["data"][2] == size, "the update changed the data partition's size"
+    # Another data filesystem (here its UUID changed) is refused, and nothing is written.
+    with open(card_file, "r+b") as target:
+        target.seek(offset + 1024 + 0x68)
+        target.write(b"\0")
+    before = digest(card_file, 0, offset + size)
+    refused = subprocess.run(["bash", flash_card, "--update", flash, image, card_file], capture_output=True, text=True)
+    assert refused.returncode != 0 and "cannot be updated" in refused.stderr, refused.stderr
+    assert digest(card_file, 0, offset + size) == before, "a refused update changed the card"
+    card_file.unlink()
+    print("flash.sh's update keeps the data partition and refuses another card", flush=True)
+
+
 def main():
     image, booter, config = sys.argv[1], Path(sys.argv[2]), json.loads(sys.argv[3])
     parts, _ = card.partitions(image)
     work = Path(tempfile.mkdtemp(prefix="rootfs-test-"))
     check_flash_growth(sys.argv[4], sys.argv[5], image, work)
+    check_flash_update(sys.argv[4], sys.argv[5], image, work)
 
     data = work / "data.ext4"
     extract(image, *parts["data"][1:], data)

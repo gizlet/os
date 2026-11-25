@@ -5,14 +5,18 @@
 #
 # It asks for a language, the handheld's panel and the card's disk, downloads
 # the matching image from the latest release and checks its SHA-256, then
-# writes the whole card. Everything on the card is erased, so erasing takes
-# three confirmations: the disk number, a yes, and the disk's name typed out.
+# writes the card. A card that already has Gizlet OS can be updated: only its
+# boot and system partitions are written, and the data partition, with the
+# installed programs, saves, Wi-Fi networks and settings, is kept. Otherwise
+# everything on the card is erased, which takes three confirmations: the disk
+# number, a yes, and the disk's name typed out.
 #
 # Options (when piped: `| bash -s -- OPTIONS`):
 #   --lang en|zh                  skip the language question
 #   --panel v30-panel4|original   skip the panel question
 #   --image FILE                  write a local .img or .img.gz instead of downloading
 #   --disk DEVICE                 write this whole disk instead of choosing from the list
+#   --update | --erase            skip the question for a card with Gizlet OS
 #   --dry-run                     list the disks and stop before writing
 #
 # Variables are written ${name} throughout: macOS's bash 3.2 reads the first
@@ -24,15 +28,17 @@ main() {
     # Disks larger than this are listed, but flagged as unlikely to be a TF card.
     LARGE=$((256 * 1000 * 1000 * 1000))
 
-    lang='' panel='' image='' disk='' dry_run=''
+    lang='' panel='' image='' disk='' dry_run='' mode=''
     while [ $# -gt 0 ]; do
         case "$1" in
             --lang) lang=${2:?--lang needs en or zh}; shift 2 ;;
             --panel) panel=${2:?--panel needs a value}; shift 2 ;;
             --image) image=${2:?--image needs a file}; shift 2 ;;
             --disk) disk=${2:?--disk needs a device}; shift 2 ;;
+            --update) mode=update; shift ;;
+            --erase) mode=erase; shift ;;
             --dry-run) dry_run=1; shift ;;
-            -h | --help) printf '%s\n' 'usage: flash.sh [--lang en|zh] [--panel v30-panel4|original] [--image FILE] [--disk DEVICE] [--dry-run]'; exit 0 ;;
+            -h | --help) printf '%s\n' 'usage: flash.sh [--lang en|zh] [--panel v30-panel4|original] [--image FILE] [--disk DEVICE] [--update|--erase] [--dry-run]'; exit 0 ;;
             *) printf 'error: unknown option %s\n' "$1" >&2; exit 1 ;;
         esac
     done
@@ -48,7 +54,8 @@ main() {
     find_disks
     [ -z "${dry_run}" ] || exit 0
     choose_disk
-    confirm_erase
+    choose_mode
+    if [ "${mode}" = update ]; then confirm_update; else confirm_erase; fi
     get_image
     write_card
 }
@@ -230,6 +237,43 @@ choose_disk() {
     identity=$(disk_identity "${disk}" 2>/dev/null) && [ -n "${identity}" ] || die "$(m "cannot read ${disk}" "无法读取 ${disk}")"
 }
 
+# has_gizlet_boot DISK: succeeds when DISK has Gizlet OS's boot partition.
+has_gizlet_boot() {
+    if [ "${os}" = mac ]; then
+        diskutil list "$1" 2>/dev/null | grep -q ' GIZLETBOOT '
+    else
+        lsblk -lno LABEL "$1" 2>/dev/null | grep -qx GIZLETBOOT
+    fi
+}
+
+# Update or erase (or --update, --erase): a card that has Gizlet OS can keep
+# its data partition. The card is checked again before an update is written.
+choose_mode() {
+    [ -z "${mode}" ] || return 0
+    mode=erase
+    has_gizlet_boot "${disk}" || return 0
+    say ''
+    say "$(m 'This card already has Gizlet OS. What should be written?' '这张卡上已经有 Gizlet OS。要怎么写？')"
+    say "$(m '  1) Update the system only, keeping installed programs, saves, Wi-Fi networks and settings' '  1) 只更新系统，保留已安装的程序、存档、Wi-Fi 网络和设置')"
+    say "$(m '  2) Erase the whole card and start again' '  2) 清空整张卡，重新开始')"
+    case "$(ask '[1]: ')" in
+        '' | 1) mode=update ;;
+        2) mode=erase ;;
+        *) die "$(m 'answer 1 or 2' '请输入 1 或 2')" ;;
+    esac
+}
+
+# Confirmation 2 of an update: yes.
+confirm_update() {
+    say ''
+    say "$(m 'Selected:' '已选择：') ${disk}  ${label}"
+    say "$(m 'Gizlet OS on this card will be updated. Its boot and system partitions are replaced; the data partition, with installed programs, saves, Wi-Fi networks and settings, is kept.' '将更新这张卡上的 Gizlet OS：替换启动分区和系统分区，保留数据分区，包括已安装的程序、存档、Wi-Fi 网络和设置。')"
+    case "$(ask "$(m 'Update it? [y/N]: ' '确定更新？[y/N]：')")" in
+        y | Y | yes | YES) ;;
+        *) die "$(m 'cancelled' '已取消')" ;;
+    esac
+}
+
 # Confirmations 2 and 3: yes after the warnings, then the disk's name, as
 # GitHub asks for a repository's name before deleting it.
 confirm_erase() {
@@ -303,23 +347,31 @@ write_card() {
     fi
     # And while the password was asked for.
     check_same_disk
-    grown_mbr "${raw}" "${bytes}" "${work}/mbr"
-    grown_data "${raw}" "${work}/mbr" "${work}"
-    say "$(m "Writing ${target}, about a minute ..." "正在写入 ${target}，大约一分钟……")"
-    if [ "${os}" = mac ]; then
-        ${sudo} dd if="${raw}" of="${target}" bs=4194304
-        ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 2>/dev/null
-        write_grown_data "${work}" "${target}"
+    if [ "${mode}" = update ]; then
+        update_card
     else
-        ${sudo} dd if="${raw}" of="${target}" bs=4194304 conv=fsync status=progress
-        ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 conv=fsync 2>/dev/null
-        write_grown_data "${work}" "${target}"
-        ${sudo} blockdev --rereadpt "${target}" 2>/dev/null || true
+        grown_mbr "${raw}" "${bytes}" "${work}/mbr"
+        grown_data "${raw}" "${work}/mbr" "${work}"
+        say "$(m "Writing ${target}, about a minute ..." "正在写入 ${target}，大约一分钟……")"
+        if [ "${os}" = mac ]; then
+            ${sudo} dd if="${raw}" of="${target}" bs=4194304
+            ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 2>/dev/null
+            write_grown_data "${work}" "${target}"
+        else
+            ${sudo} dd if="${raw}" of="${target}" bs=4194304 conv=fsync status=progress
+            ${sudo} dd if="${work}/mbr" of="${target}" bs=512 count=1 conv=fsync 2>/dev/null
+            write_grown_data "${work}" "${target}"
+            ${sudo} blockdev --rereadpt "${target}" 2>/dev/null || true
+        fi
     fi
     sync
     [ "${os}" != mac ] || diskutil eject "${disk}" >/dev/null 2>&1 || true
     say ''
-    say "$(m 'Done. Put the card in the R36S and switch it on.' '完成。把卡插进 R36S 开机。')"
+    if [ "${mode}" = update ]; then
+        say "$(m 'Done: Gizlet OS is updated and the data partition kept. Put the card in the R36S and switch it on.' '完成：Gizlet OS 已更新，数据分区保留。把卡插进 R36S 开机。')"
+    else
+        say "$(m 'Done. Put the card in the R36S and switch it on.' '完成。把卡插进 R36S 开机。')"
+    fi
 }
 
 # grown_mbr IMAGE DISK_BYTES OUT: writes to OUT the image's first sector with
@@ -344,6 +396,136 @@ grown_mbr() {
         tail -c $((512 - entry - 16)) "$3.orig"
     } > "$3"
     [ "$(wc -c < "$3" | tr -d ' ')" = 512 ] || die "$(m 'cannot prepare the partition table' '无法生成分区表')"
+}
+
+# update_card: updates Gizlet OS on ${target} from the image ${raw}. It writes
+# everything before the data partition, the boot code, U-Boot and the boot and
+# system partitions, and keeps the data partition and the card's own
+# partition 3 entry. The partition table goes last, so a write cut short
+# leaves the old one, and writing again finishes the update. Files of the
+# user's own on the boot partition are put back.
+update_card() {
+    head -c 512 "${raw}" > "${work}/image-mbr"
+    start=$(od -An -tu4 -j 486 -N 4 "${work}/image-mbr" | tr -d ' ')
+    [ "${start}" -gt 2048 ] && [ $((start % 2048)) = 0 ] || die "$(m 'unexpected partition table in the image' '镜像的分区表不符合预期')"
+    dd if="${raw}" of="${work}/image-super" bs=512 skip=$((start + 2)) count=2 2>/dev/null
+    ${sudo} dd if="${target}" of="${work}/card-mbr" bs=512 count=1 2>/dev/null
+    ${sudo} dd if="${target}" of="${work}/card-super" bs=512 skip=$((start + 2)) count=2 2>/dev/null
+    updated_mbr "${work}/image-mbr" "${work}/card-mbr" "${work}/image-super" "${work}/card-super" "${work}/mbr" ||
+        die "$(m "${disk} does not hold Gizlet OS laid out as this image, so it cannot be updated; nothing was written. Run this again and choose to erase it." "${disk} 上的 Gizlet OS 与这个镜像的分区布局不一致，无法只更新系统；没有写入任何内容。请重新运行并选择清空整张卡。")"
+    save_boot_files
+    { cat "${work}/mbr"; dd if="${raw}" bs=512 skip=1 count=2047 2>/dev/null; } > "${work}/first"
+    say "$(m "Updating ${target} ..." "正在更新 ${target}……")"
+    if [ "${os}" = mac ]; then
+        ${sudo} dd if="${raw}" of="${target}" bs=1048576 skip=1 seek=1 count=$((start / 2048 - 1)) conv=notrunc
+        ${sudo} dd if="${work}/first" of="${target}" bs=1048576 count=1 conv=notrunc 2>/dev/null
+    else
+        ${sudo} dd if="${raw}" of="${target}" bs=1048576 skip=1 seek=1 count=$((start / 2048 - 1)) conv=notrunc,fsync status=progress
+        ${sudo} dd if="${work}/first" of="${target}" bs=1048576 count=1 conv=notrunc,fsync 2>/dev/null
+        ${sudo} blockdev --rereadpt "${target}" 2>/dev/null || true
+    fi
+    restore_boot_files
+}
+
+# mbr_bytes FILE OFFSET COUNT: the bytes in hex.
+mbr_bytes() { od -An -tx1 -v -j "$2" -N "$3" "$1" | tr -d ' \n'; }
+
+# updated_mbr IMAGE_MBR CARD_MBR IMAGE_SUPER CARD_SUPER OUT: writes to OUT the
+# image's first sector with the card's own partition 3 entry, which the card
+# writers or its first boot extended to the end of the card, and fails unless
+# the card is laid out as the image is. Partitions 1 and 2 must match the
+# image's, partition 3 start where the image's does and hold the image's data
+# filesystem (its ext4 UUID; any size), and no partition 4 may exist. The CHS
+# fields are not compared: a first boot's sfdisk rewrites them. The SUPER
+# files are the 1 KiB ext4 superblocks of partition 3.
+updated_mbr() {
+    local entry
+    [ "$(mbr_bytes "$2" 510 2)" = 55aa ] || return 1
+    for entry in 446 462; do
+        [ "$(mbr_bytes "$2" $((entry + 4)) 1)" = "$(mbr_bytes "$1" $((entry + 4)) 1)" ] || return 1
+        [ "$(mbr_bytes "$2" $((entry + 8)) 8)" = "$(mbr_bytes "$1" $((entry + 8)) 8)" ] || return 1
+    done
+    [ "$(mbr_bytes "$2" 482 1)" = "$(mbr_bytes "$1" 482 1)" ] || return 1
+    [ "$(mbr_bytes "$2" 486 4)" = "$(mbr_bytes "$1" 486 4)" ] || return 1
+    [ "$(mbr_bytes "$2" 494 16)" = 00000000000000000000000000000000 ] || return 1
+    [ "$(mbr_bytes "$3" 56 2)" = 53ef ] && [ "$(mbr_bytes "$4" 56 2)" = 53ef ] || return 1
+    [ "$(mbr_bytes "$4" 104 16)" = "$(mbr_bytes "$3" 104 16)" ] || return 1
+    {
+        head -c 478 "$1"
+        dd if="$2" bs=1 skip=478 count=16 2>/dev/null
+        tail -c 18 "$1"
+    } > "$5"
+    [ "$(wc -c < "$5" | tr -d ' ')" = 512 ]
+}
+
+# Files of the user's own on the boot partition that an update keeps: the ssh
+# public keys, and a setup file not yet imported.
+BOOT_FILES='authorized_keys setup.ini'
+
+# boot_partition: partition 1 of ${disk}, the FAT boot partition.
+boot_partition() {
+    if [ "${os}" = mac ]; then echo "${disk}s1"
+    else case "${disk}" in *[0-9]) echo "${disk}p1" ;; *) echo "${disk}1" ;; esac
+    fi
+}
+
+# mount_boot ro|rw: mounts the boot partition at ${boot_dir}; unmount_boot.
+mount_boot() {
+    part=$(boot_partition)
+    if [ "${os}" = mac ]; then
+        if [ "$1" = ro ]; then diskutil mount readOnly "${part}" >/dev/null 2>&1 || return 1
+        else diskutil mount "${part}" >/dev/null 2>&1 || return 1
+        fi
+        boot_dir=$(diskutil info "${part}" | sed -n 's/^ *Mount Point: *//p')
+        [ -d "${boot_dir}" ] || return 1
+    else
+        [ -b "${part}" ] || return 1
+        ${sudo} blockdev --flushbufs "${part}" 2>/dev/null || true
+        boot_dir=${work}/boot
+        mkdir -p "${boot_dir}"
+        ${sudo} mount -t vfat -o "$1" "${part}" "${boot_dir}" 2>/dev/null || return 1
+    fi
+}
+unmount_boot() {
+    if [ "${os}" = mac ]; then diskutil unmount "${part}" >/dev/null
+    else ${sudo} umount "${boot_dir}"
+    fi
+}
+
+save_boot_files() {
+    kept=''
+    keep=${work}/boot-files
+    mkdir -p "${keep}"
+    if ! mount_boot ro; then
+        say "$(m 'Warning: cannot read the boot partition; any authorized_keys or setup.ini on it is not kept.' '警告：无法读取启动分区，上面的 authorized_keys 或 setup.ini 不会保留。')"
+        return 0
+    fi
+    for file in ${BOOT_FILES}; do
+        if [ -f "${boot_dir}/${file}" ]; then
+            cp "${boot_dir}/${file}" "${keep}/${file}" || die "$(m "cannot read ${file} on the boot partition; nothing was written" "无法读取启动分区上的 ${file}，没有写入任何内容")"
+            kept="${kept} ${file}"
+        fi
+    done
+    unmount_boot || die "$(m "cannot unmount ${part}; nothing was written" "无法卸载 ${part}，没有写入任何内容")"
+}
+
+restore_boot_files() {
+    [ -n "${kept}" ] || return 0
+    # macOS's cp -X leaves out extended attributes, which FAT would keep as ._ files.
+    if mount_boot rw; then
+        copied=yes
+        for file in ${kept}; do
+            if [ "${os}" = mac ]; then cp -X "${keep}/${file}" "${boot_dir}/${file}" || copied=''
+            else ${sudo} cp "${keep}/${file}" "${boot_dir}/${file}" || copied=''
+            fi
+        done
+        sync
+        unmount_boot || true
+        [ -z "${copied}" ] || return 0
+    fi
+    saved=$(mktemp -d "${TMPDIR:-/tmp}/gizlet-boot-files.XXXXXX")
+    cp "${keep}"/* "${saved}/"
+    say "$(m "Warning: cannot put the boot partition's own files back; copy them from ${saved}" "警告：无法把启动分区上原有的文件放回去，请自行从 ${saved} 复制回去")"
 }
 
 # grown_data IMAGE MBR DIR: grows the image's ext4 data filesystem, offline, to

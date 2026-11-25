@@ -5,13 +5,17 @@
 #
 # It asks for a language, the handheld's panel and the card's disk, downloads
 # the matching image from the latest release and checks its SHA-256, then
-# writes the whole card. Everything on the card is erased, so erasing takes
-# three confirmations: the disk number, a yes, and the disk's name typed out.
+# writes the card. A card that already has Gizlet OS can be updated: only its
+# boot and system partitions are written, and the data partition, with the
+# installed programs, saves, Wi-Fi networks and settings, is kept. Otherwise
+# everything on the card is erased, which takes three confirmations: the disk
+# number, a yes, and the disk's name typed out.
 #
 # Optional environment variables:
 #   GIZLET_LANG      en or zh, to skip the language question
 #   GIZLET_PANEL     v30-panel4 or original, to skip the panel question
 #   GIZLET_IMAGE     a local .img or .img.gz to write instead of downloading
+#   GIZLET_MODE      update or erase, to skip the question for a Gizlet OS card
 #   GIZLET_RELEASE   another release download URL
 
 # Extends partition 3 of the image's MBR in $mbr, the data partition and the
@@ -207,6 +211,141 @@ public static class GizletDataGrow {
     , [GizletDataGrow]::Blocks($head, $start, $sectors)
 }
 
+# For an update: the image's MBR with the card's own partition 3 entry, which
+# the card writers or its first boot extended to the end of the card, or
+# $null unless the card is laid out as the image is. Partitions 1 and 2 must
+# match the image's, partition 3 start where the image's does and hold the
+# image's data filesystem (its ext4 UUID), of any size, and no partition 4
+# may exist. The
+# CHS fields are not compared: a first boot's sfdisk rewrites them.
+# $imageSuper and $cardSuper are the 1 KiB ext4 superblocks of partition 3.
+function Get-UpdatedMbr([byte[]]$imageMbr, [byte[]]$cardMbr, [byte[]]$imageSuper, [byte[]]$cardSuper) {
+    if ($cardMbr[510] -ne 0x55 -or $cardMbr[511] -ne 0xAA) { return $null }
+    foreach ($entry in 446, 462) {
+        foreach ($at in @(4) + (8..15)) { if ($cardMbr[$entry + $at] -ne $imageMbr[$entry + $at]) { return $null } }
+    }
+    foreach ($at in @(482) + (486..489)) { if ($cardMbr[$at] -ne $imageMbr[$at]) { return $null } }
+    foreach ($at in 494..509) { if ($cardMbr[$at] -ne 0) { return $null } }
+    foreach ($at in @(0x38, 0x39) + (0x68..0x77)) { if ($cardSuper[$at] -ne $imageSuper[$at]) { return $null } }
+    if ($imageSuper[0x38] -ne 0x53 -or $imageSuper[0x39] -ne 0xEF) { return $null }
+    $updated = [byte[]]$imageMbr.Clone()
+    [Array]::Copy($cardMbr, 478, $updated, 478, 16)
+    , $updated
+}
+
+# The drive letter of partition 1, the FAT boot partition, of disk $number,
+# given one if it has none, as 'E:'; $null when it cannot be had.
+function Get-BootDrive([int]$number) {
+    for ($try = 0; $try -lt 10; $try++) {
+        $part = Get-Partition -DiskNumber $number -PartitionNumber 1 -ErrorAction SilentlyContinue
+        if ($part -and "$($part.DriveLetter)" -match '^[A-Z]$') { return "$($part.DriveLetter):" }
+        if ($part) { try { $part | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction Stop } catch { } }
+        Start-Sleep -Milliseconds 500
+    }
+    $null
+}
+
+# Files of the user's own on the boot partition that an update keeps: the ssh
+# public keys, and a setup file not yet imported.
+$GizletBootFiles = 'authorized_keys', 'setup.ini'
+
+# Updates Gizlet OS on disk $disk from the image $raw: writes everything before
+# the data partition, the boot code, U-Boot and the boot and system
+# partitions, and keeps the data partition and the card's own partition 3
+# entry. The partition table goes last, so a write cut short leaves the old
+# one, and running this again finishes the update.
+function Update-Card([string]$raw, $disk) {
+    $number = $disk.Number
+    $diskName = "Disk $number"
+    $imageMbr = New-Object byte[] 512
+    $imageSuper = New-Object byte[] 1024
+    $cardMbr = New-Object byte[] 512
+    $cardSuper = New-Object byte[] 1024
+    $source = [IO.File]::OpenRead($raw)
+    $target = $null
+    $lock = $null
+    $offline = $false
+    $kept = @()
+    $keep = Join-Path ([IO.Path]::GetTempPath()) ('gizlet-boot-files-' + [guid]::NewGuid())
+    try {
+        [void]$source.Read($imageMbr, 0, 512)
+        $start = [long][BitConverter]::ToUInt32($imageMbr, 486)
+        $head = $start * 512
+        if ($head -le 0 -or $head % 1MB -ne 0 -or $head + 2048 -gt $source.Length) {
+            throw (M 'Unexpected partition table in the image.' '镜像的分区表不符合预期。')
+        }
+        [void]$source.Seek($head + 1024, [IO.SeekOrigin]::Begin)
+        [void]$source.Read($imageSuper, 0, 1024)
+        $probe = [IO.FileStream]::new([GizletRawDisk]::Open("\\.\PhysicalDrive$number"), [IO.FileAccess]::ReadWrite)
+        try {
+            [void]$probe.Read($cardMbr, 0, 512)
+            [void]$probe.Seek($head + 1024, [IO.SeekOrigin]::Begin)
+            [void]$probe.Read($cardSuper, 0, 1024)
+        } finally { $probe.Dispose() }
+        $mbr = Get-UpdatedMbr $imageMbr $cardMbr $imageSuper $cardSuper
+        if (-not $mbr) {
+            throw (M "$diskName does not hold Gizlet OS laid out as this image, so it cannot be updated; nothing was written. Run this again and choose to erase it." "$diskName 上的 Gizlet OS 与这个镜像的分区布局不一致，无法只更新系统；没有写入任何内容。请重新运行并选择清空整张卡。")
+        }
+        # The user's own files on the boot partition, put back after the write.
+        $drive = Get-BootDrive $number
+        if ($drive) {
+            foreach ($file in $GizletBootFiles) {
+                if (Test-Path -LiteralPath "$drive\$file" -PathType Leaf) {
+                    if (-not $kept) { New-Item -ItemType Directory $keep | Out-Null }
+                    Copy-Item -LiteralPath "$drive\$file" -Destination (Join-Path $keep $file)
+                    $kept += $file
+                }
+            }
+        } else {
+            Write-Host (M 'Warning: cannot read the boot partition; any authorized_keys or setup.ini on it is not kept.' '警告：无法读取启动分区，上面的 authorized_keys 或 setup.ini 不会保留。')
+        }
+        # Windows blocks writes under a mounted volume: the disk goes offline
+        # where it can, or the boot partition's volume is locked and dismounted.
+        Set-Disk -Number $number -IsReadOnly $false
+        try { Set-Disk -Number $number -IsOffline $true; $offline = $true } catch { }
+        if (-not $offline -and $drive) { $lock = [GizletRawDisk]::LockVolume($drive) }
+        $target = [IO.FileStream]::new([GizletRawDisk]::Open("\\.\PhysicalDrive$number"), [IO.FileAccess]::ReadWrite)
+        $buffer = New-Object byte[] (4MB)
+        [void]$source.Seek(0, [IO.SeekOrigin]::Begin)
+        $written = 0L
+        Write-Host (M "Updating $diskName ..." "正在更新 $diskName……")
+        while ($written -lt $head) {
+            $want = [int][math]::Min($buffer.Length, $head - $written)
+            $filled = 0
+            while ($filled -lt $want) {
+                $n = $source.Read($buffer, $filled, $want - $filled)
+                if ($n -le 0) { throw (M 'The image is cut short.' '镜像文件不完整。') }
+                $filled += $n
+            }
+            # Sector 0, the partition table, is written last.
+            $skip = if ($written -eq 0) { 512 } else { 0 }
+            [void]$target.Seek($written + $skip, [IO.SeekOrigin]::Begin)
+            $target.Write($buffer, $skip, $filled - $skip)
+            $written += $filled
+            Write-Host -NoNewline ("`r{0} / {1} MB" -f [int]($written / 1MB), [int]($head / 1MB))
+        }
+        [void]$target.Seek(0, [IO.SeekOrigin]::Begin)
+        $target.Write($mbr, 0, 512)
+        $target.Flush()
+        Write-Host ''
+    } finally {
+        if ($target) { $target.Dispose() }
+        if ($lock) { $lock.Dispose() }
+        $source.Dispose()
+        if ($offline) { Set-Disk -Number $number -IsOffline $false }
+    }
+    Update-Disk -Number $number
+    if ($kept) {
+        $drive = Get-BootDrive $number
+        if ($drive) {
+            foreach ($file in $kept) { Copy-Item -LiteralPath (Join-Path $keep $file) -Destination "$drive\$file" -Force }
+            Remove-Item -Recurse -Force $keep -ErrorAction SilentlyContinue
+        } else {
+            Write-Host ((M 'Warning: cannot put the boot partition''s own files back; copy them from' '警告：无法把启动分区上原有的文件放回去，请自行从这里复制回去：') + " $keep")
+        }
+    }
+}
+
 & {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
@@ -279,22 +418,46 @@ public static class GizletDataGrow {
     $label = $labels[[int]$choice - 1]
     $diskName = "Disk $($disk.Number)"
 
-    # --- confirmation 2: yes, after the warnings
+    # --- update or erase: a card with Gizlet OS can keep its data partition
+    $mode = $env:GIZLET_MODE
+    if (-not $mode) {
+        $mode = 'erase'
+        if ($label -match 'GIZLETBOOT') {
+            Write-Host ''
+            Write-Host (M 'This card already has Gizlet OS. What should be written?' '这张卡上已经有 Gizlet OS。要怎么写？')
+            Write-Host (M '  1) Update the system only, keeping installed programs, saves, Wi-Fi networks and settings' '  1) 只更新系统，保留已安装的程序、存档、Wi-Fi 网络和设置')
+            Write-Host (M '  2) Erase the whole card and start again' '  2) 清空整张卡，重新开始')
+            switch (Read-Host '[1]') {
+                { $_ -in '', '1' } { $mode = 'update' }
+                '2' { $mode = 'erase' }
+                default { throw (M 'Answer 1 or 2.' '请输入 1 或 2。') }
+            }
+        }
+    }
+    if ($mode -notin 'update', 'erase') { throw 'GIZLET_MODE must be update or erase.' }
+
     Write-Host ''
     Write-Host ((M 'Selected:' '已选择：') + " $diskName  $label")
-    if ($disk.Size -gt $large) {
-        Write-Host (M 'WARNING: this disk is over 256 GB. TF cards are rarely this large; it may be an external drive.' '警告：这个磁盘超过 256 GB，TF 卡很少这么大，它可能是移动硬盘。')
-    }
-    if ($label -match 'ROMS') {
-        Write-Host (M 'WARNING: this looks like a stock ArkOS card. Its games will be lost; keep it as a backup if you can.' '警告：这看起来是原厂 ArkOS 卡，上面的游戏会全部丢失。建议保留它作备份，换一张卡。')
-    }
-    Write-Host (M 'ALL DATA on this disk will be ERASED and cannot be recovered.' '这个磁盘上的所有数据都会被清除，无法恢复。')
-    if ((Read-Host (M 'Erase it? [y/N]' '确定清除？[y/N]')) -notin 'y', 'Y', 'yes', 'YES') { throw (M 'Cancelled.' '已取消。') }
+    if ($mode -eq 'update') {
+        # --- confirmation 2 of an update: yes. The card is checked again before writing.
+        Write-Host (M 'Gizlet OS on this card will be updated. Its boot and system partitions are replaced; the data partition, with installed programs, saves, Wi-Fi networks and settings, is kept.' '将更新这张卡上的 Gizlet OS：替换启动分区和系统分区，保留数据分区，包括已安装的程序、存档、Wi-Fi 网络和设置。')
+        if ((Read-Host (M 'Update it? [y/N]' '确定更新？[y/N]')) -notin 'y', 'Y', 'yes', 'YES') { throw (M 'Cancelled.' '已取消。') }
+    } else {
+        # --- confirmation 2: yes, after the warnings
+        if ($disk.Size -gt $large) {
+            Write-Host (M 'WARNING: this disk is over 256 GB. TF cards are rarely this large; it may be an external drive.' '警告：这个磁盘超过 256 GB，TF 卡很少这么大，它可能是移动硬盘。')
+        }
+        if ($label -match 'ROMS') {
+            Write-Host (M 'WARNING: this looks like a stock ArkOS card. Its games will be lost; keep it as a backup if you can.' '警告：这看起来是原厂 ArkOS 卡，上面的游戏会全部丢失。建议保留它作备份，换一张卡。')
+        }
+        Write-Host (M 'ALL DATA on this disk will be ERASED and cannot be recovered.' '这个磁盘上的所有数据都会被清除，无法恢复。')
+        if ((Read-Host (M 'Erase it? [y/N]' '确定清除？[y/N]')) -notin 'y', 'Y', 'yes', 'YES') { throw (M 'Cancelled.' '已取消。') }
 
-    # --- confirmation 3: type the disk's name, as GitHub asks for a repository's name
-    Write-Host ''
-    Write-Host ((M 'To confirm, type the disk name:' '请输入磁盘名称以确认：') + " $diskName")
-    if ((Read-Host '>').Trim() -ne $diskName) { throw (M 'The name does not match; cancelled.' '名称不一致，已取消。') }
+        # --- confirmation 3: type the disk's name, as GitHub asks for a repository's name
+        Write-Host ''
+        Write-Host ((M 'To confirm, type the disk name:' '请输入磁盘名称以确认：') + " $diskName")
+        if ((Read-Host '>').Trim() -ne $diskName) { throw (M 'The name does not match; cancelled.' '名称不一致，已取消。') }
+    }
 
     # --- image
     $work = Join-Path ([IO.Path]::GetTempPath()) ('gizlet-' + [guid]::NewGuid())
@@ -352,63 +515,88 @@ public static class GizletRawDisk {
         if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         return handle;
     }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle device, uint code, IntPtr input, uint inputSize,
+        IntPtr output, uint outputSize, out uint returned, IntPtr overlapped);
+    // Locks and dismounts a volume such as "E:", so the disk's sectors under it
+    // can be written while the handle stays open.
+    public static SafeFileHandle LockVolume(string drive) {
+        SafeFileHandle handle = Open("\\\\.\\" + drive);
+        uint returned;
+        // FSCTL_LOCK_VOLUME, FSCTL_DISMOUNT_VOLUME
+        if (!DeviceIoControl(handle, 0x90018, IntPtr.Zero, 0, IntPtr.Zero, 0, out returned, IntPtr.Zero) ||
+            !DeviceIoControl(handle, 0x90020, IntPtr.Zero, 0, IntPtr.Zero, 0, out returned, IntPtr.Zero)) {
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new System.ComponentModel.Win32Exception(error);
+        }
+        return handle;
+    }
 }
 '@
         }
 
-        # The image is open before anything on the card changes, so a file that
-        # cannot be read leaves the card as it was.
-        $mbr = New-Object byte[] 512
-        $source = [IO.File]::OpenRead($raw)
-        [void]$source.Read($mbr, 0, 512)
-        [void]$source.Seek(0, [IO.SeekOrigin]::Begin)
-        Grow-DataPartition $mbr $disk.Size
-        $grow = Grow-DataFilesystem $mbr $raw
-        $target = $null
-        $offline = $false
-        try {
-            # --- write. Windows blocks writes over a mounted volume, and often will not take a
-            # removable disk offline, so the partition table is cleared first: then no volume
-            # holds the disk. Offline is tried as well where it is supported.
-            Set-Disk -Number $disk.Number -IsReadOnly $false
-            if ($disk.PartitionStyle -ne 'RAW') { Clear-Disk -Number $disk.Number -RemoveData -RemoveOEM -Confirm:$false }
-            try { Set-Disk -Number $disk.Number -IsOffline $true; $offline = $true } catch { }
-            $target = [IO.FileStream]::new([GizletRawDisk]::Open("\\.\PhysicalDrive$($disk.Number)"), [IO.FileAccess]::ReadWrite)
-            $buffer = New-Object byte[] (4MB)
-            $written = 0L
-            Write-Host (M "Writing $diskName, about a minute ..." "正在写入 $diskName，大约一分钟……")
-            while ($true) {
-                # Fill the whole buffer: writes to a disk must be whole sectors.
-                $filled = 0
-                while ($filled -lt $buffer.Length) {
-                    $n = $source.Read($buffer, $filled, $buffer.Length - $filled)
-                    if ($n -le 0) { break }
-                    $filled += $n
+        if ($mode -eq 'update') {
+            Update-Card $raw $disk
+        } else {
+            # The image is open before anything on the card changes, so a file that
+            # cannot be read leaves the card as it was.
+            $mbr = New-Object byte[] 512
+            $source = [IO.File]::OpenRead($raw)
+            [void]$source.Read($mbr, 0, 512)
+            [void]$source.Seek(0, [IO.SeekOrigin]::Begin)
+            Grow-DataPartition $mbr $disk.Size
+            $grow = Grow-DataFilesystem $mbr $raw
+            $target = $null
+            $offline = $false
+            try {
+                # --- write. Windows blocks writes over a mounted volume, and often will not take a
+                # removable disk offline, so the partition table is cleared first: then no volume
+                # holds the disk. Offline is tried as well where it is supported.
+                Set-Disk -Number $disk.Number -IsReadOnly $false
+                if ($disk.PartitionStyle -ne 'RAW') { Clear-Disk -Number $disk.Number -RemoveData -RemoveOEM -Confirm:$false }
+                try { Set-Disk -Number $disk.Number -IsOffline $true; $offline = $true } catch { }
+                $target = [IO.FileStream]::new([GizletRawDisk]::Open("\\.\PhysicalDrive$($disk.Number)"), [IO.FileAccess]::ReadWrite)
+                $buffer = New-Object byte[] (4MB)
+                $written = 0L
+                Write-Host (M "Writing $diskName, about a minute ..." "正在写入 $diskName，大约一分钟……")
+                while ($true) {
+                    # Fill the whole buffer: writes to a disk must be whole sectors.
+                    $filled = 0
+                    while ($filled -lt $buffer.Length) {
+                        $n = $source.Read($buffer, $filled, $buffer.Length - $filled)
+                        if ($n -le 0) { break }
+                        $filled += $n
+                    }
+                    if ($filled -eq 0) { break }
+                    if ($written -eq 0) { [Array]::Copy($mbr, $buffer, 512) }
+                    $length = [int]([math]::Ceiling($filled / 512) * 512)
+                    if ($length -gt $filled) { [Array]::Clear($buffer, $filled, $length - $filled) }
+                    $target.Write($buffer, 0, $length)
+                    $written += $filled
+                    Write-Host -NoNewline ("`r{0} / {1} MB" -f [int]($written / 1MB), [int]($imageBytes / 1MB))
+                    if ($filled -lt $buffer.Length) { break }
                 }
-                if ($filled -eq 0) { break }
-                if ($written -eq 0) { [Array]::Copy($mbr, $buffer, 512) }
-                $length = [int]([math]::Ceiling($filled / 512) * 512)
-                if ($length -gt $filled) { [Array]::Clear($buffer, $filled, $length - $filled) }
-                $target.Write($buffer, 0, $length)
-                $written += $filled
-                Write-Host -NoNewline ("`r{0} / {1} MB" -f [int]($written / 1MB), [int]($imageBytes / 1MB))
-                if ($filled -lt $buffer.Length) { break }
+                foreach ($block in $grow) {
+                    [void]$target.Seek($block.Key, [IO.SeekOrigin]::Begin)
+                    $target.Write($block.Value, 0, $block.Value.Length)
+                }
+                $target.Flush()
+                Write-Host ''
+            } finally {
+                if ($target) { $target.Dispose() }
+                $source.Dispose()
+                if ($offline) { Set-Disk -Number $disk.Number -IsOffline $false }
             }
-            foreach ($block in $grow) {
-                [void]$target.Seek($block.Key, [IO.SeekOrigin]::Begin)
-                $target.Write($block.Value, 0, $block.Value.Length)
-            }
-            $target.Flush()
-            Write-Host ''
-        } finally {
-            if ($target) { $target.Dispose() }
-            $source.Dispose()
-            if ($offline) { Set-Disk -Number $disk.Number -IsOffline $false }
+            Update-Disk -Number $disk.Number
         }
-        Update-Disk -Number $disk.Number
     } finally {
         Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
     }
     Write-Host ''
-    Write-Host (M 'Done. Eject the card, put it in the R36S and switch it on.' '完成。弹出卡，插进 R36S 开机。')
+    if ($mode -eq 'update') {
+        Write-Host (M 'Done: Gizlet OS is updated and the data partition kept. Eject the card, put it in the R36S and switch it on.' '完成：Gizlet OS 已更新，数据分区保留。弹出卡，插进 R36S 开机。')
+    } else {
+        Write-Host (M 'Done. Eject the card, put it in the R36S and switch it on.' '完成。弹出卡，插进 R36S 开机。')
+    }
 }
