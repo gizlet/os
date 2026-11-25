@@ -484,9 +484,11 @@ impl LinuxPower {
 }
 
 impl Power for LinuxPower {
-    /// Sleep when the kernel can suspend to RAM.
+    /// Sleep when the kernel can suspend to RAM and gizlet-power, which does
+    /// it, runs (it needs a backlight).
     fn actions(&self) -> Vec<PowerAction> {
-        let can_sleep = read_trim(Path::new("/sys/power/state")).is_some_and(|s| s.split(' ').any(|w| w == "mem"));
+        let can_sleep = read_trim(Path::new("/sys/power/state")).is_some_and(|s| s.split(' ').any(|w| w == "mem"))
+            && active("gizlet-power");
         let mut actions = if can_sleep { vec![PowerAction::Sleep] } else { Vec::new() };
         actions.extend([PowerAction::Reboot, PowerAction::PowerOff]);
         actions
