@@ -46,8 +46,8 @@ The launcher hands the screen to an app by writing its ID to `/run/gizlet-launch
 
 | Command | Does |
 | --- | --- |
-| `gizlet install FILE.gzl` | Installs or updates an app |
-| `gizlet uninstall ID [--saves]` | Removes it, and its saves with `--saves` |
+| `gizlet install FILE.gzl` | Installs or updates an app; refused while that app runs |
+| `gizlet uninstall ID [--saves]` | Removes it, and its saves with `--saves`; refused while it runs |
 | `gizlet list` | Lists installed apps: ID, version and name |
 | `gizlet run ID [ARGS]` | Runs it here and waits; the screen must be free, as in the recovery shell |
 | `gizlet start ID` | Asks the launcher on the screen to quit and run it, then come back |

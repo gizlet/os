@@ -90,15 +90,21 @@ fn run(library: &Library, id: &str, args: &[String]) -> Result<(), String> {
     let mut cmd = apps::command(library, &app, settings.language.app_code(), settings.swap_ab, args)
         .map_err(|e| format!("cannot prepare {id}: {e}"))?;
     library.record_played(id);
+    // Held until the app exits, so `gizlet install` and `uninstall` wait for it.
+    let running = library.hold_running(id).map_err(|e| format!("cannot mark {id} running: {e}"))?;
     #[cfg(unix)]
     {
+        use std::os::unix::io::AsRawFd;
         use std::os::unix::process::CommandExt;
+        // The app inherits the lock across exec.
+        unsafe { libc::fcntl(running.as_raw_fd(), libc::F_SETFD, 0) };
         let e = cmd.exec();
         Err(format!("cannot start {}: {e}", app.entry().display()))
     }
     #[cfg(not(unix))]
     {
         let status = cmd.status().map_err(|e| format!("cannot start {}: {e}", app.entry().display()))?;
+        drop(running);
         std::process::exit(status.code().unwrap_or(1));
     }
 }

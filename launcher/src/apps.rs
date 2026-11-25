@@ -364,6 +364,30 @@ impl Library {
         }
     }
 
+    /// Held shared by every run of `id` and inherited by the app's process,
+    /// so it stays held until the app and its children exit.
+    pub fn hold_running(&self, id: &str) -> io::Result<File> {
+        let file = File::options().create(true).truncate(false).write(true).open(self.running_path(id))?;
+        file.lock_shared()?;
+        Ok(file)
+    }
+
+    fn running_path(&self, id: &str) -> PathBuf {
+        self.apps_dir().join(format!(".running-{id}"))
+    }
+
+    /// Excludes runs of `id` until dropped, or says it is running: an update
+    /// or removal must not change files a running app still reads.
+    fn not_running(&self, id: &str) -> Result<File, String> {
+        let path = self.running_path(id);
+        let file = File::options().create(true).truncate(false).write(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        match file.try_lock() {
+            Ok(()) => Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) => Err(format!("{id} is running; quit it first")),
+            Err(std::fs::TryLockError::Error(e)) => Err(format!("{}: {e}", path.display())),
+        }
+    }
+
     fn install_staged(&self, package: &Path, staging: &Path) -> Result<App, String> {
         let manifest = unpack(package, staging)?;
         let (device, tier) = (device_target(), device_tier());
@@ -373,6 +397,7 @@ impl Library {
         if manifest.tier == "full" && tier != "full" {
             return Err(format!("{} needs a full-tier device; this one is {tier}", manifest.id));
         }
+        let _not_running = self.not_running(&manifest.id)?;
         let dest = self.apps_dir().join(&manifest.id);
         // A fixed name, so the next scan or install restores it if this one is cut short.
         let old = self.backup(&manifest.id);
@@ -398,9 +423,12 @@ impl Library {
         let _lock = self.lock(true);
         self.recover();
         let app = self.find(id)?;
+        let not_running = self.not_running(id)?;
         let trash = self.apps_dir().join(format!(".remove-{}-{}", id, std::process::id()));
         fs::rename(&app.dir, &trash).map_err(|e| format!("{}: {e}", app.dir.display()))?;
         fs::remove_dir_all(&trash).map_err(|e| format!("{}: {e}", trash.display()))?;
+        let _ = fs::remove_file(self.running_path(id));
+        drop(not_running);
         if saves {
             let dir = self.saves(id);
             if dir.exists() {
@@ -967,6 +995,24 @@ mod tests {
         f.write_all(&eocd).unwrap();
         drop(f);
         assert!(lib.install(&path).unwrap_err().contains("larger than 16 MiB"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn running_apps_are_not_replaced() {
+        let dir = temp("running");
+        let lib = Library::new(dir.join("prefix"));
+        let pkg = package(&dir, &manifest("dev.example.hello", &device_target()), &[]);
+        let app = lib.install(&pkg).unwrap();
+        let running = lib.hold_running("dev.example.hello").unwrap();
+        assert!(lib.install(&pkg).unwrap_err().contains("is running"));
+        assert!(lib.remove("dev.example.hello", false).unwrap_err().contains("is running"));
+        assert!(app.entry().is_file(), "the running copy stays in place");
+        assert_eq!(leftovers(&lib), 0);
+        drop(running);
+        lib.install(&pkg).unwrap();
+        lib.remove("dev.example.hello", false).unwrap();
+        assert!(!lib.running_path("dev.example.hello").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

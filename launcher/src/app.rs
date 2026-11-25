@@ -319,7 +319,10 @@ impl App {
         let result = if cfg!(feature = "gizlet-os") {
             crate::cli::request_launch(&id).map(|()| self.leave = true)
         } else {
-            std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(["run", &id]).spawn()).map(drop)
+            // A thread waits for the app, so it leaves no zombie when it exits.
+            std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(["run", &id]).spawn()).map(|mut child| {
+                std::thread::spawn(move || child.wait());
+            })
         };
         match result {
             Ok(()) => self.toast(T::Starting.fmt(self.lang(), &[&name])),
