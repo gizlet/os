@@ -281,7 +281,8 @@ def check_apps(console):
     console.expect(b"\r\nremoved dev.gizlet.test-hello; its saves stay")
     console.expect(b"\r\nkept\r\n")
     console.expect(PROMPT)
-    console.enter("gizlet list | wc -l; ls -A /opt/gizlet/apps | wc -l")
+    console.enter("gizlet list | wc -l; ls -A /opt/gizlet/apps | grep -vx .lock | wc -l")
+    # Nothing is left but the apps lock: no staging, removal or backup folders.
     console.expect(b"\r\n0\r\n0\r\n")
     console.expect(PROMPT)
     print("gizlet installs, lists, runs and removes a .gzl app and refuses one that fails its checksums")

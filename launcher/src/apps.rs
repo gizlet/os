@@ -256,7 +256,11 @@ impl Library {
     /// Installed apps, most recently played first, then most recently installed.
     /// Folders without a valid manifest are skipped.
     pub fn scan(&self) -> Vec<App> {
-        self.recover();
+        // The launcher scans while `gizlet install` may be running: it never
+        // waits for the lock, and recovers only when nothing else holds it.
+        if let Some(_lock) = self.lock(false) {
+            self.recover();
+        }
         let played = self.played();
         let mut apps: Vec<App> = fs::read_dir(self.apps_dir())
             .into_iter()
@@ -285,10 +289,17 @@ impl Library {
     }
 
     pub fn get(&self, id: &str) -> Result<App, String> {
+        if let Some(_lock) = self.lock(true) {
+            self.recover();
+        }
+        self.find(id)
+    }
+
+    /// The installed app `id`, without recovery or the lock.
+    fn find(&self, id: &str) -> Result<App, String> {
         if !is_valid_id(id) {
             return Err(format!("{id:?} is not an app ID"));
         }
-        self.recover();
         let dir = self.apps_dir().join(id);
         if !dir.is_dir() {
             return Err(format!("{id} is not installed"));
@@ -301,6 +312,8 @@ impl Library {
     pub fn install(&self, package: &Path) -> Result<App, String> {
         let apps = self.apps_dir();
         fs::create_dir_all(&apps).map_err(|e| format!("{}: {e}", apps.display()))?;
+        let _lock = self.lock(true).ok_or_else(|| format!("cannot lock {}", apps.display()))?;
+        self.recover();
         let staging = apps.join(format!(".install-{}", std::process::id()));
         let _ = fs::remove_dir_all(&staging);
         let result = self.install_staged(package, &staging);
@@ -315,13 +328,36 @@ impl Library {
         self.apps_dir().join(format!(".old-{id}"))
     }
 
-    /// Finishes updates cut short by a crash or power loss: a backup whose
-    /// app folder is missing goes back in place, one beside a complete
-    /// update is deleted.
+    /// Holds `<prefix>/apps/.lock` until dropped: installs, removals and
+    /// recovery each take it, so none sees another half done. Without
+    /// `wait`, `None` when another process holds it.
+    fn lock(&self, wait: bool) -> Option<Lock> {
+        let file = File::options().create(true).truncate(false).write(true).open(self.apps_dir().join(".lock")).ok()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let op = libc::LOCK_EX | if wait { 0 } else { libc::LOCK_NB };
+            while unsafe { libc::flock(file.as_raw_fd(), op) } != 0 {
+                if !wait || io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+                    return None;
+                }
+            }
+        }
+        Some(Lock(file))
+    }
+
+    /// Finishes what a crash or power loss cut short, with the lock held: a
+    /// backup whose app folder is missing goes back in place, one beside a
+    /// complete update is deleted, and staging and removal folders, which
+    /// only a lock holder uses, are deleted.
     fn recover(&self) {
         let Ok(entries) = fs::read_dir(self.apps_dir()) else { return };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with(".install-") || name.starts_with(".remove-") {
+                let _ = fs::remove_dir_all(e.path());
+                continue;
+            }
             let Some(id) = name.strip_prefix(".old-").filter(|id| is_valid_id(id)) else { continue };
             let dest = self.apps_dir().join(id);
             if dest.exists() {
@@ -341,7 +377,6 @@ impl Library {
         if manifest.tier == "full" && tier != "full" {
             return Err(format!("{} needs a full-tier device; this one is {tier}", manifest.id));
         }
-        self.recover();
         let dest = self.apps_dir().join(&manifest.id);
         // A fixed name, so the next scan or install restores it if this one is cut short.
         let old = self.backup(&manifest.id);
@@ -364,7 +399,9 @@ impl Library {
 
     /// Removes the app; its saves only with `saves`.
     pub fn remove(&self, id: &str, saves: bool) -> Result<(), String> {
-        let app = self.get(id)?;
+        let _lock = self.lock(true);
+        self.recover();
+        let app = self.find(id)?;
         let trash = self.apps_dir().join(format!(".remove-{}-{}", id, std::process::id()));
         fs::rename(&app.dir, &trash).map_err(|e| format!("{}: {e}", app.dir.display()))?;
         fs::remove_dir_all(&trash).map_err(|e| format!("{}: {e}", trash.display()))?;
@@ -418,6 +455,9 @@ fn sync() {
         libc::sync();
     }
 }
+
+/// The apps lock; released when dropped.
+struct Lock(#[allow(dead_code)] File);
 
 struct Entry {
     name: String,
@@ -814,7 +854,7 @@ mod tests {
         lib.install(&pkg).unwrap();
         let apps = lib.scan();
         assert_eq!(apps.len(), 1);
-        assert!(fs::read_dir(lib.apps_dir()).unwrap().count() == 1, "no staging folders are left");
+        assert_eq!(leftovers(&lib), 0, "no staging folders are left");
         lib.remove("dev.example.hello", false).unwrap();
         assert!(lib.scan().is_empty());
         assert!(lib.saves("dev.example.hello").is_dir());
@@ -845,7 +885,32 @@ mod tests {
         fs::write(&path, zip(&[("manifest.toml", m.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755), ("CHECKSUMS", sums.as_bytes(), 0o100644)])).unwrap();
         assert!(lib.install(&path).unwrap_err().contains("checksum"));
         assert!(lib.scan().is_empty());
-        assert_eq!(fs::read_dir(lib.apps_dir()).unwrap().count(), 0, "failed installs leave nothing behind");
+        assert_eq!(leftovers(&lib), 0, "failed installs leave nothing behind");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Hidden folders under apps/: staging, removals and backups.
+    fn leftovers(lib: &Library) -> usize {
+        fs::read_dir(lib.apps_dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with('.') && e.path().is_dir()).count()
+    }
+
+    #[test]
+    fn recovery_waits_for_the_lock() {
+        let dir = temp("lock");
+        let lib = Library::new(dir.join("prefix"));
+        let pkg = package(&dir, &manifest("dev.example.hello", &device_target()), &[]);
+        lib.install(&pkg).unwrap();
+        // An update between its two renames, in another process: the launcher's scan must not undo it.
+        let held = lib.lock(true).unwrap();
+        fs::rename(lib.apps_dir().join("dev.example.hello"), lib.backup("dev.example.hello")).unwrap();
+        fs::create_dir_all(lib.apps_dir().join(".install-1")).unwrap();
+        assert!(lib.scan().is_empty());
+        assert!(lib.backup("dev.example.hello").exists() && lib.apps_dir().join(".install-1").exists());
+        drop(held);
+        // Once it is gone, what it left is recovered or reclaimed.
+        fs::create_dir_all(lib.apps_dir().join(".remove-dev.example.hello-1")).unwrap();
+        assert_eq!(lib.scan().len(), 1);
+        assert_eq!(leftovers(&lib), 0);
         let _ = fs::remove_dir_all(&dir);
     }
 
