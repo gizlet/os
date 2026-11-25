@@ -175,16 +175,16 @@ impl Power {
         }
     }
 
+    /// `screen_off`, the key before `sleep_after`, is read when that is absent.
     pub fn load(path: PathBuf) -> Power {
-        let sleep_after = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| {
-                t.lines().find_map(|l| {
-                    let (k, v) = l.split_once('=')?;
-                    (k.trim() == "sleep_after").then(|| v.trim().parse().ok()).flatten()
-                })
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let value = |key: &str| {
+            text.lines().find_map(|l| {
+                let (k, v) = l.split_once('=')?;
+                (k.trim() == key).then(|| v.trim().parse().ok()).flatten()
             })
-            .unwrap_or(Power::DEFAULT);
+        };
+        let sleep_after = value("sleep_after").or_else(|| value("screen_off")).unwrap_or(Power::DEFAULT);
         Power { path, sleep_after }
     }
 
@@ -248,7 +248,11 @@ mod tests {
         p.cycle(-1);
         assert_eq!(p.sleep_after, 0);
         p.save().unwrap();
-        assert_eq!(Power::load(path).sleep_after, 0);
+        assert_eq!(Power::load(path.clone()).sleep_after, 0);
+        std::fs::write(&path, "screen_off = 0\n").unwrap();
+        assert_eq!(Power::load(path.clone()).sleep_after, 0, "the old key still counts");
+        std::fs::write(&path, "screen_off = 0\nsleep_after = 600\n").unwrap();
+        assert_eq!(Power::load(path).sleep_after, 600, "the new key wins");
         let _ = std::fs::remove_dir_all(dir);
     }
 

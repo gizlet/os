@@ -8,9 +8,11 @@
  * 300 when unset) the device sleeps; 15 s before that the screen dims, and
  * any input brings the brightness back.
  *
- * - Sleep waits until every button is up. The backlight turns off and the
- *   input devices are grabbed, so the press that wakes the device reaches no
- *   app; the grab is released a second after waking, once every button is up.
+ * - Sleep waits until every control is released (buttons up, sticks back at
+ *   rest), so no app is left seeing one held. The backlight turns off and
+ *   the input devices are grabbed, so the press that wakes the device reaches
+ *   no app; the grab is released a second after waking, once every button is
+ *   up.
  * - When the kernel cannot sleep, the screen stays off instead, and a button
  *   press turns it on again. Sticks do not wake it.
  *
@@ -41,8 +43,11 @@
 /* After waking, input is ignored this long: the power key's own press and
  * release arrive as the device resumes. */
 #define SETTLE_MS 1000
-/* How often a pending sleep checks whether every button is up. */
+/* How often a pending sleep checks whether the controls are released, and how
+ * long it waits for that: a stick whose rest was guessed wrong must not keep
+ * the device awake. */
 #define PENDING_MS 50
+#define PENDING_LIMIT_MS 10000
 #define BITS(n) (((n) + 7) / 8)
 
 struct device {
@@ -112,7 +117,8 @@ static int find_backlight(void) {
     return found;
 }
 
-/* sleep_after from CONFIG; reread only when the file changes. */
+/* sleep_after from CONFIG, or screen_off, its earlier name, without it;
+ * reread only when the file changes. */
 static int sleep_after_seconds(const char *config) {
     static struct timespec seen = {-1, 0};
     static int seconds = DEFAULT_SLEEP_AFTER;
@@ -128,11 +134,18 @@ static int sleep_after_seconds(const char *config) {
     FILE *f = fopen(config, "re");
     if (!f) return seconds;
     char line[128];
+    int found = 0, old = -1;
     while (fgets(line, sizeof line, f)) {
         int v;
-        if (sscanf(line, " sleep_after = %d", &v) == 1 && v >= 0) seconds = v;
+        if (sscanf(line, " sleep_after = %d", &v) == 1 && v >= 0) {
+            seconds = v;
+            found = 1;
+        }
+        /* The key before sleep_after, read when that is absent. */
+        if (sscanf(line, " screen_off = %d", &v) == 1 && v >= 0) old = v;
     }
     fclose(f);
+    if (!found && old >= 0) seconds = old;
     printf("gizlet-power: sleep after %s%d s\n", seconds ? "" : "never, ", seconds);
     fflush(stdout);
     return seconds;
@@ -291,8 +304,10 @@ int main(int argc, char **argv) {
     sigaction(SIGUSR1, &sa, NULL);
 
     long long last_use = now_ms(), last_event = last_use, last_scan = 0, settle_until = 0;
-    /* A sleep asked for by the power key or SIGUSR1, once every button is up. */
+    /* A sleep asked for by the power key or SIGUSR1, once the controls are
+     * released (or after PENDING_LIMIT_MS). */
     int pending = 0;
+    long long pending_since = 0;
     while (!stopping) {
         long long t = now_ms();
         if (t - last_scan >= RESCAN_MS) {
@@ -302,6 +317,7 @@ int main(int argc, char **argv) {
         int seconds = sleep_after_seconds(config);
         if (sleep_requested) {
             sleep_requested = 0;
+            if (!pending) pending_since = t;
             pending = 1;
         }
         if (screen == SCREEN_OFF) pending = 0;
@@ -311,7 +327,7 @@ int main(int argc, char **argv) {
         int held = seconds && screen != SCREEN_OFF && t >= dim_at && idle_held_counts(t, last_event) && controls_held();
         /* Off, after a failed sleep, waits for a press. */
         enum screen_state next = screen == SCREEN_OFF ? SCREEN_OFF : idle_next(screen, t, &last_use, seconds, DIM_SECONDS, held);
-        if ((next == SCREEN_OFF && screen != SCREEN_OFF) || (pending && !any_key_down())) {
+        if ((next == SCREEN_OFF && screen != SCREEN_OFF) || (pending && (t - pending_since >= PENDING_LIMIT_MS || !controls_held()))) {
             pending = 0;
             if (suspend()) {
                 last_use = last_event = now_ms();
@@ -363,7 +379,10 @@ int main(int argc, char **argv) {
                 last_use = last_event = t;
                 set_screen(SCREEN_ON);
             }
-            if (power) pending = 1;
+            if (power && !pending) {
+                pending = 1;
+                pending_since = t;
+            }
         }
         /* The press that woke the device stays with us until it is let go. */
         if (grabbed && screen != SCREEN_OFF && t >= settle_until && !any_key_down()) grab(0);
