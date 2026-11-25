@@ -11,8 +11,16 @@ pub struct Now {
 }
 
 #[cfg(unix)]
+extern "C" {
+    fn tzset();
+}
+
+#[cfg(unix)]
 pub fn now() -> Now {
     unsafe {
+        // localtime_r keeps the zone it first read; tzset reads /etc/localtime
+        // again when its file changed, as when the time zone is set.
+        tzset();
         let t = libc::time(std::ptr::null_mut());
         let mut tm: libc::tm = std::mem::zeroed();
         if libc::localtime_r(&t, &mut tm).is_null() {

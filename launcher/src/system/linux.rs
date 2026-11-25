@@ -1,9 +1,10 @@
 //! Linux devices through kernel interfaces and standard tools: sysfs for the
 //! battery and backlight, ALSA's `amixer` for volume, iwd's `iwctl` for
-//! Wi-Fi and systemd for ssh and power.
+//! Wi-Fi and systemd for ssh, network time and power.
 //!
-//! On Gizlet OS, Wi-Fi and ssh are switched with `gizlet-switch`, which keeps
-//! the choice on the data partition so the service starts again at boot.
+//! On Gizlet OS, Wi-Fi and ssh are switched and the time zone is set with
+//! `gizlet-switch`, which keeps the choice on the data partition so it holds
+//! again after a reboot.
 
 use super::util::{columns, on_path, run, run_for, strip_ansi};
 use super::*;
@@ -20,6 +21,7 @@ pub fn devices() -> Devices {
         volume: Amixer::detect().map(|v| Box::new(v) as Box<dyn Level>),
         wifi: Iwd::detect().map(|w| Box::new(w) as Box<dyn Wifi>),
         ssh: Sshd::detect().map(|s| Box::new(s) as Box<dyn Ssh>),
+        clock: GizletClock::detect().map(|c| Box::new(c) as Box<dyn Clock>),
         power: LinuxPower::detect().map(|p| Box::new(p) as Box<dyn Power>),
         simulated: false,
     }
@@ -443,6 +445,32 @@ impl Ssh for Sshd {
 
     fn set_password(&mut self, password: &str) -> Result<(), String> {
         run(SWITCH, &["ssh-password", password]).map(|_| ())
+    }
+}
+
+/// The time zone through `gizlet-switch`; elsewhere the system sets it.
+struct GizletClock;
+
+/// systemd-timesyncd creates this once it has set the clock from the network.
+const TIME_SYNCED: &str = "/run/systemd/timesync/synchronized";
+
+impl GizletClock {
+    fn detect() -> Result<GizletClock, Missing> {
+        if !Path::new(SWITCH).exists() {
+            return Err(Missing::ManagedBySystem);
+        }
+        Ok(GizletClock)
+    }
+}
+
+impl Clock for GizletClock {
+    fn state(&mut self) -> Result<ClockState, String> {
+        let zone = run(SWITCH, &["timezone"])?.trim().to_string();
+        Ok(ClockState { zone, synced: Path::new(TIME_SYNCED).exists() })
+    }
+
+    fn set_zone(&mut self, zone: &str) -> Result<(), String> {
+        run(SWITCH, &["timezone", zone]).map(|_| ())
     }
 }
 

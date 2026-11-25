@@ -41,6 +41,7 @@ fn category_icon(p: &Painter, cat: Category, cx: f32, cy: f32, s: f32, c: Color,
         Category::Battery => icons::battery(p, cx - s * 0.42, cy, s * 0.42, 70, false, c, c),
         Category::Controls => icons::gamepad(p, cx, cy, s * 1.1, c, hole),
         Category::Language => icons::globe(p, cx, cy, s, c),
+        Category::Time => icons::clock(p, cx, cy, s, c),
         Category::System => icons::chip(p, cx, cy, s, c, hole),
     }
 }
@@ -57,18 +58,20 @@ pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     chrome::status(p, app);
 
     let list_top = TOP_H + 14.0;
-    let target_y = list_top + focus.category as f32 * CAT_H;
+    // Every category fits above the hints, closer together on a short screen.
+    let cat_h = CAT_H.min((p.h - BOTTOM_H - 6.0 - list_top) / Category::ALL.len() as f32);
+    let target_y = list_top + focus.category as f32 * cat_h;
     ui.sidebar_y = if ui.sidebar_y == 0.0 { target_y } else { approach(ui.sidebar_y, target_y, 22.0, dt) };
     let hl_x = MARGIN * 0.5;
     let hl_w = SIDEBAR_W - MARGIN * 0.5 - 18.0;
     if in_content {
-        p.rect(hl_x, ui.sidebar_y + 4.0, hl_w, CAT_H - 8.0, 12.0, alpha(pal.surface_hi, 0.6));
+        p.rect(hl_x, ui.sidebar_y + 4.0, hl_w, cat_h - 8.0, 12.0, alpha(pal.surface_hi, 0.6));
     } else {
-        p.rect(hl_x, ui.sidebar_y + 4.0, hl_w, CAT_H - 8.0, 12.0, pal.surface_hi);
-        p.rect(hl_x + 8.0, ui.sidebar_y + 18.0, 5.0, CAT_H - 36.0, 2.5, focus_color(p));
+        p.rect(hl_x, ui.sidebar_y + 4.0, hl_w, cat_h - 8.0, 12.0, pal.surface_hi);
+        p.rect(hl_x + 8.0, ui.sidebar_y + 18.0, 5.0, cat_h - 36.0, 2.5, focus_color(p));
     }
     for (i, cat) in Category::ALL.iter().enumerate() {
-        let cy = list_top + i as f32 * CAT_H + CAT_H / 2.0;
+        let cy = list_top + i as f32 * cat_h + cat_h / 2.0;
         let selected = i == focus.category;
         let c = match (selected, in_content) {
             (true, true) => pal.accent,

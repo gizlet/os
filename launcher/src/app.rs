@@ -1,10 +1,12 @@
 //! The launcher's state and what each control does. Pages in `ui` only draw it.
 
+use crate::clock;
 use crate::i18n::{human_size, T};
 use crate::input::{Action, Input, TextEvent};
 use crate::keyboard::{self, Keyboard};
 use crate::settings::{Language, Power, Settings, Theme};
 use crate::system::{Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
+use crate::zones::{Zone, ZONES};
 use std::path::PathBuf;
 
 pub const TOAST_SECONDS: f32 = 2.8;
@@ -57,11 +59,12 @@ pub enum Category {
     Battery,
     Controls,
     Language,
+    Time,
     System,
 }
 
 impl Category {
-    pub const ALL: [Category; 8] = [
+    pub const ALL: [Category; 9] = [
         Category::Network,
         Category::Ssh,
         Category::Display,
@@ -69,6 +72,7 @@ impl Category {
         Category::Battery,
         Category::Controls,
         Category::Language,
+        Category::Time,
         Category::System,
     ];
 
@@ -81,6 +85,7 @@ impl Category {
             Category::Battery => T::CatBattery,
             Category::Controls => T::CatControls,
             Category::Language => T::CatLanguage,
+            Category::Time => T::CatTime,
             Category::System => T::CatSystem,
         }
     }
@@ -104,6 +109,7 @@ pub enum ItemId {
     SwapAb,
     Language(Language),
     Clock24,
+    TimeZone(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -205,6 +211,8 @@ pub struct App {
     system: System,
     pub wifi: WifiUi,
     pub ssh_switching: Option<bool>,
+    /// The time zone being set, until the device reports it.
+    pub zone_switching: Option<String>,
     pub dialog: Option<Dialog>,
     pub keyboard: Option<Keyboard>,
     pub toasts: Vec<Toast>,
@@ -230,6 +238,7 @@ impl App {
             snapshot: None,
             wifi: WifiUi::default(),
             ssh_switching: None,
+            zone_switching: None,
             dialog: None,
             keyboard: None,
             toasts: Vec::new(),
@@ -340,6 +349,11 @@ impl App {
                         self.ssh_switching = None;
                     }
                 }
+                if let Ok(c) = &s.clock {
+                    if self.zone_switching.as_ref() == Some(&c.zone) {
+                        self.zone_switching = None;
+                    }
+                }
                 self.snapshot = Some(*s);
             }
             Event::WifiNetworks(result) => {
@@ -368,6 +382,7 @@ impl App {
             Event::Failed(e) => {
                 self.wifi.switching = None;
                 self.ssh_switching = None;
+                self.zone_switching = None;
                 self.toast(T::Failed.fmt(l, &[&e]));
             }
         }
@@ -613,6 +628,12 @@ impl App {
                 self.settings.clock_24h = !self.settings.clock_24h;
                 self.save();
             }
+            ItemId::TimeZone(zone) => {
+                if item.value != ItemValue::Radio(true) {
+                    self.zone_switching = Some(zone.clone());
+                    self.system.send(Request::TimeZone(zone.clone()));
+                }
+            }
             ItemId::Brightness | ItemId::Volume | ItemId::None => {}
         }
     }
@@ -837,8 +858,31 @@ impl App {
                     items.push(Item::new(ItemId::Language(lang), label, ItemValue::Radio(self.settings.language == lang)));
                 }
             }
-            Category::System => {
+            Category::Time => {
+                let now = clock::now();
+                items.push(Item::info(t(T::TimeNow), format!("{}  {}", now.date(l == Language::ZhCn), now.time(self.settings.clock_24h))));
+                if let Ok(c) = &snap.clock {
+                    items.push(Item::info(t(T::NetworkTime), if c.synced { t(T::TimeSynced) } else { t(T::TimeNotSynced) }));
+                }
                 items.push(Item::new(ItemId::Clock24, t(T::Clock24), ItemValue::Toggle(self.settings.clock_24h)));
+                items.push(Item::section(t(T::TimeZone)));
+                match &snap.clock {
+                    Ok(c) => {
+                        let current = self.zone_switching.as_ref().unwrap_or(&c.zone);
+                        let listed = Zone::find(current);
+                        // A zone set another way, such as over ssh, is shown by its name.
+                        if listed.is_none() {
+                            items.push(Item::new(ItemId::TimeZone(current.clone()), current.clone(), ItemValue::Radio(true)));
+                        }
+                        for z in ZONES {
+                            let selected = listed.is_some_and(|f| f.name == z.name);
+                            items.push(Item::new(ItemId::TimeZone(z.name.into()), z.label(l), ItemValue::Radio(selected)));
+                        }
+                    }
+                    Err(m) => items.push(self.missing(m, T::TimeZone, None)),
+                }
+            }
+            Category::System => {
                 items.push(Item::section(t(T::About)));
                 items.push(Item::info(t(T::Version), self.version));
                 let unknown = || t(T::Unknown);

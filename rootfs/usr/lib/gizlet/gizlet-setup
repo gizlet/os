@@ -7,11 +7,13 @@
 #   wifi_passphrase=its passphrase (8 to 63 characters; leave out for an open network)
 #   ssh=on
 #   ssh_password=root's password for ssh
+#   timezone=Asia/Shanghai (a name under /usr/share/zoneinfo; UTC until set)
 #
 # The network is saved for iwd to join on its own, Wi-Fi and ssh are switched
-# on and the password is set with gizlet-switch, as the launcher does. The
-# file is then renamed setup.ini.done without the passphrase and password, so
-# later changes in the launcher stay; a new setup.ini is imported again.
+# on and the password and time zone are set with gizlet-switch, as the
+# launcher does. The file is then renamed setup.ini.done without the
+# passphrase and password, so later changes in the launcher stay; a new
+# setup.ini is imported again.
 set -u
 say() { echo "Gizlet OS: $*"; echo "gizlet-setup: $*" >> /run/gizlet-boot.log; }
 switch=/usr/lib/gizlet/gizlet-switch
@@ -64,6 +66,10 @@ fi
 password=$(value ssh_password)
 if [ -n "$password" ]; then
     "$switch" ssh-password "$password" && say 'ssh password set'
+fi
+zone=$(value timezone)
+if [ -n "$zone" ]; then
+    "$switch" timezone "$zone" && say "time zone set to $zone"
 fi
 case "$(value ssh)" in
     on) mkdir -p /run/gizlet-data/system/switches && : > /run/gizlet-data/system/switches/ssh && say 'ssh turned on' ;;

@@ -26,6 +26,7 @@ mod settings;
 mod system;
 mod theme;
 mod ui;
+mod zones;
 
 use raylib_sys::{self as ffi, ConfigFlags as F};
 use std::ffi::CString;
@@ -75,6 +76,7 @@ fn probe() {
     show("volume", format!("{:?}", s.volume));
     show("wifi", format!("{:?}", s.wifi));
     show("ssh", format!("{:?}", s.ssh));
+    show("clock", format!("{:?}", s.clock));
     show("power", format!("{:?}", s.power));
     show("ip", format!("{:?}", s.ip));
     show("model", format!("{:?}", s.info.model));
@@ -94,9 +96,10 @@ fn window_size() -> (i32, i32) {
 }
 
 /// Every interface string in the current language, so the first frames need no atlas rebuild.
-fn seed(app: &app::App) -> Vec<&'static str> {
-    let mut seed: Vec<&'static str> = i18n::T::ALL.iter().map(|t| t.get(app.lang())).collect();
-    seed.push("0123456789:%+-·×←→•一二三四五六日月星期简体中文");
+fn seed(app: &app::App) -> Vec<String> {
+    let mut seed: Vec<String> = i18n::T::ALL.iter().map(|t| t.get(app.lang()).to_string()).collect();
+    seed.push("0123456789:%+-·×←→•一二三四五六日月星期简体中文".into());
+    seed.extend(zones::ZONES.iter().map(|z| z.label(app.lang())));
     seed
 }
 
@@ -129,7 +132,7 @@ fn run() {
         }
     }
 
-    let mut painter = painter::Painter::new(fonts::Fonts::new(seed(&app)), theme::palette(app.settings.theme));
+    let mut painter = painter::Painter::new(fonts::Fonts::new(seed(&app).iter().map(String::as_str)), theme::palette(app.settings.theme));
     let mut ui = ui::Ui::default();
     let mut controls = input::Controls::default();
     let mut script = script::Script::from_env();

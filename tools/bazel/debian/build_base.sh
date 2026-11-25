@@ -1,10 +1,10 @@
 #!/bin/sh
 # Runs in the build VM: install the locked Debian packages from /in/debs with
-# mmdebstrap, add the files under /in/files and /in/executables, enable, disable and
-# mask units, and write a read-only SquashFS to /out.
-# Usage: build_base.sh OUTPUT SUITE "DIRECTORIES" "ENABLE UNITS" "DISABLE UNITS" "MASK UNITS"
+# mmdebstrap, add the files under /in/files and /in/executables and the symbolic
+# links, enable, disable and mask units, and write a read-only SquashFS to /out.
+# Usage: build_base.sh OUTPUT SUITE "DIRECTORIES" "ENABLE UNITS" "DISABLE UNITS" "MASK UNITS" "PATH:TARGET ..."
 set -eu
-out=$1 suite=$2 directories=$3 enable=$4 disable=$5 mask=$6
+out=$1 suite=$2 directories=$3 enable=$4 disable=$5 mask=$6 symlinks=$7
 root=/tmp/root
 repo=/tmp/repo
 
@@ -32,6 +32,12 @@ install_tree() {
 for directory in $directories; do mkdir -p "$root/$directory"; done
 install_tree /in/files 0644
 install_tree /in/executables 0755
+for link in $symlinks; do
+    path=${link%%:*} target=${link#*:}
+    mkdir -p "$root/$(dirname "$path")"
+    rm -f "$root/$path"
+    ln -s "$target" "$root/$path"
+done
 
 [ -z "$enable" ] || chroot "$root" systemctl enable $enable
 [ -z "$disable" ] || chroot "$root" systemctl disable $disable

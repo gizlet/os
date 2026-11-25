@@ -10,6 +10,7 @@ pub fn devices() -> Devices {
         volume: Err(Missing::ManagedBySystem),
         wifi: Err(Missing::ManagedBySystem),
         ssh: Err(Missing::ManagedBySystem),
+        clock: Err(Missing::ManagedBySystem),
         power: None,
         simulated: false,
     }

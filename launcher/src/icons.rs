@@ -185,6 +185,14 @@ pub fn globe(p: &Painter, cx: f32, cy: f32, s: f32, c: Color) {
     p.ring(cx, cy, r * 0.42 - t, r * 0.42, 0.0, 360.0, c);
 }
 
+pub fn clock(p: &Painter, cx: f32, cy: f32, s: f32, c: Color) {
+    let r = s * 0.4;
+    let t = s * 0.08;
+    p.ring(cx, cy, r - t, r, 0.0, 360.0, c);
+    p.line(cx, cy, cx, cy - r * 0.6, t, c);
+    p.line(cx, cy, cx + r * 0.45, cy + r * 0.2, t, c);
+}
+
 pub fn chip(p: &Painter, cx: f32, cy: f32, s: f32, c: Color, hole: Color) {
     let w = s * 0.56;
     for i in 0..3 {

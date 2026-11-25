@@ -1,5 +1,5 @@
 load("//boards/gameconsole/r36s:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_PANELS", "R36S_UBOOT_DTB_NAMES")
-load("//rootfs:rootfs.bzl", "ROOTFS_DEBS", "ROOTFS_DIRECTORIES", "ROOTFS_DISABLE", "ROOTFS_ENABLE", "ROOTFS_EXECUTABLES", "ROOTFS_FILES", "ROOTFS_LICENSES", "ROOTFS_MASK", "ROOTFS_SUITE")
+load("//rootfs:rootfs.bzl", "ROOTFS_DEBS", "ROOTFS_DIRECTORIES", "ROOTFS_DISABLE", "ROOTFS_ENABLE", "ROOTFS_EXECUTABLES", "ROOTFS_FILES", "ROOTFS_LICENSES", "ROOTFS_MASK", "ROOTFS_SUITE", "ROOTFS_SYMLINKS")
 load("//tools/bazel/debian:defs.bzl", "debian_base")
 load("//tests:defs.bzl", "gizlet_qemu_test", "gizlet_rootfs_test", "rockchip_card_test")
 load("//tools/bazel/rockchip:defs.bzl", "rockchip_sd_image")
@@ -33,6 +33,7 @@ debian_base(
     mask = ROOTFS_MASK,
     source_date_epoch = _EPOCH,
     suite = ROOTFS_SUITE,
+    symlinks = ROOTFS_SYMLINKS,
     target_compatible_with = _R36S,
 )
 

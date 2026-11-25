@@ -11,6 +11,7 @@ pub fn devices() -> Devices {
         volume: Ok(Box::new(FakeLevel(0.45))),
         wifi: Ok(Box::new(FakeWifi { on: true, connected: Some("Gizlet Lab".into()), known: vec!["Gizlet Lab".into()] })),
         ssh: Ok(Box::new(FakeSsh { on: false, password: None })),
+        clock: Ok(Box::new(FakeClock { zone: "Asia/Shanghai".into() })),
         power: Some(Box::new(FakePower)),
         simulated: true,
     }
@@ -130,6 +131,21 @@ impl Ssh for FakeSsh {
     }
     fn set_password(&mut self, password: &str) -> Result<(), String> {
         self.password = Some(password.into());
+        Ok(())
+    }
+}
+
+/// Remembers the zone; the clock shown stays in the computer's own zone.
+struct FakeClock {
+    zone: String,
+}
+
+impl Clock for FakeClock {
+    fn state(&mut self) -> Result<ClockState, String> {
+        Ok(ClockState { zone: self.zone.clone(), synced: true })
+    }
+    fn set_zone(&mut self, zone: &str) -> Result<(), String> {
+        self.zone = zone.into();
         Ok(())
     }
 }

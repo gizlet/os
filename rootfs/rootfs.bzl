@@ -70,6 +70,11 @@ ROOTFS_ENABLE = [
     "systemd-timesyncd.service",
 ]
 
+# The read-only base cannot change /etc/localtime, so it points into /run, where
+# `gizlet-switch apply-timezone` links the zone chosen in the launcher at boot
+# (gizlet-data.service). Until then, or without a data partition, it is UTC.
+ROOTFS_SYMLINKS = {"etc/localtime": "/run/gizlet-localtime"}
+
 # Started by gizlet-switches.service when turned on in the launcher, not by
 # default. Debian enables sshd.
 ROOTFS_DISABLE = ["ssh.service"]
