@@ -373,14 +373,17 @@ static void map_caller_only(pid_t pid) {
 
 /* Runs this program again as root through passwordless sudo, for the caller. */
 static void rerun_with_sudo(void) {
+    /* sudo's own message says why it refuses, such as "no new privileges". */
     char *probe[] = {"sudo", "-n", "true", NULL};
-    int saved = dup(2), devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
-    dup2(devnull, 2);
-    int ok = run(probe) == 0;
-    dup2(saved, 2);
-    close(saved);
-    close(devnull);
-    if (!ok) return;
+    if (run(probe) != 0) {
+        char line[64];
+        FILE *f = fopen("/proc/self/status", "re");
+        while (f && fgets(line, sizeof line, f))
+            if (!strncmp(line, "NoNewPrivs:", 11)) fprintf(stderr, "krun-vm: sudo -n refused; %s", line);
+        if (f) fclose(f);
+        errno = 0;
+        return;
+    }
     char self[PATH_MAX], as[48];
     ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
     if (n <= 0) return;
