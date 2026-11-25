@@ -112,9 +112,10 @@ def check_ssh(private, boot_offset, kernel, root, work):
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key], check=True)
     subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", key.with_suffix(".pub"), "::authorized_keys"], check=True)
     # setup.ini saves a Wi-Fi network (an SSID iwd stores as =hex), sets the ssh
-    # password and turns ssh on, once, as the launcher would.
+    # password and time zone and turns ssh on, once, as the launcher would.
     setup = work / "setup.ini"
-    setup.write_bytes(b"wifi_ssid=Test Net!\r\nwifi_passphrase=passphrase-123\r\nssh=on\r\nssh_password=gizlet test\r\n")
+    setup.write_bytes(b"wifi_ssid=Test Net!\r\nwifi_passphrase=passphrase-123\r\nssh=on\r\nssh_password=gizlet test\r\n"
+                      b"timezone=Asia/Shanghai\r\n")
     subprocess.run(["mcopy", "-i", f"{private}@@{boot_offset}", setup, "::setup.ini"], check=True)
     port = free_port()
     client = work / "ssh"
@@ -130,8 +131,17 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.expect(PROMPT)
         # setup.ini is imported once: renamed, without the passphrase and password.
         console.enter("mount -o ro /dev/vda1 /mnt && cat /mnt/setup.ini.done; ls /mnt/setup.ini; umount /mnt")
-        console.expect(b"wifi_ssid=Test Net!\r\nssh=on\r\n")
+        console.expect(b"wifi_ssid=Test Net!\r\nssh=on\r\ntimezone=Asia/Shanghai\r\n")
         console.expect(b"No such file")
+        console.expect(PROMPT)
+        # The time zone applies at once, to programs already running too.
+        console.enter("date +%z; /usr/lib/gizlet/gizlet-switch timezone")
+        console.expect(b"\r\n+0800\r\nAsia/Shanghai\r\n")
+        console.expect(PROMPT)
+        # Only compiled zones under /usr/share/zoneinfo are accepted.
+        console.enter("for z in ../../../etc/passwd /etc/passwd zone1970.tab Nowhere/City; do "
+                      "/usr/lib/gizlet/gizlet-switch timezone $z 2>/dev/null || echo refused; done")
+        console.expect(b"\r\nrefused\r\nrefused\r\nrefused\r\nrefused\r\n")
         console.expect(PROMPT)
         deadline = time.monotonic() + 60
         while True:
@@ -179,6 +189,7 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.enter("/opt/gizlet/launcher/gizlet-launcher --probe")
         console.expect(b"wifi: Ok(WifiState { on: true")
         console.expect(b'ssh: Ok(SshState { on: true, running: true, keys: Some(1), password: Some("gizlet test") })')
+        console.expect(b'clock: Ok(ClockState { zone: "Asia/Shanghai", synced: ')
         console.expect(PROMPT)
         console.stop()
     # Both switches survive a reboot, and turning them off stops the services.
@@ -193,14 +204,19 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.enter("systemctl is-active ssh iwd; /usr/lib/gizlet/gizlet-switch ssh")
         console.expect(b"\r\ninactive\r\ninactive\r\noff\r\n")
         console.expect(PROMPT)
+        # The time zone holds after a reboot and changes back as the launcher changes it.
+        console.enter("date +%z; /usr/lib/gizlet/gizlet-switch timezone America/New_York && date +%Z | grep -qx -e EST -e EDT && echo new-york")
+        console.expect(b"\r\n+0800\r\nnew-york\r\n")
+        console.expect(PROMPT)
         console.stop()
     with boot(private, kernel, root) as console:
         console.expect(PROMPT)
-        console.enter("sleep 5; systemctl is-active ssh iwd")
-        console.expect(b"\r\ninactive\r\ninactive\r\n")
+        console.enter("sleep 5; systemctl is-active ssh iwd; /usr/lib/gizlet/gizlet-switch timezone")
+        console.expect(b"\r\ninactive\r\ninactive\r\nAmerica/New_York\r\n")
         console.expect(PROMPT)
         console.stop()
-    print("setup.ini (imported once) and the launcher's switches start sshd and iwd, also after a reboot; key and password logins and scp work")
+    print("setup.ini (imported once) and the launcher's switches start sshd and iwd and set the time zone, "
+          "also after a reboot; key and password logins and scp work")
 
 
 def scenarios(image, kernel_name, work):
@@ -233,6 +249,10 @@ def scenarios(image, kernel_name, work):
                      b"wifi: Ok(WifiState { on: false, adapter: false", b"ssh: Ok(SshState { on: false, running: false",
                      b"power: [Reboot, PowerOff]"):
             console.expect(line)
+        console.expect(PROMPT)
+        # A fresh card keeps UTC until a time zone is chosen; network time runs without a network.
+        console.enter("date +%Z; /usr/lib/gizlet/gizlet-switch timezone; systemctl is-active systemd-timesyncd")
+        console.expect(b"\r\nUTC\r\nEtc/UTC\r\nactive\r\n")
         console.expect(PROMPT)
         console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 15000000 ] && echo data-grown")
         console.expect(b"\r\ndata-grown\r\n")

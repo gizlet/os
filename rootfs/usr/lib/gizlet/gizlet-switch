@@ -4,17 +4,24 @@
 #
 #   gizlet-switch wifi|ssh [on|off]     show or change a service: wifi is iwd, ssh is sshd
 #   gizlet-switch ssh-password [NEW]    show or set root's password for ssh logins
+#   gizlet-switch timezone [ZONE]       show or set the time zone, such as Asia/Shanghai
 #   gizlet-switch boot                  start what is on (gizlet-switches.service)
 #   gizlet-switch apply-password        install the stored password (gizlet-ssh)
+#   gizlet-switch apply-timezone        link the stored time zone (gizlet-data.service)
 #
 # The password is kept readable by root so the launcher can show it, and is
 # installed as root's /etc/shadow entry through a bind mount of a copy.
+# /etc/localtime links to /run/gizlet-localtime, which links to the stored
+# zone's file; without one the time zone is UTC.
 set -eu
 dir=/run/gizlet-data/system/switches
 password_file=/run/gizlet-data/system/ssh/password
 shadow=/run/gizlet-ssh/shadow
+zone_file=/run/gizlet-data/system/timezone
+localtime=/run/gizlet-localtime
+zoneinfo=/usr/share/zoneinfo
 usage() {
-    echo 'usage: gizlet-switch wifi|ssh [on|off] | ssh-password [NEW] | boot | apply-password' >&2
+    echo 'usage: gizlet-switch wifi|ssh [on|off] | ssh-password [NEW] | timezone [ZONE] | boot | apply-password | apply-timezone' >&2
     exit 2
 }
 unit_of() {
@@ -51,7 +58,47 @@ apply_password() {
     )
 }
 
+# valid_zone NAME: a zone under /usr/share/zoneinfo, named without leading /
+# or .., whose file is a compiled zone rather than one of tzdata's tables.
+valid_zone() {
+    case "$1" in
+        '' | /* | *..* | *[!A-Za-z0-9/_+-]*) return 1 ;;
+    esac
+    [ -f "$zoneinfo/$1" ] && [ "$(head -c 4 "$zoneinfo/$1")" = TZif ]
+}
+
+# The stored zone, or Etc/UTC without a valid one.
+stored_zone() {
+    zone=$(cat "$zone_file" 2>/dev/null || :)
+    valid_zone "$zone" || zone=Etc/UTC
+    echo "$zone"
+}
+
+# Replaces the link in one step, so programs never find it missing.
+apply_timezone() {
+    ln -sfn "$zoneinfo/$(stored_zone)" "$localtime.new"
+    mv -fT "$localtime.new" "$localtime"
+}
+
 case "${1:-}" in
+    timezone)
+        if [ $# -eq 1 ]; then
+            stored_zone
+            exit 0
+        fi
+        [ $# -eq 2 ] || usage
+        valid_zone "$2" || { echo "gizlet-switch: unknown time zone $2" >&2; exit 1; }
+        need_data
+        printf '%s\n' "$2" > "$zone_file.new"
+        mv "$zone_file.new" "$zone_file"
+        sync
+        apply_timezone
+        exit 0
+        ;;
+    apply-timezone)
+        apply_timezone
+        exit 0
+        ;;
     boot)
         for name in wifi ssh; do
             [ -e "$dir/$name" ] && systemctl --no-block start "$(unit_of "$name")"

@@ -51,6 +51,7 @@ strings! {
     CatBattery => "电池", "Battery";
     CatControls => "控制器", "Controls";
     CatLanguage => "语言", "Language";
+    CatTime => "日期与时间", "Date & Time";
     CatSystem => "系统", "System";
 
     Wifi => "Wi-Fi", "Wi-Fi";
@@ -122,6 +123,11 @@ strings! {
     LangAuto => "跟随系统", "System Default";
 
     Clock24 => "24 小时制", "24-Hour Clock";
+    TimeNow => "当前时间", "Current Time";
+    NetworkTime => "网络对时", "Network Time";
+    TimeSynced => "已同步", "Synchronized";
+    TimeNotSynced => "未同步，联网后自动校准", "Not yet, sets itself once online";
+    TimeZone => "时区", "Time Zone";
     About => "关于本机", "About";
     Version => "Launcher 版本", "Launcher Version";
     Device => "设备", "Device";

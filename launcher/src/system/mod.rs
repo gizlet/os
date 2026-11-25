@@ -90,6 +90,14 @@ pub struct SshState {
     pub password: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ClockState {
+    /// The time zone, as a name under /usr/share/zoneinfo such as `Asia/Shanghai`.
+    pub zone: String,
+    /// Network time (systemd-timesyncd) has set the clock since boot.
+    pub synced: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PowerAction {
     Reboot,
@@ -108,6 +116,7 @@ pub enum Request {
     SetVolume(f32),
     Ssh(bool),
     SshPassword(String),
+    TimeZone(String),
     Power(PowerAction),
 }
 
@@ -127,6 +136,7 @@ pub struct Snapshot {
     pub volume: Result<f32, Missing>,
     pub wifi: Result<WifiState, Missing>,
     pub ssh: Result<SshState, Missing>,
+    pub clock: Result<ClockState, Missing>,
     pub power: Vec<PowerAction>,
     pub info: Info,
     pub ip: Option<String>,
@@ -164,12 +174,18 @@ pub trait Power: Send {
     fn run(&mut self, action: PowerAction) -> Result<(), String>;
 }
 
+pub trait Clock: Send {
+    fn state(&mut self) -> Result<ClockState, String>;
+    fn set_zone(&mut self, zone: &str) -> Result<(), String>;
+}
+
 pub struct Devices {
     pub battery: Box<dyn BatterySource>,
     pub backlight: Result<Box<dyn Level>, Missing>,
     pub volume: Result<Box<dyn Level>, Missing>,
     pub wifi: Result<Box<dyn Wifi>, Missing>,
     pub ssh: Result<Box<dyn Ssh>, Missing>,
+    pub clock: Result<Box<dyn Clock>, Missing>,
     pub power: Option<Box<dyn Power>>,
     pub simulated: bool,
 }
@@ -238,6 +254,10 @@ fn snapshot(dev: &mut Devices, info: &Info, storage_root: &std::path::Path) -> S
         },
         ssh: match &mut dev.ssh {
             Ok(s) => s.state().map_err(Missing::Error),
+            Err(m) => Err(m.clone()),
+        },
+        clock: match &mut dev.clock {
+            Ok(c) => c.state().map_err(Missing::Error),
             Err(m) => Err(m.clone()),
         },
         power: dev.power.as_ref().map(|p| p.actions()).unwrap_or_default(),
@@ -327,6 +347,13 @@ fn worker(mut dev: Devices, storage_root: PathBuf, rx: Receiver<Request>, tx: Se
                     refresh = true;
                     match &mut dev.ssh {
                         Ok(s) => failed(s.set_password(&password)),
+                        Err(m) => Some(Event::Failed(unavailable(m))),
+                    }
+                }
+                Request::TimeZone(zone) => {
+                    refresh = true;
+                    match &mut dev.clock {
+                        Ok(c) => failed(c.set_zone(&zone)),
                         Err(m) => Some(Event::Failed(unavailable(m))),
                     }
                 }

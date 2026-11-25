@@ -76,6 +76,11 @@ def main():
     assert (root / "usr/lib/systemd/system/ssh.service.d/gizlet.conf").is_file(), "ssh.service uses gizlet-ssh"
     for unit in ("getty@.service", "serial-getty@.service", "systemd-firstboot.service"):
         assert os.readlink(systemd / unit) == "/dev/null", f"{unit} is masked"
+    # Network time sets the clock; the time zone is linked under /run at boot (gizlet-switch).
+    assert (systemd / "sysinit.target.wants/systemd-timesyncd.service").is_symlink(), "systemd-timesyncd is enabled"
+    assert os.readlink(root / "etc/localtime") == "/run/gizlet-localtime", "/etc/localtime points into /run"
+    for zone in ("Etc/UTC", "Asia/Shanghai", "America/New_York"):
+        assert (root / "usr/share/zoneinfo" / zone).read_bytes()[:4] == b"TZif", f"zone {zone}"
     # Each card creates its own identity at boot.
     assert not list((root / "etc/ssh").glob("ssh_host_*")), "the image carries ssh host keys"
     assert (root / "etc/machine-id").read_text() == "", "the image carries a machine ID"

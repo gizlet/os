@@ -86,6 +86,9 @@ def _debian_base_impl(ctx):
             if path.startswith("/") or ".." in path.split("/"):
                 fail("Invalid root path: " + path)
             inputs[_single(target, path)] = prefix + path
+    for path, target in ctx.attr.symlinks.items():
+        if path.startswith("/") or ".." in path.split("/") or " " in path + target or ":" in path:
+            fail("Invalid symbolic link: %s -> %s" % (path, target))
     out = ctx.outputs.out
     krun_action(
         ctx,
@@ -101,6 +104,7 @@ def _debian_base_impl(ctx):
             " ".join(ctx.attr.enable),
             " ".join(ctx.attr.disable),
             " ".join(ctx.attr.mask),
+            " ".join(["%s:%s" % (path, target) for path, target in sorted(ctx.attr.symlinks.items())]),
         ],
         env = {"LC_ALL": "C", "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch), "TZ": "UTC"},
         cpus = 4,
@@ -116,6 +120,7 @@ debian_base = rule(
 
 Maintainer scripts run in the build VM, which has the target's architecture.
 `directories` are created, `files` (0644) and `executables` (0755) installed at their root paths,
+`symlinks` replace their root paths with symbolic links to the given targets,
 the `enable` units are enabled, the `disable` units disabled and the `mask` units masked. Host keys and the
 machine ID are removed, so every boot of a card creates its own.
 """,
@@ -130,6 +135,7 @@ machine ID are removed, so every boot of a card creates its own.
         "out": attr.output(mandatory = True),
         "source_date_epoch": attr.int(default = 1704067200),
         "suite": attr.string(mandatory = True),
+        "symlinks": attr.string_dict(doc = "Root-relative paths to replace with symbolic links, mapped to their targets."),
         "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
         "_script": attr.label(default = Label(":build_base.sh"), allow_single_file = True),
     },
