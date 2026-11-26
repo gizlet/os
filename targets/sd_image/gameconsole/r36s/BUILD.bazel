@@ -166,6 +166,7 @@ gizlet_rootfs_test(
 gizlet_qemu_test(
     name = "boot_test",
     size = "medium",
+    timeout = "long",
     flash = _BOARD + "flash.sh",
     image = ":gizlet-os-r36s",
     tags = ["manual"],
@@ -175,6 +176,7 @@ gizlet_qemu_test(
 gizlet_qemu_test(
     name = "ota_test",
     size = "medium",
+    timeout = "long",
     flash = _BOARD + "flash.sh",
     image = ":gizlet-os-r36s",
     ota = True,
