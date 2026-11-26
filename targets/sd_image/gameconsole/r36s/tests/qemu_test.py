@@ -476,8 +476,7 @@ def check_ota_after_boot(console, pack_release, ota_fixture):
                   "test \"$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)\" = "
                   "\"/opt/gizlet/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
     console.expect(b"\r\nLauncher: 2.0.0\r\n")
-    console.expect(b"\r\nv2.0.0\r\naarch64-unknown-linux-gnu lite\r\n")
-    console.expect(b"\r\nota-runtime-in-use\r\n")
+    console.expect(b"\r\nv2.0.0\r\naarch64-unknown-linux-gnu lite\r\nota-runtime-in-use\r\n")
     console.expect(PROMPT)
     start_ota_fixture(console, pack_release, ota_fixture, "v2.0.1")
     console.enter("gizlet system ota install v2.0.1")
@@ -526,8 +525,8 @@ def ota_scenarios(image, kernel_name, flash, flash_card, pack_release, ota_fixtu
                       "test \"$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)\" = "
                       "\"/opt/gizlet/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
         console.expect(b"\r\nLauncher: 2.0.0\r\n")
-        console.expect(b"\r\nRolled back: v2.0.1\r\nv2.0.0\r\npersistent-user-file\r\nkept\r\nAmerica/New_York\r\n")
-        console.expect(b"\r\nota-runtime-in-use\r\n")
+        console.expect(b"\r\nRolled back: v2.0.1\r\nv2.0.0\r\npersistent-user-file\r\nkept\r\n"
+                       b"America/New_York\r\nota-runtime-in-use\r\n")
         console.expect(PROMPT)
         console.stop()
     print("signed OTA verifies HTTPS downloads, activates a matching runtime, Launcher and CLI, and preserves user data after rollback")
