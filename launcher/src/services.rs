@@ -343,6 +343,12 @@ impl Library {
         self.services_dir().join(format!(".uninstall-{id}"))
     }
 
+    /// Present from before a new service takes its place until it has
+    /// started: one left behind marks an install that was never confirmed.
+    pub(crate) fn unconfirmed(&self, id: &str) -> PathBuf {
+        self.services_dir().join(format!(".new-{id}"))
+    }
+
     /// Present while an update replaces a service that was running: in
     /// `/run`, so it says so only until the next boot.
     fn restart_flag(&self, id: &str) -> PathBuf {
@@ -564,6 +570,10 @@ impl Library {
         // If this update is cut short, recovery in this boot starts the previous version again.
         let _restart = if was_running { Some(Flag::write(self.restart_flag(id))?) } else { None };
         let running = self.stop_verified(id).map_err(|e| format!("cannot stop {id} to update it: {e}; the installed version is unchanged"))?;
+        if previous.is_none() {
+            fs::write(self.unconfirmed(id), "").map_err(|e| format!("{}: {e}", self.unconfirmed(id).display()))?;
+            apps::sync();
+        }
         let swapped = (|| {
             if previous.is_some() {
                 fs::rename(&dest, &old).map_err(|e| format!("{}: {e}", dest.display()))?;
@@ -578,6 +588,9 @@ impl Library {
         })();
         drop(running);
         if let Err(e) = swapped {
+            if previous.is_none() {
+                let _ = fs::remove_file(self.unconfirmed(id));
+            }
             if !was_running {
                 return Err(e);
             }
@@ -615,12 +628,20 @@ impl Library {
             if previous.is_some() {
                 apps::sync();
                 let _ = fs::remove_dir_all(&trash);
+            } else {
+                let _ = fs::remove_file(self.unconfirmed(id));
+                apps::sync();
             }
             return self.load(&dest);
         };
         let logs = format!("see `journalctl -u {}`", unit_name(id));
         let Some(previous) = previous else {
-            return Err(match self.remove_service(id) {
+            // The marker stays until it is removed, so recovery finishes what this cannot.
+            let removed = self.remove_service(id);
+            if removed.is_ok() {
+                let _ = fs::remove_file(self.unconfirmed(id));
+            }
+            return Err(match removed {
                 Ok(()) => format!("{id} did not start: {problem}; it was not installed ({logs})"),
                 Err(e) => format!("{id} did not start: {problem} ({logs}); removing it again failed: {e}"),
             });
@@ -738,6 +759,17 @@ impl Library {
             let _ = self.manager().start(&unit_name(id), false);
         }
         let _ = fs::remove_file(flag);
+    }
+
+    /// After a crash in the middle of a first install, with the library
+    /// locked: a new service that was never confirmed to start is removed
+    /// again, before anything could start it at boot.
+    pub(crate) fn drop_unconfirmed(&self, id: &str) {
+        if self.services_dir().join(id).is_dir() && self.remove_service(id).is_err() {
+            return;
+        }
+        let _ = fs::remove_file(self.unconfirmed(id));
+        apps::sync();
     }
 
     /// After a crash in the middle of an uninstall, with the library locked:
@@ -1438,6 +1470,22 @@ pub(crate) mod tests {
         assert!(lib.services().unwrap().is_empty());
         drop(held);
         assert_eq!(lib.service(A).unwrap().package.manifest.version, "0.1.0");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_first_install_cut_short_before_it_started_is_removed() {
+        let dir = temp("svc-first-cut");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        assert!(!lib.unconfirmed(A).exists(), "a confirmed install leaves no marker");
+        // Power is lost while the new service is on probation: it is in place and set to start at boot.
+        fs::write(lib.unconfirmed(A), "").unwrap();
+        fs::create_dir_all(lib.service_data(A)).unwrap();
+        drop((lib, units));
+        let (lib, units) = library(&dir);
+        assert!(lib.boot_services().unwrap().is_empty(), "boot does not start it");
+        assert_nothing_left(&lib, &units, A);
         let _ = fs::remove_dir_all(&dir);
     }
 

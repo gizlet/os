@@ -433,6 +433,10 @@ impl Library {
                     let _ = self.finish_uninstall(id, None);
                     continue;
                 }
+                if let Some(id) = name.strip_prefix(".new-").filter(|id| is_valid_id(id)) {
+                    self.drop_unconfirmed(id);
+                    continue;
+                }
                 let Some(id) = name.strip_prefix(".old-").filter(|id| is_valid_id(id)) else { continue };
                 if root == self.services_dir() {
                     self.restore_service(id, &e.path());
