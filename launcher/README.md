@@ -7,10 +7,10 @@ Pages are laid out in logical units: the screen is 720 units tall and at least 9
 | Page | What it does |
 | --- | --- |
 | Home | The app shelf (empty for now), Library, Store, Button Test, Settings and Power |
-| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; SSH on/off with the login address and key count; brightness and theme; volume; battery; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information |
+| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; SSH on/off with the login address (`NAME.local` and the IP address) and key count; brightness and theme; volume; battery; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information and the hostname, which can be changed |
 | Button test | A handheld drawn from primitives that lights up with every button, stick and trigger; hold Back to leave |
 
-On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A, BTN_SOUTH is B), and the volume keys change the volume. Wi-Fi and ssh are switched and the time zone is set with `gizlet-switch`, which keeps the choice across reboots; the clock redraws in a new zone at once. Missing hardware or drivers are shown as such, as for the R36S's battery and sound today. [System](src/system/linux.rs) · [Controls](src/evdev.rs)
+On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A, BTN_SOUTH is B), and the volume keys change the volume. Wi-Fi and ssh are switched and the time zone and hostname are set with `gizlet-switch`, which keeps the choice across reboots; the clock redraws in a new zone at once. Missing hardware or drivers are shown as such, as for the R36S's battery and sound today. [System](src/system/linux.rs) · [Controls](src/evdev.rs)
 
 ## Running on a computer
 

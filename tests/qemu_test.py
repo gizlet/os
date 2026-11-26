@@ -182,6 +182,18 @@ def check_ssh(private, boot_offset, kernel, root, work):
                               "journalctl -b --no-pager -u iwd | tail -n 20"],
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60).stdout
         assert iwd.startswith("active\n"), f"iwd did not stay up: {iwd}"
+        # Without a Wi-Fi adapter the virtio-net adapter's MAC address, QEMU's
+        # 52:54:00:12:34:56, names the device, and systemd-resolved, started
+        # with iwd, answers for it by mDNS on eth0. Over ssh it takes another
+        # name, lowercased; names that are not one DNS label are refused.
+        names = subprocess.run([client, "root@127.0.0.1", "hostname; resolvectl status eth0; ss -ulnH 'sport = :5353' | wc -l; "
+                                "for n in -x x- a_b ''$(printf %064d 0); do /usr/lib/gizlet/gizlet-switch hostname \"$n\" 2>/dev/null || echo refused; done; "
+                                "/usr/lib/gizlet/gizlet-switch hostname R36S-Test && hostname && /usr/lib/gizlet/gizlet-switch hostname"],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60).stdout
+        assert names.startswith("gizlet-3456\n"), f"default hostname: {names}"
+        assert "mDNS/IPv4" in names, f"no mDNS on eth0: {names}"
+        assert names.endswith("refused\n" * 4 + "r36s-test\nr36s-test\n"), f"renaming: {names}"
+        assert int(names.split("\n")[-8]) > 0, f"nothing listens on UDP 5353: {names}"
         payload = work / "payload"
         payload.write_bytes(os.urandom(65536))
         subprocess.run(["scp", "-O", "-S", client, payload, "root@127.0.0.1:/home/payload"],
@@ -195,6 +207,7 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.expect(b"wifi: Ok(WifiState { on: true")
         console.expect(b'ssh: Ok(SshState { on: true, running: true, keys: Some(1), password: Some("gizlet test") })')
         console.expect(b'clock: Ok(ClockState { zone: "Asia/Shanghai", synced: ')
+        console.expect(b'hostname: "r36s-test"')
         console.expect(PROMPT)
         console.stop()
     # Both switches survive a reboot, and turning them off stops the services.
@@ -204,6 +217,10 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.enter("for i in $(seq 60); do systemctl -q is-active ssh && systemctl -q is-active iwd && break; sleep 1; done; "
                       "systemctl is-active ssh iwd systemd-resolved")
         console.expect(b"\r\nactive\r\nactive\r\nactive\r\n")
+        console.expect(PROMPT)
+        # The chosen name holds after a reboot, here without a network adapter.
+        console.enter("for i in $(seq 30); do [ \"$(hostname)\" = r36s-test ] && break; sleep 1; done; echo \"[$(hostname)]\"")
+        console.expect(b"\r\n[r36s-test]\r\n")
         console.expect(PROMPT)
         # Once imported, the switches stay as the launcher leaves them.
         console.command("/usr/lib/gizlet/gizlet-switch ssh off && /usr/lib/gizlet/gizlet-switch wifi off")
@@ -220,9 +237,13 @@ def check_ssh(private, boot_offset, kernel, root, work):
         console.enter("sleep 5; systemctl is-active ssh iwd; /usr/lib/gizlet/gizlet-switch timezone")
         console.expect(b"\r\ninactive\r\ninactive\r\nAmerica/New_York\r\n")
         console.expect(PROMPT)
+        # An empty name goes back to the default: gizlet, without a network adapter.
+        console.enter("/usr/lib/gizlet/gizlet-switch hostname '' && echo \"[$(hostname)]\"")
+        console.expect(b"\r\n[gizlet]\r\n")
+        console.expect(PROMPT)
         console.stop()
-    print("setup.ini (imported once) and the launcher's switches start sshd and iwd and set the time zone, "
-          "also after a reboot; key and password logins and scp work")
+    print("setup.ini (imported once) and the launcher's switches start sshd and iwd and set the time zone and hostname, "
+          "also after a reboot; mDNS runs with Wi-Fi; key and password logins and scp work")
 
 
 def scenarios(image, kernel_name, flash, flash_card, work):
