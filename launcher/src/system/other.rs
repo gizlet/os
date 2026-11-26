@@ -14,6 +14,7 @@ pub fn devices() -> Devices {
         host: None,
         power: None,
         simulated: false,
+        load: LoadMeter::default(),
     }
 }
 
@@ -35,7 +36,38 @@ impl BatterySource for SystemBattery {
             Some("charged") | Some("finishing charge") | Some("AC attached") => Charge::Full,
             _ => Charge::Discharging,
         };
-        Ok(Battery { percent: percent.min(100), charge })
+        let minutes_left = match charge {
+            Charge::Discharging => fields.get(2).and_then(|f| pmset_minutes_left(f)),
+            _ => None,
+        };
+        Ok(Battery { percent: percent.min(100), charge, power_mw: None, minutes_left })
+    }
+}
+
+/// The third field of `pmset -g batt`: "4:12 remaining", often followed by
+/// " present: true", or "(no estimate)" while macOS is still measuring.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn pmset_minutes_left(field: &str) -> Option<u32> {
+    let mut words = field.split_whitespace();
+    let (h, m) = words.next()?.split_once(':')?;
+    if words.next()? != "remaining" {
+        return None;
+    }
+    Some(h.parse::<u32>().ok()? * 60 + m.parse::<u32>().ok()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pmset_minutes_left;
+
+    #[test]
+    fn reads_pmset_estimates() {
+        assert_eq!(pmset_minutes_left("4:12 remaining"), Some(252));
+        assert_eq!(pmset_minutes_left("4:12 remaining present: true"), Some(252));
+        assert_eq!(pmset_minutes_left("0:05 remaining present: true"), Some(5));
+        assert_eq!(pmset_minutes_left("(no estimate)"), None);
+        assert_eq!(pmset_minutes_left("(no estimate) present: true"), None);
+        assert_eq!(pmset_minutes_left("4:12"), None);
     }
 }
 
@@ -73,7 +105,9 @@ impl BatterySource for SystemBattery {
             (1, false) => Charge::Full,
             _ => Charge::Discharging,
         };
-        Ok(Battery { percent: s.battery_life_percent, charge })
+        // Seconds, or u32::MAX when unknown or on AC power.
+        let minutes_left = (charge == Charge::Discharging && s.battery_life_time != u32::MAX).then(|| s.battery_life_time / 60);
+        Ok(Battery { percent: s.battery_life_percent, charge, power_mw: None, minutes_left })
     }
 }
 

@@ -26,7 +26,7 @@ The legacy U-Boot picks a dtb name from a board-revision ADC reading before it r
 
 ## TF1 storage
 
-The 464 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes. The boot stages, kernel load address, device tree, UART2 and OTG VBUS configuration follow the reviewed R36S boot chain. The kernel includes its ext4 driver for the data partition. [Layout](sdcard.cfg) · [Linux configuration](kernel/kernel.config) · [U-Boot commands](boot/boot.cmd)
+The 464 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes. The boot stages, kernel load address, device tree, UART2 and OTG VBUS configuration follow the reviewed R36S boot chain. The kernel includes its ext4 driver for the data partition. The CPU scales from 600 MHz at 0.95 V to 1.296 GHz with schedutil and the GPU from 200 to 560 MHz with devfreq, along the steps of the upstream `px30.dtsi` that ROCKNIX drops, and idle cores and the cluster power down through PSCI on a tickless kernel. The base limits schedutil to one clock change every 10 ms, as each change sets `vdd_arm` over the PMIC's I2C bus. [Rate limit](../../../rootfs/usr/lib/tmpfiles.d/gizlet-cpufreq.conf) [Layout](sdcard.cfg) · [Linux configuration](kernel/kernel.config) · [U-Boot commands](boot/boot.cmd)
 
 | Start sector | Contents | Use |
 | ---: | --- | --- |
