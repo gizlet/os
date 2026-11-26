@@ -278,9 +278,10 @@ def check_apps(console):
     manifest = ('id = "dev.gizlet.test-hello"\nname = "Hello"\nversion = "0.1.0"\ntier = "lite"\n'
                 'target = "aarch64-unknown-linux-gnu"\nentry = "bin/hello.js"\n\n[names]\nzh-CN = "你好"\n')
     hello = (b'#!/usr/bin/bun\n'
+             b'import { EOL } from "node:os";\n'
              b'const { GIZLET_SWAP_AB, GIZLET_SAVE_DIR } = process.env;\n'
              b'console.log("hello-app", GIZLET_SWAP_AB, process.cwd(), GIZLET_SAVE_DIR);\n'
-             b'await Bun.write(`${GIZLET_SAVE_DIR}/kept`, "kept\\n");\n')
+             b'await Bun.write(`${GIZLET_SAVE_DIR}/kept`, "kept" + EOL);\n')
     files = {"manifest.toml": (manifest.encode(), 0o644), "bin/hello.js": (hello, 0o755), "assets/a.txt": (b"asset\n", 0o644)}
     send(console, gzl(files), "/tmp/hello.gzl")
     # A file changed after packing no longer matches CHECKSUMS.
