@@ -416,6 +416,16 @@ function Update-Card([string]$raw, $disk) {
     $ProgressPreference = 'SilentlyContinue'
     # Windows PowerShell 5.1 on older Windows 10 does not offer TLS 1.2 by default; GitHub needs it.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    if (-not ($env:GIZLET_IMAGE -or $env:GIZLET_IMAGE_URL -or $env:GIZLET_RELEASE)) {
+        $entryPath = Join-Path ([IO.Path]::GetTempPath()) "gizlet-entry-$([guid]::NewGuid()).ps1"
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://dl.gizlet.io/releases/latest/flash.ps1' -OutFile $entryPath
+            & $entryPath -Board gameconsole.r36s
+        } finally {
+            Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
+        }
+        return
+    }
     $release = if ($env:GIZLET_RELEASE) { $env:GIZLET_RELEASE } else { 'https://github.com/gizlet/os/releases/latest/download' }
     $managedImage = $env:GIZLET_IMAGE_URL
     $large = 256GB
