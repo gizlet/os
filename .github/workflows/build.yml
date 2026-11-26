@@ -72,7 +72,7 @@ jobs:
           persist-credentials: false
 
       # Native stages run in the pinned build root inside Linux namespaces
-      # (tools/bazel/krun/README.md), so the host needs only a C compiler for
+      # (devops/bazel/krun/README.md), so the host needs only a C compiler for
       # Bazel's own tools and unsquashfs. The runner user's passwordless sudo
       # maps the IDs the card's package owners need. No KVM.
       - name: Install build tools

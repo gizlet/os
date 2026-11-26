@@ -1,8 +1,8 @@
 load("//boards/gameconsole/r36s:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_PANELS", "R36S_UBOOT_DTB_NAMES")
+load("//devops/bazel/debian:defs.bzl", "debian_base")
+load("//devops/bazel/rockchip:defs.bzl", "rockchip_sd_image")
 load("//rootfs:rootfs.bzl", "ROOTFS_DEBS", "ROOTFS_DIRECTORIES", "ROOTFS_DISABLE", "ROOTFS_ENABLE", "ROOTFS_EXECUTABLES", "ROOTFS_FILES", "ROOTFS_LICENSES", "ROOTFS_MASK", "ROOTFS_SUITE", "ROOTFS_SYMLINKS")
-load("//tools/bazel/debian:defs.bzl", "debian_base")
-load("//tests:defs.bzl", "gizlet_qemu_test", "gizlet_rootfs_test", "rockchip_card_test")
-load("//tools/bazel/rockchip:defs.bzl", "rockchip_sd_image")
+load("//targets/sd_image/gameconsole/r36s/tests:defs.bzl", "gizlet_qemu_test", "gizlet_rootfs_test", "rockchip_card_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,16 +12,28 @@ _EPOCH = 1704067200
 
 _R36S = [_BOARD + "r36s"]
 
-# The shared Debian base with the board's notices.
+# The shared Debian base with the R36S's optional services, configuration and notices.
 debian_base(
     name = "rootfs",
     out = "parts/rootfs.sqfs",
     debs = ROOTFS_DEBS,
     directories = ROOTFS_DIRECTORIES,
     disable = ROOTFS_DISABLE,
-    enable = ROOTFS_ENABLE,
-    executables = ROOTFS_EXECUTABLES,
+    enable = ROOTFS_ENABLE + [
+        "gizlet-audio-jack.service",
+        "gizlet-power.service",
+    ],
+    executables = ROOTFS_EXECUTABLES | {
+        "//services/audio-jack:audio-jack": "usr/lib/gizlet/gizlet-audio-jack",
+        "//services/power:power": "usr/lib/gizlet/gizlet-power",
+    },
     files = ROOTFS_FILES | {
+        "//services/audio-jack:gizlet-audio-jack.service": "usr/lib/systemd/system/gizlet-audio-jack.service",
+        "//services/power:gizlet-logind.conf": "usr/lib/systemd/logind.conf.d/gizlet.conf",
+        "//services/power:gizlet-power.service": "usr/lib/systemd/system/gizlet-power.service",
+        _BOARD + "config/gizlet-audio-jack.conf": "usr/lib/systemd/system/gizlet-audio-jack.service.d/r36s.conf",
+        _BOARD + "config/gizlet-cpufreq.conf": "usr/lib/tmpfiles.d/gizlet-cpufreq.conf",
+        _BOARD + "config/gizlet-power.conf": "usr/lib/systemd/system/gizlet-power.service.d/r36s.conf",
         "@linux_firmware//:LICENCE.rtlwifi_firmware.txt": "usr/share/licenses/linux-firmware/LICENCE.rtlwifi_firmware.txt",
         "@rkbin//:LICENSE": "usr/share/licenses/rockchip-rkbin",
         "//third_party/linux:COPYING": "usr/share/licenses/linux/COPYING",
@@ -134,7 +146,7 @@ rockchip_card_test(
 
 gizlet_rootfs_test(
     name = "rootfs_test",
-    booter = "//session:booter",
+    booter = "//services/session:booter",
     data_uuid = R36S_DATA_UUID,
     flash = _BOARD + "flash.sh",
     image = ":gizlet-os-r36s",

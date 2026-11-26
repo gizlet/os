@@ -16,15 +16,15 @@ use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
 
 # libkrun and its guest kernel run the native image stages in a microVM.
-krun = use_extension("//tools/bazel/krun:repositories.bzl", "krun_repositories")
+krun = use_extension("//devops/bazel/krun:repositories.bzl", "krun_repositories")
 use_repo(krun, "libkrun", "libkrunfw", "rust_std_aarch64_unknown_linux_musl")
 
 # The launcher's crates, vendored by checksum, and the build VM's Rust toolchain.
-cargo = use_extension("//tools/bazel/cargo:repositories.bzl", "cargo")
+cargo = use_extension("//devops/bazel/cargo:repositories.bzl", "cargo")
 use_repo(cargo, "launcher_crates", "rust_aarch64_linux")
 
 # Debian bookworm arm64 tools for the build VM, pinned by snapshot and SHA-256.
-debian = use_extension("//tools/bazel/debian:repositories.bzl", "debian")
+debian = use_extension("//devops/bazel/debian:repositories.bzl", "debian")
 use_repo(debian, "debian_bookworm_arm64", "debian_trixie_arm64_base", "debian_trixie_arm64_runtime")
 
 

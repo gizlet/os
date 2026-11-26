@@ -88,6 +88,6 @@ jobs:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
           RELEASE_COMMIT: ${{ needs.verify.outputs.commit }}
         run: |
-          sops decrypt --output-type json secrets/release.enc.yaml |
-            python3 scripts/release.py "$GITHUB_REF_NAME" "$RELEASE_COMMIT" \
+          sops decrypt --output-type json devops/secrets/release.enc.yaml |
+            python3 devops/scripts/release.py "$GITHUB_REF_NAME" "$RELEASE_COMMIT" \
               "$RUNNER_TEMP/os-build" "$RUNNER_TEMP/os-release"
