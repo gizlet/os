@@ -244,7 +244,9 @@ pub enum State {
     Starting,
     Stopping,
     Stopped,
-    /// It failed, or exited and is being restarted; with systemd's reason.
+    /// It exited and systemd starts it again shortly; with systemd's reason.
+    Restarting(String),
+    /// It failed and is not restarted; with systemd's reason.
     Failed(String),
 }
 
@@ -252,7 +254,7 @@ impl State {
     fn of(unit: &UnitState) -> State {
         match (unit.active.as_str(), unit.sub.as_str()) {
             ("active" | "reloading", _) => State::Running,
-            ("activating", "auto-restart") => State::Failed(unit.result.clone()),
+            ("activating", "auto-restart") => State::Restarting(unit.result.clone()),
             ("activating", _) => State::Starting,
             ("deactivating", _) => State::Stopping,
             ("failed", _) => State::Failed(unit.result.clone()),
@@ -260,9 +262,9 @@ impl State {
         }
     }
 
-    /// Started or about to be: what a Running switch shows.
+    /// Started or about to be, so stopping is what a switch does: what a Running switch shows.
     pub fn on(&self) -> bool {
-        matches!(self, State::Running | State::Starting)
+        matches!(self, State::Running | State::Starting | State::Restarting(_))
     }
 
     pub fn word(&self) -> String {
@@ -271,6 +273,7 @@ impl State {
             State::Starting => "starting".into(),
             State::Stopping => "stopping".into(),
             State::Stopped => "stopped".into(),
+            State::Restarting(why) => format!("restarting ({why})"),
             State::Failed(why) => format!("failed ({why})"),
         }
     }
@@ -1528,7 +1531,8 @@ pub(crate) mod tests {
     #[test]
     fn reads_systemctl_show() {
         let state = UnitState { active: "activating".into(), sub: "auto-restart".into(), result: "exit-code".into(), restarts: 1, ..UnitState::default() };
-        assert_eq!(State::of(&state), State::Failed("exit-code".into()));
+        assert_eq!(State::of(&state), State::Restarting("exit-code".into()));
+        assert!(State::of(&state).on(), "a restarting service shows as on, so its switch stops it");
         assert!(state.start_problem().unwrap().contains("restarted"));
         let clean = UnitState { active: "inactive".into(), sub: "dead".into(), result: "success".into(), ..UnitState::default() };
         assert_eq!((State::of(&clean), clean.running()), (State::Stopped, false));

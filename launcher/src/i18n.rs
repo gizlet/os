@@ -211,6 +211,7 @@ strings! {
     ServiceStarting => "正在启动", "Starting";
     ServiceStopping => "正在停止", "Stopping";
     ServiceStopped => "已停止", "Stopped";
+    ServiceRestarting => "正在重启（{}）", "Restarting ({})";
     ServiceFailed => "出错（{}）", "Failed ({})";
 }
 

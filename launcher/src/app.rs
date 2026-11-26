@@ -1569,6 +1569,7 @@ impl App {
                 services::State::Starting => t(T::ServiceStarting),
                 services::State::Stopping => t(T::ServiceStopping),
                 services::State::Stopped => t(T::ServiceStopped),
+                services::State::Restarting(why) => T::ServiceRestarting.fmt(l, &[why]),
                 services::State::Failed(why) => T::ServiceFailed.fmt(l, &[why]),
             };
             items.push(Item::info(t(T::BatteryState), state));
