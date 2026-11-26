@@ -6,6 +6,7 @@ use crate::i18n::{human_size, T};
 use crate::input::{Action, Input, TextEvent};
 use crate::keyboard::{self, Keyboard};
 use crate::settings::{Language, Power, Settings, Theme};
+use crate::sound::Sfx;
 use crate::system::{valid_hostname, Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
 use crate::zones::{Zone, ZONES};
 use std::path::PathBuf;
@@ -106,6 +107,7 @@ pub enum ItemId {
     SleepAfter,
     SleepAfterCharging,
     Volume,
+    UiSounds,
     BatteryPercent,
     ButtonTest,
     SwapAb,
@@ -201,6 +203,17 @@ pub struct WifiUi {
     pub switching: Option<bool>,
 }
 
+/// Where the focus is, to hear it move.
+#[derive(Clone, Debug, PartialEq)]
+struct Place {
+    depth: usize,
+    home: (HomeRow, usize, usize),
+    settings: (usize, usize, bool),
+    dialog: Option<usize>,
+    /// The keyboard's key and layout, and how much is typed.
+    keyboard: Option<(usize, usize, bool, bool, usize)>,
+}
+
 pub struct App {
     pub settings: Settings,
     settings_path: PathBuf,
@@ -232,6 +245,12 @@ pub struct App {
     pub can_quit: bool,
     /// Counts the device reports received, so the screen is redrawn after one.
     pub revision: u64,
+    /// Sounds to play, taken once a frame by [`App::take_sounds`].
+    sounds: Vec<Sfx>,
+    /// The brightness and volume requests sent, to recognize a snapshot taken
+    /// before the latest one reached the device.
+    brightness_sent: u64,
+    volume_sent: u64,
 }
 
 impl App {
@@ -268,6 +287,9 @@ impl App {
             gamepads: Vec::new(),
             can_quit: true,
             revision: 0,
+            sounds: Vec::new(),
+            brightness_sent: 0,
+            volume_sent: 0,
         }
     }
 
@@ -310,6 +332,62 @@ impl App {
         if self.toasts.len() > 3 {
             self.toasts.remove(0);
         }
+    }
+
+    /// The sounds to play now.
+    pub fn take_sounds(&mut self) -> Vec<Sfx> {
+        std::mem::take(&mut self.sounds)
+    }
+
+    /// How loud sounds play: the simulated volume, as nothing else applies
+    /// it, or in full where the system's volume does.
+    pub fn sound_gain(&self) -> f32 {
+        match self.snapshot.as_ref() {
+            Some(s) if s.simulated => *s.volume.as_ref().unwrap_or(&1.0),
+            _ => 1.0,
+        }
+    }
+
+    /// Queues an interface sound, when they are turned on.
+    fn ui_sound(&mut self, sfx: Sfx) {
+        if self.settings.ui_sounds && !self.sounds.iter().any(|&s| s != Sfx::Volume) {
+            self.sounds.push(sfx);
+        }
+    }
+
+    fn place(&self) -> Place {
+        Place {
+            depth: self.pages.len(),
+            home: (self.home_row, self.home_button, self.home_tile),
+            settings: (self.focus.category, self.focus.item, self.focus.in_content),
+            dialog: self.dialog.as_ref().map(|d| d.focus),
+            keyboard: self.keyboard.as_ref().map(|k| (k.row, k.col, k.shift, k.symbols, k.text.chars().count())),
+        }
+    }
+
+    /// The sound for the focus moving from `before` this frame: opening a
+    /// page, menu or keyboard confirms; closing one goes back, or confirms
+    /// when A chose something in it; any other move ticks.
+    fn hear(&mut self, before: &Place, input: &Input) {
+        let after = self.place();
+        if after == *before {
+            return;
+        }
+        let opened = after.depth > before.depth
+            || (after.dialog.is_some() && before.dialog.is_none())
+            || (after.keyboard.is_some() && before.keyboard.is_none());
+        let closed = after.depth < before.depth
+            || (after.dialog.is_none() && before.dialog.is_some())
+            || (after.keyboard.is_none() && before.keyboard.is_some());
+        let chose = input.pressed(Action::A) || input.pressed(Action::Start) || input.text.contains(&TextEvent::Submit);
+        let sfx = if opened || (closed && chose) {
+            Sfx::Confirm
+        } else if closed || input.pressed(Action::B) {
+            Sfx::Back
+        } else {
+            Sfx::Move
+        };
+        self.ui_sound(sfx);
     }
 
     /// Reads the installed apps again when one was installed or removed,
@@ -386,6 +464,14 @@ impl App {
         }
         self.auto_scan();
 
+        let before = self.place();
+        let keep = self.handle_input(input, dt);
+        self.hear(&before, input);
+        keep
+    }
+
+    /// This frame's input on the open page, menu or keyboard. False to quit.
+    fn handle_input(&mut self, input: &Input, dt: f32) -> bool {
         if self.keyboard.is_some() {
             self.keyboard_input(input);
             return true;
@@ -426,7 +512,17 @@ impl App {
     fn on_event(&mut self, event: Event) {
         let l = self.lang();
         match event {
-            Event::Snapshot(s) => {
+            Event::Snapshot(mut s) => {
+                // A report read before the latest change reached the device
+                // would move the slider back; the next one reports it.
+                if let Some(old) = &self.snapshot {
+                    if s.brightness_sets < self.brightness_sent {
+                        s.brightness = old.brightness.clone();
+                    }
+                    if s.volume_sets < self.volume_sent {
+                        s.volume = old.volume.clone();
+                    }
+                }
                 if let Ok(w) = &s.wifi {
                     if self.wifi.switching == Some(w.on) {
                         self.wifi.switching = None;
@@ -448,6 +544,7 @@ impl App {
                 }
                 self.snapshot = Some(*s);
             }
+            Event::Volume => self.sounds.push(Sfx::Volume),
             Event::WifiNetworks(result) => {
                 self.wifi.scanning = false;
                 match result {
@@ -500,9 +597,9 @@ impl App {
     }
 
     fn nudge_volume(&mut self, step: f32) {
-        if let Some(Ok(v)) = self.snapshot.as_mut().map(|s| &mut s.volume) {
-            *v = (*v + step).clamp(0.0, 1.0);
-            self.system.send(Request::SetVolume(*v));
+        if let Some(Ok(v)) = self.snapshot.as_ref().map(|s| &s.volume) {
+            let v = *v;
+            self.slide(&ItemId::Volume, v + step);
         }
     }
 
@@ -602,9 +699,18 @@ impl App {
                     let step = if a == Action::Left { -1.0 } else { 1.0 };
                     match item.as_ref().map(|i| (&i.id, &i.value)) {
                         Some((id, ItemValue::Slider(v))) => self.slide(id, *v + step * 0.05),
-                        Some((ItemId::Theme, _)) => self.toggle_theme(),
-                        Some((ItemId::SleepAfter, _)) => self.cycle_sleep_after(false, step as i32),
-                        Some((ItemId::SleepAfterCharging, _)) => self.cycle_sleep_after(true, step as i32),
+                        Some((ItemId::Theme, _)) => {
+                            self.toggle_theme();
+                            self.ui_sound(Sfx::Move);
+                        }
+                        Some((ItemId::SleepAfter, _)) => {
+                            self.cycle_sleep_after(false, step as i32);
+                            self.ui_sound(Sfx::Move);
+                        }
+                        Some((ItemId::SleepAfterCharging, _)) => {
+                            self.cycle_sleep_after(true, step as i32);
+                            self.ui_sound(Sfx::Move);
+                        }
                         _ if a == Action::Left => self.focus.in_content = false,
                         _ => {}
                     }
@@ -672,17 +778,26 @@ impl App {
         }
     }
 
+    /// Sets the brightness or volume to `v`, on a 5% grid. The page shows it at
+    /// once; reports read before the device has it keep that value.
     fn slide(&mut self, id: &ItemId, v: f32) {
         let v = (v * 20.0).round() / 20.0;
         let v = v.clamp(0.0, 1.0);
         let Some(s) = self.snapshot.as_mut() else { return };
         match id {
             ItemId::Brightness => {
+                let moved = s.brightness.as_ref().map_or(true, |old| (old - v).abs() > 0.001);
                 s.brightness = Ok(v);
+                self.brightness_sent += 1;
                 self.system.send(Request::SetBrightness(v));
+                if moved {
+                    self.ui_sound(Sfx::Move);
+                }
             }
+            // The device answers with Event::Volume, which plays the volume's sound at the new level.
             ItemId::Volume => {
                 s.volume = Ok(v);
+                self.volume_sent += 1;
                 self.system.send(Request::SetVolume(v));
             }
             _ => {}
@@ -714,6 +829,9 @@ impl App {
     }
 
     fn activate(&mut self, item: &Item) {
+        if !matches!(item.id, ItemId::Brightness | ItemId::Volume | ItemId::None) {
+            self.ui_sound(Sfx::Confirm);
+        }
         let current = match &item.value {
             ItemValue::Toggle(on) => *on,
             _ => false,
@@ -750,6 +868,13 @@ impl App {
             ItemId::BatteryPercent => {
                 self.settings.battery_percent = !self.settings.battery_percent;
                 self.save();
+            }
+            ItemId::UiSounds => {
+                self.settings.ui_sounds = !self.settings.ui_sounds;
+                self.save();
+                // Heard when they come on.
+                self.sounds.retain(|&s| s == Sfx::Volume);
+                self.ui_sound(Sfx::Confirm);
             }
             ItemId::ButtonTest => self.push(Page::ButtonTest),
             ItemId::SwapAb => {
@@ -964,10 +1089,13 @@ impl App {
                 };
                 items.push(Item::new(ItemId::Theme, t(T::ThemeLabel), ItemValue::Choice(theme)));
             }
-            Category::Sound => match &snap.volume {
-                Ok(v) => items.push(Item::new(ItemId::Volume, t(T::Volume), ItemValue::Slider(*v))),
-                Err(m) => items.push(self.missing(m, T::NoAudio, Some(T::NoAudioBody))),
-            },
+            Category::Sound => {
+                match &snap.volume {
+                    Ok(v) => items.push(Item::new(ItemId::Volume, t(T::Volume), ItemValue::Slider(*v))),
+                    Err(m) => items.push(self.missing(m, T::NoAudio, Some(T::NoAudioBody))),
+                }
+                items.push(Item::new(ItemId::UiSounds, t(T::UiSounds), ItemValue::Toggle(self.settings.ui_sounds)));
+            }
             Category::Battery => {
                 match &snap.battery {
                     Ok(b) => {

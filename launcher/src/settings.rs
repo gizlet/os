@@ -81,6 +81,8 @@ pub struct Settings {
     pub swap_ab: bool,
     pub clock_24h: bool,
     pub battery_percent: bool,
+    /// Short sounds as the focus moves, a page opens or closes and a setting changes.
+    pub ui_sounds: bool,
 }
 
 impl Default for Settings {
@@ -91,6 +93,7 @@ impl Default for Settings {
             swap_ab: false,
             clock_24h: true,
             battery_percent: true,
+            ui_sounds: true,
         }
     }
 }
@@ -124,6 +127,7 @@ impl Settings {
                 "swap_ab" => s.swap_ab = parse_bool(v).unwrap_or(s.swap_ab),
                 "clock_24h" => s.clock_24h = parse_bool(v).unwrap_or(s.clock_24h),
                 "battery_percent" => s.battery_percent = parse_bool(v).unwrap_or(s.battery_percent),
+                "ui_sounds" => s.ui_sounds = parse_bool(v).unwrap_or(s.ui_sounds),
                 _ => {}
             }
         }
@@ -136,12 +140,13 @@ impl Settings {
             Theme::Light => "light",
         };
         format!(
-            "language = {}\ntheme = {}\nswap_ab = {}\nclock_24h = {}\nbattery_percent = {}\n",
+            "language = {}\ntheme = {}\nswap_ab = {}\nclock_24h = {}\nbattery_percent = {}\nui_sounds = {}\n",
             self.language.key(),
             theme,
             self.swap_ab,
             self.clock_24h,
-            self.battery_percent
+            self.battery_percent,
+            self.ui_sounds
         )
     }
 
@@ -286,11 +291,12 @@ mod tests {
 
     #[test]
     fn round_trip_and_defaults() {
-        let s = Settings { theme: Theme::Light, swap_ab: true, language: Language::ZhCn, ..Settings::default() };
+        let s = Settings { theme: Theme::Light, swap_ab: true, language: Language::ZhCn, ui_sounds: false, ..Settings::default() };
         assert_eq!(Settings::parse(&s.render()), s);
         let partial = Settings::parse("theme = light\nswap_ab = maybe\nnoise\n");
         assert_eq!(partial.theme, Theme::Light);
         assert!(!partial.swap_ab);
         assert!(partial.clock_24h);
+        assert!(partial.ui_sounds, "sounds are on by default");
     }
 }

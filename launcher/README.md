@@ -7,10 +7,14 @@ Pages are laid out in logical units: the screen is 720 units tall and at least 9
 | Page | What it does |
 | --- | --- |
 | Home | The shelf of installed apps (A starts one), Library, Store, Button Test, Settings and Power |
-| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; SSH on/off with the login address (`NAME.local` and the IP address) and key count; brightness and theme; volume; battery: charge, whether it is charging, power draw and the time left at that draw, separate sleep times on battery and while charging, and the CPU and GPU clocks and CPU use behind it; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information and the hostname, which can be changed |
+| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; SSH on/off with the login address (`NAME.local` and the IP address) and key count; brightness and theme; volume and interface sounds; battery: charge, whether it is charging, power draw and the time left at that draw, separate sleep times on battery and while charging, and the CPU and GPU clocks and CPU use behind it; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information and the hostname, which can be changed |
 | Button test | A handheld drawn from primitives that lights up with every button, stick and trigger; hold Back to leave |
 
 On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A, BTN_SOUTH is B), and the volume keys change the volume. Wi-Fi and ssh are switched and the time zone and hostname are set with `gizlet-switch`, which keeps the choice across reboots; the clock redraws in a new zone at once. Missing hardware or drivers are shown as such, as for the R36S's battery and sound today. [System](src/system/linux.rs) · [Controls](src/evdev.rs)
+
+Brightness and volume change on screen at once and reach the device on the system worker. A device report read before the latest change keeps the value shown, so a slider does not jump back while the device catches up.
+
+Moving the focus, opening or closing a page, menu or keyboard, and changing a setting play short tones that the launcher synthesizes; Settings → Sound turns them off. Every volume change, from the slider or the volume keys, plays a tone once the device has the new level, so it is heard at that level. The audio device opens for a sound and closes after eight seconds of quiet, so an idle launcher keeps no audio running. [Sounds](src/sound.rs)
 
 ## Apps
 

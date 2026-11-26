@@ -105,6 +105,7 @@ strings! {
     Never => "永不", "Never";
     Minutes => "{} 分钟", "{} min";
     Volume => "音量", "Volume";
+    UiSounds => "界面音效", "Interface Sounds";
     NoAudio => "未检测到音频设备", "No audio device detected";
     NoAudioBody => "这台设备的系统还没有声卡驱动。", "This device's system has no sound driver yet.";
 
