@@ -90,6 +90,8 @@ pub trait Manager: Send + Sync {
     fn write_unit(&self, unit: &str, text: Option<&str>) -> Result<bool, String>;
     /// The Gizlet service units written.
     fn units(&self) -> Vec<String>;
+    /// A unit as written, if it is.
+    fn read_unit(&self, unit: &str) -> Option<String>;
     /// Makes the manager read the units again.
     fn reload(&self) -> Result<(), String>;
     /// Starts the unit; without `wait`, only queues the start.
@@ -175,6 +177,10 @@ impl Manager for Systemd {
             .collect();
         units.sort();
         units
+    }
+
+    fn read_unit(&self, unit: &str) -> Option<String> {
+        fs::read_to_string(self.units.join(unit)).ok()
     }
 
     fn reload(&self) -> Result<(), String> {
@@ -378,6 +384,20 @@ impl Library {
         ))
     }
 
+    /// The prefix a written unit runs its service from.
+    fn unit_prefix(text: &str) -> Option<&str> {
+        text.lines().find_map(|line| line.strip_prefix("Environment=GIZLET_PREFIX="))
+    }
+
+    /// Whether this library may change `unit`: it is not written, or written for this prefix.
+    fn owns(&self, unit: &str) -> Result<(), String> {
+        let Some(text) = self.manager().read_unit(unit) else { return Ok(()) };
+        match Self::unit_prefix(&text) {
+            Some(prefix) if Path::new(prefix) == self.prefix() => Ok(()),
+            other => Err(format!("{unit} runs a service installed in {}, not in {}; it is left alone", other.unwrap_or("another place"), self.prefix().display())),
+        }
+    }
+
     /// The service `id` as installed, without the lock.
     pub(crate) fn find_service(&self, id: &str) -> Result<App, String> {
         if !apps::is_valid_id(id) {
@@ -442,6 +462,7 @@ impl Library {
 
     /// Writes the service's unit and has the manager read it if it changed.
     fn register(&self, id: &str) -> Result<(), String> {
+        self.owns(&unit_name(id))?;
         let text = self.unit_text(id)?;
         if self.manager().write_unit(&unit_name(id), Some(&text)).map_err(|e| format!("cannot register {id}: {e}"))? {
             self.manager().reload().map_err(|e| format!("cannot register {id}: {e}"))?;
@@ -477,6 +498,7 @@ impl Library {
             // Without a manager nothing was started for it, except perhaps by hand.
             return self.not_running(&root, id).map_err(|_| format!("{id} is running ({e})"));
         }
+        self.owns(&unit)?;
         let before = self.unit_state(id)?;
         if before.load != "not-found" || before.running() {
             self.manager().stop(&unit)?;
@@ -727,7 +749,12 @@ impl Library {
         let _lock = self.lock_waiting()?;
         self.recover();
         let packages = self.service_packages();
-        let stale: Vec<String> = self.manager().units().into_iter().filter(|u| !packages.iter().any(|p| unit_name(p.id()) == *u)).collect();
+        let stale: Vec<String> = self
+            .manager()
+            .units()
+            .into_iter()
+            .filter(|u| !packages.iter().any(|p| unit_name(p.id()) == *u) && self.owns(u).is_ok())
+            .collect();
         if packages.is_empty() && stale.is_empty() {
             return Ok(Vec::new());
         }
@@ -735,7 +762,8 @@ impl Library {
         let mut changed = false;
         let mut errors = Vec::new();
         for package in &packages {
-            match self.unit_text(package.id()).and_then(|text| self.manager().write_unit(&unit_name(package.id()), Some(&text))) {
+            let unit = unit_name(package.id());
+            match self.owns(&unit).and_then(|()| self.unit_text(package.id())).and_then(|text| self.manager().write_unit(&unit, Some(&text))) {
                 Ok(wrote) => changed |= wrote,
                 Err(e) => errors.push(format!("cannot register {}: {e}", package.id())),
             }
@@ -900,6 +928,9 @@ pub(crate) mod tests {
         }
         fn units(&self) -> Vec<String> {
             self.units.lock().unwrap().text.keys().cloned().collect()
+        }
+        fn read_unit(&self, unit: &str) -> Option<String> {
+            self.units.lock().unwrap().text.get(unit).cloned()
         }
         fn reload(&self) -> Result<(), String> {
             self.units.lock().unwrap().log.push("reload".into());
@@ -1223,7 +1254,8 @@ pub(crate) mod tests {
         fs::rename(lib.services_dir().join(A), lib.uninstalling(A)).unwrap();
         drop((lib, units));
         let (lib, units) = library(&dir);
-        units.lock().unwrap().text.insert(unit(A), String::new());
+        let text = lib.unit_text(A).unwrap();
+        units.lock().unwrap().text.insert(unit(A), text);
         assert!(lib.boot_services().unwrap().is_empty(), "it does not start again");
         assert_nothing_left(&lib, &units, A);
         // Uninstalling it again once recovery has finished says it is gone.
@@ -1278,11 +1310,20 @@ pub(crate) mod tests {
         lib.install(&service(&dir, A, "0.1.0")).unwrap();
         fs::create_dir_all(lib.service_runtime(A)).unwrap();
         fs::write(lib.service_runtime(A).join("control.sock"), "").unwrap();
-        // A second library, as with GIZLET_PREFIX, shares the runtime folder.
-        let other = Library::with_manager(dir.join("other"), Box::new(Fake { services: dir.join("other/services"), units: Default::default() }), dir.join("run"));
+        // A second library, as with GIZLET_PREFIX, shares the runtime folder and the service manager.
+        let other_prefix = std::path::absolute(dir.join("other")).unwrap();
+        let fake = Fake { services: other_prefix.join("services"), units: _units.clone() };
+        let other = Library::with_manager(other_prefix, Box::new(fake), dir.join("run"));
         other.install(&app(&dir, "dev.example.game")).unwrap();
-        other.boot_services().unwrap();
+        assert!(other.boot_services().unwrap().is_empty());
         assert!(lib.service_runtime(A).join("control.sock").exists());
+        assert!(_units.lock().unwrap().text.contains_key(&unit(A)), "the other library's units stay registered");
+        // Nor can it take over the unit with a service of the same ID.
+        let err = other.install(&service(&dir, A, "0.2.0")).unwrap_err();
+        assert!(err.contains("it is left alone"), "{err}");
+        assert!(!other.services_dir().join(A).exists());
+        let s = lib.service(A).unwrap();
+        assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1316,7 +1357,8 @@ pub(crate) mod tests {
         fs::write(lib.boot_flag(gone), "").unwrap();
         fs::write(lib.running_in(&lib.services_dir(), gone), "").unwrap();
         fs::create_dir_all(lib.services_dir().join(format!(".remove-{gone}-1"))).unwrap();
-        units.lock().unwrap().text.insert(unit(gone), String::new());
+        let text = lib.unit_text(gone).unwrap();
+        units.lock().unwrap().text.insert(unit(gone), text);
         lib.boot_services().unwrap();
         assert_nothing_left(&lib, &units, gone);
         assert!(lib.services_dir().join(A).is_dir());
