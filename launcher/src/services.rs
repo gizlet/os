@@ -634,6 +634,10 @@ impl Library {
             }
             Ok(())
         });
+        if restored.is_err() && was_running {
+            // Recovery finishes the rollback later, and from this flag starts the previous version.
+            std::mem::forget(_restart);
+        }
         Err(match restored {
             Ok(()) if was_running => format!("{id} {} {failed}: {problem} ({logs}); {version} is back and running", manifest.version),
             Ok(()) => format!("{id} {} {failed}: {problem} ({logs}); {version} is back", manifest.version),
@@ -976,6 +980,8 @@ pub(crate) mod tests {
         pub exit_on_start: BTreeSet<String>,
         /// Units that cannot be stopped.
         pub stuck: BTreeSet<String>,
+        /// Units that stop this many more times, then cannot be stopped.
+        pub stops_left: BTreeMap<String, u32>,
         pub unavailable: bool,
         pub log: Vec<String>,
     }
@@ -1033,6 +1039,12 @@ pub(crate) mod tests {
         fn stop(&self, unit: &str) -> Result<(), String> {
             let mut u = self.units.lock().unwrap();
             u.log.push(format!("stop {unit}"));
+            if let Some(left) = u.stops_left.get_mut(unit) {
+                if *left == 0 {
+                    return Err(format!("Job for {unit} failed."));
+                }
+                *left -= 1;
+            }
             if u.stuck.contains(unit) {
                 return Err(format!("Job for {unit} failed."));
             }
@@ -1198,6 +1210,25 @@ pub(crate) mod tests {
         let s = lib.service(A).unwrap();
         assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
         assert_eq!(leftovers(&lib), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_rollback_cut_short_is_finished_and_runs_the_previous_version() {
+        let dir = temp("svc-rollback-cut");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        // 0.2.0 crashes, and the rollback cannot stop it: the update's own stop is the last that works.
+        units.lock().unwrap().crash_on_start.insert(unit(A));
+        units.lock().unwrap().stops_left.insert(unit(A), 1);
+        let err = lib.install(&service(&dir, A, "0.2.0")).unwrap_err();
+        assert!(err.contains("restoring 0.1.0 failed"), "{err}");
+        assert!(lib.restart_flag(A).exists(), "the flag stays for recovery");
+        // Once systemd can stop it again, the next read finishes the rollback and runs 0.1.0.
+        units.lock().unwrap().stops_left.remove(&unit(A));
+        let s = lib.services().unwrap().remove(0);
+        assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
+        assert!(!lib.restart_flag(A).exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
