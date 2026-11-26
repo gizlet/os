@@ -1,0 +1,12 @@
+[Unit]
+Description=Route sound to the speaker or the headphones, following the jack
+After=sound.target
+ConditionPathExists=/proc/asound/card0
+
+[Service]
+ExecStart=/usr/lib/gizlet/gizlet-audio-jack ${GIZLET_AUDIO_CONTROL} ${GIZLET_AUDIO_HEADPHONE} ${GIZLET_AUDIO_SPEAKER}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

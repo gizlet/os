@@ -1,6 +1,6 @@
 """The Gizlet OS base every board shares, for a target's debian_base.
 
-A target adds its board's notices under /usr/share/licenses.
+A target adds board-specific configuration, optional services and notices.
 """
 
 ROOTFS_DEBS = "@debian_trixie_arm64_base//:debs"
@@ -20,20 +20,15 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/systemd/system/iwd.service.d/gizlet.conf": "usr/lib/systemd/system/iwd.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system/ssh.service.d/gizlet.conf": "usr/lib/systemd/system/ssh.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/journald.conf.d/gizlet.conf": "usr/lib/systemd/journald.conf.d/gizlet.conf",
-    "//rootfs:usr/lib/systemd/logind.conf.d/gizlet.conf": "usr/lib/systemd/logind.conf.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/resolved.conf.d/gizlet.conf": "usr/lib/systemd/resolved.conf.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system.conf.d/gizlet.conf": "usr/lib/systemd/system.conf.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/timesyncd.conf.d/gizlet.conf": "usr/lib/systemd/timesyncd.conf.d/gizlet.conf",
-    # systemd-tmpfiles-setup sets schedutil's rate limit at boot.
-    "//rootfs:usr/lib/tmpfiles.d/gizlet-cpufreq.conf": "usr/lib/tmpfiles.d/gizlet-cpufreq.conf",
-    "//rootfs:usr/lib/systemd/system/gizlet-audio-jack.service": "usr/lib/systemd/system/gizlet-audio-jack.service",
     "//rootfs:usr/lib/systemd/system/gizlet-boot-log.service": "usr/lib/systemd/system/gizlet-boot-log.service",
     "//rootfs:usr/lib/systemd/system/gizlet-data.service": "usr/lib/systemd/system/gizlet-data.service",
     "//rootfs:usr/lib/systemd/system/gizlet-hostname.service": "usr/lib/systemd/system/gizlet-hostname.service",
-    "//rootfs:usr/lib/systemd/system/gizlet-power.service": "usr/lib/systemd/system/gizlet-power.service",
     "//rootfs:usr/lib/systemd/system/gizlet-late-log.service": "usr/lib/systemd/system/gizlet-late-log.service",
     "//rootfs:usr/lib/systemd/system/gizlet-late-log.timer": "usr/lib/systemd/system/gizlet-late-log.timer",
-    "//rootfs:usr/lib/systemd/system/gizlet-session.service": "usr/lib/systemd/system/gizlet-session.service",
+    "//services/session:gizlet-session.service": "usr/lib/systemd/system/gizlet-session.service",
     "//rootfs:usr/lib/systemd/system/gizlet-ssh.service": "usr/lib/systemd/system/gizlet-ssh.service",
     "//rootfs:usr/lib/systemd/system/gizlet-switches.service": "usr/lib/systemd/system/gizlet-switches.service",
     "//rootfs:usr/lib/systemd/system/gizlet-var.service": "usr/lib/systemd/system/gizlet-var.service",
@@ -48,7 +43,7 @@ ROOTFS_FILES = {
 }
 
 ROOTFS_EXECUTABLES = {
-    "//rootfs:usr/lib/gizlet/boot-session": "usr/lib/gizlet/boot-session",
+    "//services/session:boot-session": "usr/lib/gizlet/boot-session",
     "//rootfs:usr/lib/gizlet/gizlet-boot-device": "usr/lib/gizlet/gizlet-boot-device",
     "//rootfs:usr/lib/gizlet/gizlet-mount-boot": "usr/lib/gizlet/gizlet-mount-boot",
     "//rootfs:usr/lib/gizlet/gizlet-mount-data": "usr/lib/gizlet/gizlet-mount-data",
@@ -65,23 +60,17 @@ ROOTFS_EXECUTABLES = {
     "//launcher:gizlet-cli": "usr/lib/gizlet/launcher/bin/cli",
     "//launcher:start.sh": "usr/lib/gizlet/launcher/start",
     "//rootfs:usr/lib/gizlet/launcher-release": "usr/lib/gizlet/launcher-release",
-    "//session:booter": "usr/lib/gizlet/gizlet-booter",
-    # Follows the headphone jack; static, like the Booter.
-    "//audio:audio-jack": "usr/lib/gizlet/gizlet-audio-jack",
-    # Puts the device to sleep when idle or on the power key; static too.
-    "//power:power": "usr/lib/gizlet/gizlet-power",
+    "//services/session:booter": "usr/lib/gizlet/gizlet-booter",
 }
 
 ROOTFS_ENABLE = [
     # bluetoothd, wanted by bluetooth.target, which udev pulls in when a
     # controller appears: it starts once one is plugged in, not at boot.
     "bluetooth.service",
-    "gizlet-audio-jack.service",
     "gizlet-boot-log.service",
     "gizlet-data.service",
     "gizlet-hostname.service",
     "gizlet-late-log.timer",
-    "gizlet-power.service",
     "gizlet-session.service",
     "gizlet-switches.service",
     "gizlet-var.service",

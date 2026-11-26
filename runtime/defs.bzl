@@ -1,6 +1,6 @@
 """Builds a Gizlet runtime image, and the libraries it adds to Debian's, in the build VM."""
 
-load("//tools/bazel/krun:defs.bzl", "KRUN_ATTRS", "krun_action")
+load("//devops/bazel/krun:defs.bzl", "KRUN_ATTRS", "krun_action")
 
 def _package_path(ctx, out):
     return out.path.removeprefix(ctx.bin_dir.path + "/" + ctx.label.package + "/")
@@ -40,7 +40,7 @@ raylib_library = rule(
         "source_date_epoch": attr.int(default = 1704067200),
         "_crates": attr.label(default = Label("@launcher_crates//:vendor")),
         "_es3_patch": attr.label(default = Label(":raylib-es3.patch"), allow_single_file = True),
-        "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
+        "_rootfs": attr.label(default = Label("//devops/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
         "_script": attr.label(default = Label(":build_raylib.sh"), allow_single_file = True),
     },
 )
@@ -79,7 +79,7 @@ gizlet_runtime = rule(
         "out": attr.output(mandatory = True),
         "source_date_epoch": attr.int(default = 1704067200),
         "_gl_info": attr.label(default = Label(":gl-info.c"), allow_single_file = True),
-        "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
+        "_rootfs": attr.label(default = Label("//devops/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
         "_run": attr.label(default = Label(":gizlet-run"), allow_single_file = True),
         "_script": attr.label(default = Label(":build_runtime.sh"), allow_single_file = True),
     },

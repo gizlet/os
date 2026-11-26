@@ -1,5 +1,5 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//tools/bazel/rockchip:defs.bzl", "rockchip_legacy_uboot", "rockchip_linux_kernel")
+load("//devops/bazel/rockchip:defs.bzl", "rockchip_legacy_uboot", "rockchip_linux_kernel")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -25,6 +25,9 @@ platform(
 exports_files([
     "boot/boot.cmd",
     "boot/trust.sha256",
+    "config/gizlet-audio-jack.conf",
+    "config/gizlet-cpufreq.conf",
+    "config/gizlet-power.conf",
     "flash.sh",
     "sdcard.cfg",
 ])

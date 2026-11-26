@@ -1,6 +1,6 @@
 """Builds the launcher for Gizlet OS in the build VM."""
 
-load("//tools/bazel/krun:defs.bzl", "KRUN_ATTRS", "krun_action")
+load("//devops/bazel/krun:defs.bzl", "KRUN_ATTRS", "krun_action")
 
 def _repo_relative(f):
     """The file's path inside its repository."""
@@ -40,7 +40,7 @@ gizlet_launcher = rule(
         "source_date_epoch": attr.int(default = 1704067200),
         "_crates": attr.label(default = Label("@launcher_crates//:vendor")),
         "_raylib": attr.label(default = Label("//runtime:raylib"), allow_single_file = True),
-        "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
+        "_rootfs": attr.label(default = Label("//devops/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
         "_rust": attr.label(default = Label("@rust_aarch64_linux//:toolchain")),
         "_script": attr.label(default = Label(":build_card.sh"), allow_single_file = True),
     },
