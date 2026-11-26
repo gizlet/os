@@ -113,7 +113,8 @@ def free_port():
 def check_tf2(private, kernel, root, work):
     """Mounts a FAT TF2 card at /media/tf2, never a partition of the system card, and leaves its files alone.
 
-    QEMU's disks are virtio, not MMC, so the test starts the units udev starts on the R36S."""
+    QEMU's disks are virtio, not MMC, so the test starts the units udev starts on the R36S. The
+    virt machine names its disks in reverse order, so the guest finds them by filesystem label."""
     offset = 1 << 20
     tf2 = work / "tf2.img"
     with tf2.open("wb") as f:
@@ -136,17 +137,20 @@ def check_tf2(private, kernel, root, work):
     before = subprocess.run(listing, check=True, capture_output=True).stdout
     with boot(private, kernel, root, tf2) as console:
         console.expect(PROMPT)
+        console.command("card=$(basename $(blkid -L GAMES)); data=$(basename $(blkid -L GIZLETDATA)); "
+                        "boot=${data%3}1")
         console.enter("grep -qw exfat /proc/filesystems && echo exfat-supported; "
-                      "systemctl start gizlet-tf2@vda1 gizlet-tf2@vda3 gizlet-tf2@vdb1; "
-                      "findmnt -n -o SOURCE,FSTYPE /media/tf2; cat /media/tf2/nes/homebrew-test.nes")
+                      "systemctl start gizlet-tf2@$boot gizlet-tf2@$data gizlet-tf2@$card; "
+                      "[ \"$(findmnt -n -o SOURCE /media/tf2)\" = /dev/$card ] && echo tf2-mounted; "
+                      "findmnt -n -o FSTYPE /media/tf2; cat /media/tf2/nes/homebrew-test.nes")
         console.expect(b"\r\nexfat-supported\r\n")
-        console.expect(b"\r\n/dev/vdb1 vfat\r\n")
+        console.expect(b"\r\ntf2-mounted\r\nvfat\r\n")
         console.expect(b"synthetic test file")
         console.expect(PROMPT)
-        console.enter("journalctl -b -o cat -u 'gizlet-tf2@vda*' | grep -c 'is on the system card'")
+        console.enter("journalctl -b -o cat -u gizlet-tf2@$boot -u gizlet-tf2@$data | grep -c 'is on the system card'")
         console.expect(b"\r\n2\r\n")
         console.expect(PROMPT)
-        console.enter("systemctl stop gizlet-tf2@vdb1; mountpoint -q /media/tf2 || echo tf2-unmounted")
+        console.enter("systemctl stop gizlet-tf2@$card; mountpoint -q /media/tf2 || echo tf2-unmounted")
         console.expect(b"\r\ntf2-unmounted\r\n")
         console.expect(PROMPT)
         console.stop()
