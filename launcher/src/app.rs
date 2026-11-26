@@ -853,11 +853,6 @@ impl App {
                 Action::Down => kb.move_by(0, 1),
                 Action::Left => kb.move_by(-1, 0),
                 Action::Right => kb.move_by(1, 0),
-                Action::A => {
-                    if let keyboard::Outcome::Submit(t) = kb.press() {
-                        submit = Some(t);
-                    }
-                }
                 // B deletes; on an empty field it closes the keyboard.
                 Action::B if kb.text.is_empty() => cancel = true,
                 Action::B => kb.backspace(),
@@ -866,6 +861,9 @@ impl App {
                 Action::Start => submit = Some(kb.text.clone()),
                 _ => {}
             }
+        }
+        if let keyboard::Outcome::Submit(text) = kb.a_input(input.pressed(Action::A), input.held(Action::A), self.time) {
+            submit = Some(text);
         }
         if cancel {
             self.keyboard = None;
