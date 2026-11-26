@@ -265,7 +265,15 @@ impl Updates {
 
     fn poll(&mut self) -> bool {
         let Some(work) = &self.work else { return false };
-        let Ok(event) = work.try_recv() else { return false };
+        let event = match work.try_recv() {
+            Ok(event) => event,
+            Err(mpsc::TryRecvError::Empty) => return false,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.state = UpdateState::Failed(matches!(self.state, UpdateState::Installing(_)));
+                self.work = None;
+                return true;
+            }
+        };
         self.state = match event {
             UpdateEvent::Installed(installed) => {
                 self.installed = Some(installed);
@@ -393,6 +401,10 @@ impl App {
         self.updates = Updates::new();
     }
 
+    pub fn installing_update(&self) -> bool {
+        self.updates.as_ref().is_some_and(|updates| matches!(updates.state, UpdateState::Installing(_)))
+    }
+
     pub fn t(&self, t: T) -> &'static str {
         t.get(self.lang())
     }
@@ -508,6 +520,10 @@ impl App {
     /// its start script runs the app, then the launcher again; on a computer
     /// the app opens beside it.
     fn launch(&mut self, i: usize) {
+        if self.installing_update() {
+            self.toast(self.t(T::OtaWait));
+            return;
+        }
         let Some(app) = self.apps.get(i) else { return };
         let id = app.id().to_string();
         let name = app.manifest.name_for(self.lang_code()).to_string();
@@ -715,6 +731,10 @@ impl App {
     }
 
     fn power_dialog(&mut self) {
+        if self.installing_update() {
+            self.toast(self.t(T::OtaWait));
+            return;
+        }
         let mut buttons: Vec<(String, DialogAction)> = Vec::new();
         if let Some(s) = &self.snapshot {
             for a in &s.power {

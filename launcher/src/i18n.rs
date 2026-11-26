@@ -70,6 +70,7 @@ strings! {
     OtaPreparingRuntime => "正在准备运行时…", "Preparing Runtime…";
     OtaDownloadingLauncher => "正在下载启动器…", "Downloading Launcher…";
     OtaVerifying => "正在验证并暂存…", "Verifying and staging…";
+    OtaWait => "请等待系统更新完成。", "Wait for the system update to finish.";
     OtaStaged => "{} 已准备就绪", "{} ready to install";
     OtaRestart => "重启以完成更新", "Restart to finish the update";
     OtaRolledBack => "已回退更新 {}", "{} rolled back";
