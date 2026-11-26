@@ -87,9 +87,23 @@ fn runs_here(target: &str, device: &str) -> bool {
     device.contains("-linux-") && target.ends_with("-unknown-linux-musl") && arch(target) == arch(device)
 }
 
+/// What a package is, from its manifest: schema 1 (or no `schema`) is always
+/// an app; schema 2 names `app` or `service` in `kind`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A foreground program, games included: it is shown on the shelf and takes the screen.
+    App,
+    /// A background program. This version recognizes services but does not
+    /// install, start or supervise them.
+    Service,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Manifest {
     schema: Option<u32>,
+    /// As written; [`Manifest::kind`] reads it after validation.
+    #[serde(rename = "kind")]
+    declared_kind: Option<String>,
     runtime: Option<u32>,
     pub id: String,
     pub name: String,
@@ -116,8 +130,12 @@ impl Manifest {
     }
 
     fn validate(self) -> Result<Manifest, String> {
-        if let Some(schema) = self.schema.filter(|&schema| schema != 1) {
-            return Err(format!("unsupported manifest schema {schema}"));
+        match (self.schema.unwrap_or(1), self.declared_kind.as_deref()) {
+            (1, None | Some("app")) | (2, Some("app" | "service")) => {}
+            (1, Some(kind)) => return Err(format!("manifest schema 1 is always an app, but it has kind {kind:?}")),
+            (2, None) => return Err("manifest schema 2 must name its kind (app or service)".into()),
+            (2, Some(kind)) => return Err(format!("unsupported package kind {kind:?}")),
+            (schema, _) => return Err(format!("unsupported manifest schema {schema}")),
         }
         if let Some(runtime) = self.runtime.filter(|&runtime| runtime != 1) {
             return Err(format!("unsupported Gizlet runtime {runtime}"));
@@ -149,6 +167,14 @@ impl Manifest {
         Ok(self)
     }
 
+    /// The package's kind; valid once the manifest is parsed.
+    pub fn kind(&self) -> Kind {
+        match self.declared_kind.as_deref() {
+            Some("service") => Kind::Service,
+            _ => Kind::App,
+        }
+    }
+
     pub fn name_for(&self, lang: &str) -> &str {
         localized(&self.names, lang).unwrap_or(&self.name)
     }
@@ -162,6 +188,11 @@ impl Manifest {
         let byte = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
         Some([byte(0)?, byte(2)?, byte(4)?])
     }
+}
+
+/// Why a manifest's package cannot run as an app.
+pub fn not_an_app(manifest: &Manifest) -> String {
+    format!("{} is a service, not an app; services do not run from the launcher", manifest.id)
 }
 
 fn localized<'a>(map: &'a BTreeMap<String, String>, lang: &str) -> Option<&'a str> {
@@ -257,7 +288,7 @@ impl Library {
     }
 
     /// Installed apps, most recently played first, then most recently installed.
-    /// Folders without a valid manifest are skipped.
+    /// Folders without a valid manifest, and services, are skipped.
     pub fn scan(&self) -> Vec<App> {
         // The launcher scans while `gizlet install` may be running: it never
         // waits for the lock, and recovers only when nothing else holds it.
@@ -271,6 +302,7 @@ impl Library {
             .flatten()
             .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
             .filter_map(|e| self.load(&e.path()).ok())
+            .filter(|app| app.manifest.kind() == Kind::App)
             .collect();
         apps.sort_by(|a, b| {
             let pa = played.get(a.id()).copied().unwrap_or(0);
@@ -372,7 +404,11 @@ impl Library {
             return Err(format!("{id:?} is not an app ID"));
         }
         let running = self.hold_running(id).map_err(|e| format!("cannot mark {id} running: {e}"))?;
-        Ok((self.get(id)?, running))
+        let app = self.get(id)?;
+        if app.manifest.kind() != Kind::App {
+            return Err(not_an_app(&app.manifest));
+        }
+        Ok((app, running))
     }
 
     /// The lock file stays when an app is removed: a run waiting on it must
@@ -401,6 +437,9 @@ impl Library {
 
     fn install_staged(&self, package: &Path, staging: &Path) -> Result<App, String> {
         let manifest = unpack(package, staging)?;
+        if manifest.kind() != Kind::App {
+            return Err(format!("{} is a service; this version of Gizlet OS installs apps only", manifest.id));
+        }
         let (device, tier) = (device_target(), device_tier());
         if !runs_here(&manifest.target, &device) {
             return Err(format!("{} is built for {}; this device runs {device}", manifest.id, manifest.target));
@@ -965,7 +1004,8 @@ mod tests {
         assert!(err(&manifest("dev.example.hello", "riscv64gc-unknown-linux-gnu"), &[]).contains("built for"));
         assert!(err(&manifest("Bad", &target), &[]).contains("reverse-DNS"));
         assert!(err("[]", &[]).contains("must be a JSON object"));
-        assert!(err(&manifest("dev.example.hello", &target).replace("\"schema\":1", "\"schema\":2"), &[]).contains("unsupported manifest schema"));
+        assert!(err(&manifest("dev.example.hello", &target).replace("\"schema\":1", "\"schema\":3"), &[]).contains("unsupported manifest schema 3"));
+        assert!(err(&manifest("dev.example.hello", &target).replace("\"schema\":1", "\"schema\":2"), &[]).contains("must name its kind"));
         assert!(err(&manifest("dev.example.hello", &target).replace("\"runtime\":1", "\"runtime\":2"), &[]).contains("unsupported Gizlet runtime"));
         assert!(err(&manifest("dev.example.hello", &target).replace("bin/hello", "../x"), &[]).contains(".."));
         assert!(err(&manifest("dev.example.hello", &target), &[("../evil", b"x", 0o100644)]).contains("evil"));
@@ -986,6 +1026,79 @@ mod tests {
         assert!(lib.install(&path).unwrap_err().contains("larger than 4 MiB"));
         assert!(lib.scan().is_empty());
         assert_eq!(leftovers(&lib), 0, "failed installs leave nothing behind");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The test manifest with `schema` (left out when `None`) and `kind` (left out when `None`).
+    fn manifest_v(id: &str, schema: Option<u32>, kind: Option<&str>) -> String {
+        let mut m: serde_json::Value = serde_json::from_str(&manifest(id, &device_target())).unwrap();
+        let o = m.as_object_mut().unwrap();
+        o.remove("schema");
+        if let Some(schema) = schema {
+            o.insert("schema".into(), schema.into());
+        }
+        if let Some(kind) = kind {
+            o.insert("kind".into(), kind.into());
+        }
+        m.to_string()
+    }
+
+    #[test]
+    fn manifest_schemas_and_kinds() {
+        let id = "dev.example.hello";
+        let kind = |schema, k| Manifest::parse(&manifest_v(id, schema, k)).map(|m| m.kind());
+        assert_eq!(kind(None, None), Ok(Kind::App), "no schema is schema 1");
+        assert_eq!(kind(Some(1), None), Ok(Kind::App));
+        assert_eq!(kind(Some(1), Some("app")), Ok(Kind::App));
+        assert_eq!(kind(Some(2), Some("app")), Ok(Kind::App));
+        assert_eq!(kind(Some(2), Some("service")), Ok(Kind::Service));
+        assert!(kind(Some(1), Some("service")).unwrap_err().contains("schema 1 is always an app"));
+        assert!(kind(Some(2), None).unwrap_err().contains("must name its kind"));
+        assert!(kind(Some(2), Some("rom")).unwrap_err().contains("unsupported package kind \"rom\""));
+        assert!(kind(Some(3), Some("app")).unwrap_err().contains("unsupported manifest schema 3"));
+    }
+
+    #[test]
+    fn installs_and_runs_v1_and_v2_apps() {
+        let dir = temp("schemas");
+        let lib = Library::new(dir.join("prefix"));
+        for (id, schema, kind) in [
+            ("dev.example.v1", Some(1), None),
+            ("dev.example.noschema", None, None),
+            ("dev.example.v2", Some(2), Some("app")),
+        ] {
+            let app = lib.install(&package(&dir, &manifest_v(id, schema, kind), &[])).unwrap();
+            assert_eq!(app.manifest.kind(), Kind::App);
+            let (app, running) = lib.open_for_run(id).unwrap();
+            assert!(app.entry().is_file());
+            drop(running);
+        }
+        let mut ids: Vec<String> = lib.scan().iter().map(|a| a.id().to_string()).collect();
+        ids.sort();
+        assert_eq!(ids, ["dev.example.noschema", "dev.example.v1", "dev.example.v2"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn services_are_not_apps() {
+        let dir = temp("service");
+        let lib = Library::new(dir.join("prefix"));
+        let id = "dev.example.clock";
+        let service = manifest_v(id, Some(2), Some("service"));
+        let err = lib.install(&package(&dir, &service, &[])).unwrap_err();
+        assert!(err.contains("is a service"), "{err}");
+        assert!(!lib.apps_dir().join(id).exists());
+        assert_eq!(leftovers(&lib), 0, "a refused service leaves nothing behind");
+        // One placed by hand is neither shown on the shelf nor started, but can be removed.
+        let placed = lib.apps_dir().join(id);
+        fs::create_dir_all(placed.join("bin")).unwrap();
+        fs::write(placed.join(MANIFEST), &service).unwrap();
+        fs::write(placed.join("bin/hello"), "#!/bin/sh\n").unwrap();
+        assert!(lib.scan().is_empty());
+        assert!(lib.open_for_run(id).unwrap_err().contains("is a service, not an app"));
+        assert_eq!(lib.get(id).unwrap().manifest.kind(), Kind::Service);
+        lib.remove(id, false).unwrap();
+        assert!(!placed.exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

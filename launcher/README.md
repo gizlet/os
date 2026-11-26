@@ -38,7 +38,17 @@ Developers write `gizlet.toml` at the repository root. The store reads that file
 }
 ```
 
-`id`, `name`, `version`, `tier`, `target` and `entry` are required. The app shelf uses the package's `icon`, `color` and localized `names` when provided. `description` and its `descriptions` translations are also optional. The OS supports schema and runtime `1` and assumes `1` when either is omitted.
+`id`, `name`, `version`, `tier`, `target` and `entry` are required. The app shelf uses the package's `icon`, `color` and localized `names` when provided. `description` and its `descriptions` translations are also optional. The OS supports runtime `1` and assumes it when omitted.
+
+`schema` says how to read the manifest, and with it the package's kind:
+
+| `schema` | `kind` | The OS treats it as |
+| --- | --- | --- |
+| `1`, or left out | Left out, or `app` | An app: every package built before schema 2 |
+| `2` | `app` | An app, exactly like schema 1 |
+| `2` | `service` | A service: a background program. This release recognizes it and refuses to install it (`gizlet install` reports that it installs apps only); one placed by hand is neither shown on the shelf nor started by `gizlet run` or `gizlet start`. Installing and supervising services comes later |
+
+Any other schema, a schema 2 manifest without `kind`, and a schema 1 manifest whose `kind` is not `app` are refused. [Manifest contract](https://github.com/gizlet/gizlet/blob/main/docs/gizlet-toml.md#manifestjson)
 
 The installer accepts stored or deflated entries with canonical relative names. It rejects links, devices, setuid files, encryption and ZIP64, verifies every file against `CHECKSUMS`, and checks the reverse-DNS `id` and whether the device supports the package's `target` and `tier` (`aarch64-unknown-linux-gnu` or a static `-musl` program, and `lite` on the R36S). The package is unpacked beside the installed version and replaces it only when complete.
 
@@ -60,7 +70,7 @@ On Gizlet OS, `/usr/bin/gizlet` runs the CLI from the Launcher release selected 
 
 | Command | Does |
 | --- | --- |
-| `gizlet install FILE.gzl` | Installs or updates an app; refused while that app runs |
+| `gizlet install FILE.gzl` | Installs or updates an app; refused while that app runs, and for a service |
 | `gizlet uninstall ID [--saves]` | Removes it, and its saves with `--saves`; refused while it runs |
 | `gizlet list` | Lists installed apps: ID, version and name |
 | `gizlet run ID [ARGS]` | Runs it here and waits; the screen must be free, as in the recovery shell |
