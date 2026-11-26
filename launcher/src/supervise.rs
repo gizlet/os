@@ -53,6 +53,9 @@ impl Exit {
 /// script such as `game & wait`. Once the entry exits, whatever is left of
 /// its group is ended too, so nothing keeps the display or the app's lock.
 pub fn run(cmd: &mut Command) -> io::Result<ExitStatus> {
+    // Whatever happens, even a spawn that fails after the child took the
+    // terminal, this process's group gets it back.
+    let _terminal = Terminal;
     let mut child = spawn(cmd)?;
     let mut pad = pad::Pad::open();
     let mut exit = Exit::default();
@@ -77,8 +80,16 @@ pub fn run(cmd: &mut Command) -> io::Result<ExitStatus> {
         }
     };
     end_group(&child, termed);
-    take_terminal();
     Ok(status)
+}
+
+/// Gives the terminal back to this process's group when dropped.
+struct Terminal;
+
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        take_terminal();
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -289,6 +300,55 @@ mod tests {
         assert!(!exit.update(both, at(1600)));
         assert!(!exit.update(both, at(3500)));
         assert!(exit.update(both, at(3600)));
+    }
+
+    /// Run in a process of its own, on a pseudo-terminal it controls (see
+    /// `failed_spawn_gives_the_terminal_back`): an app that cannot start must
+    /// not leave the terminal to its dead process group.
+    #[cfg(unix)]
+    #[test]
+    fn pty_child_failed_spawn() {
+        if std::env::var_os("GIZLET_PTY_CHILD").is_none() {
+            return;
+        }
+        let err = run(&mut Command::new("/nonexistent/gizlet-app")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        let (fg, own) = unsafe { (libc::tcgetpgrp(0), libc::getpgrp()) };
+        assert_eq!(fg, own, "the terminal stayed with the app's group");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_spawn_gives_the_terminal_back() {
+        use std::os::unix::process::CommandExt;
+        let (mut leader, mut follower) = (0, 0);
+        let ok = unsafe {
+            libc::openpty(&mut leader, &mut follower, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        assert_eq!(ok, 0, "openpty");
+        let mut cmd = Command::new(std::env::current_exe().unwrap());
+        cmd.args(["--exact", "supervise::tests::pty_child_failed_spawn", "--test-threads=1"])
+            .env("GIZLET_PTY_CHILD", "1")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        unsafe {
+            cmd.pre_exec(move || {
+                // A new session whose controlling terminal is the pseudo-terminal, on stdin.
+                if libc::setsid() < 0
+                    || libc::ioctl(follower, libc::TIOCSCTTY as _, 0) < 0
+                    || libc::dup2(follower, 0) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let status = cmd.status().unwrap();
+        unsafe {
+            libc::close(leader);
+            libc::close(follower);
+        }
+        assert!(status.success(), "the terminal was not given back after a failed spawn");
     }
 
     #[test]
