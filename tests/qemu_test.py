@@ -1,6 +1,6 @@
 """Boot a Gizlet OS card image on QEMU virt and exercise installation and recovery.
 
-Usage: qemu_test.py IMAGE KERNEL_NAME
+Usage: qemu_test.py IMAGE KERNEL_NAME FLASH_SH FLASH_CARD_SH
 
 KERNEL_NAME is the kernel file on the card's boot partition. The kernel boots
 the card's SquashFS partition, which the test finds through the MBR, with
@@ -124,8 +124,10 @@ def check_ssh(private, boot_offset, kernel, root, work):
     with boot(private, kernel, root, ssh_port=port) as console:
         console.expect(PROMPT)
         console.command("ip addr add 10.0.2.15/24 dev eth0 && ip link set eth0 up")
-        # gizlet-switches.service imports setup.ini while the console is already up.
-        console.command("for i in $(seq 60); do [ \"$(systemctl show -P ActiveState gizlet-switches)\" = activating ] || break; sleep 1; done")
+        # gizlet-switches.service imports setup.ini while the console is already up,
+        # and starts sshd, whose gizlet-ssh.service writes to the console too.
+        console.command("for i in $(seq 60); do [ \"$(systemctl show -P ActiveState gizlet-switches)\" != activating ] && "
+                        "systemctl -q is-active ssh && break; sleep 1; done")
         console.enter("cat '/var/lib/iwd/=54657374204e657421.psk'; /usr/lib/gizlet/gizlet-switch wifi; /usr/lib/gizlet/gizlet-switch ssh; echo \"[$(/usr/lib/gizlet/gizlet-switch ssh-password)]\"")
         # Line by line: services such as gizlet-ssh may print to the console in between.
         for line in (b"[Security]\r\nPassphrase=passphrase-123", b"\r\n[Settings]\r\nAutoConnect=true", b"\r\non",
@@ -222,21 +224,30 @@ def check_ssh(private, boot_offset, kernel, root, work):
           "also after a reboot; key and password logins and scp work")
 
 
-def scenarios(image, kernel_name, work):
+def scenarios(image, kernel_name, flash, flash_card, work):
     parts, signature = card.partitions(image)
     root = f"PARTUUID={signature:08x}-{parts['root'][0]:02x}"
     kernel = work / "kernel"
     subprocess.run(["mcopy", "-i", f"{image}@@{parts['boot'][1]}", "::" + kernel_name, kernel], check=True)
+    # A card written by another tool, larger than the image: the first boot
+    # extends the data partition and grows its filesystem before mounting it.
+    other = work / "other-tool.img"
+    shutil.copyfile(image, other)
+    os.truncate(other, 2 << 30)
+    with boot(other, kernel, root) as console:
+        console.expect(PROMPT)
+        console.enter("cat /run/gizlet-boot.log; [ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 1500000 ] && echo data-grown")
+        console.expect(b"data partition grown to ")
+        console.expect(b"data filesystem grown to fill its partition")
+        console.expect(b"\r\ndata-grown\r\n")
+        console.expect(PROMPT)
+        console.stop()
+    other.unlink()
+    # A larger card, written as flash.sh writes it: partition 3 extended to the
+    # card's end and its filesystem grown to fill it, so the first boot grows nothing.
     private = work / "private.img"
-    shutil.copyfile(image, private)
-    # A larger card than the image, written as flash.sh and flash.ps1 write it:
-    # partition 3 extended to the card's end. First boot grows the filesystem.
     card_bytes = 16 << 30
-    os.truncate(private, card_bytes)
-    with open(private, "r+b") as f:
-        f.seek(478 + 8)
-        start = int.from_bytes(f.read(4), "little")
-        f.write((card_bytes // 512 // 2048 * 2048 - start).to_bytes(4, "little"))
+    subprocess.run(["bash", flash_card, flash, image, private, str(card_bytes)], check=True)
     with boot(private, kernel, root) as console:
         # A fresh card starts the factory launcher. QEMU's machine has no
         # display, so it says so and the recovery shell opens.
@@ -267,10 +278,10 @@ def scenarios(image, kernel_name, work):
         console.expect(b"[/system/bluetooth]\r\n")
         console.expect(b"No default controller available")
         console.expect(PROMPT)
-        console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 15000000 ] && echo data-grown")
-        console.expect(b"\r\ndata-grown\r\n")
+        console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 15000000 ] && echo data-full; grep -c grown /run/gizlet-boot.log")
+        console.expect(b"\r\ndata-full\r\n0\r\n")
         console.expect(PROMPT)
-        # Growing writes no inode tables: the whole first boot writes little to the card.
+        # The first boot writes little to the card: no growth, no inode tables.
         console.enter("echo written-$(( $(awk '{print $7}' /sys/block/vda/stat) / 2048 ))-MiB")
         console.expect(b"\r\nwritten-")  # the output line, not the echoed command
         written = int(console.expect(b"-MiB\r\n"))
@@ -341,6 +352,42 @@ def scenarios(image, kernel_name, work):
         console.expect(PROMPT)
         console.stop()
     check_ssh(private, parts["boot"][1], kernel, root, work)
+    # flash.sh's update rewrites the system and keeps the data partition: the
+    # user's file and time zone stay. A factory launcher entry gets the base's launcher.
+    subprocess.run(["bash", flash_card, "--update", flash, image, private], check=True)
+    with boot(private, kernel, root) as console:
+        console.expect(PROMPT)
+        console.enter("cat /home/check; /usr/lib/gizlet/gizlet-switch timezone")
+        console.expect(b"\r\npersistent-user-file\r\nAmerica/New_York\r\n")
+        console.expect(PROMPT)
+        console.command("mkdir -p /opt/gizlet/launcher/bin && echo old > /opt/gizlet/launcher/bin/gizlet-launcher")
+        console.command("printf '%s\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
+        console.enter("exit")
+        console.expect(b"updated the factory launcher")
+        console.expect(b"Gizlet launcher: no display")
+        console.expect(PROMPT)
+        # So does a boot.ini with Windows line endings, which the Booter accepts.
+        console.command("echo old > /opt/gizlet/launcher/bin/gizlet-launcher")
+        console.command("printf '%s\\r\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
+        console.enter("exit")
+        console.expect(b"updated the factory launcher")
+        console.expect(b"Gizlet launcher: no display")
+        console.expect(PROMPT)
+        # A boot.ini that is a FIFO is refused, without blocking the session.
+        console.command("rm /opt/gizlet/boot.ini && mkfifo /opt/gizlet/boot.ini")
+        console.enter("exit")
+        console.expect(b"invalid boot.ini")
+        console.expect(PROMPT)
+        # An installed launcher replaced by a FIFO is installed again, without blocking.
+        console.command("rm /opt/gizlet/boot.ini && printf '%s\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
+        console.command("rm /opt/gizlet/launcher/gizlet-launcher && mkfifo /opt/gizlet/launcher/gizlet-launcher")
+        console.enter("exit")
+        console.expect(b"updated the factory launcher")
+        console.expect(b"Gizlet launcher: no display")
+        console.expect(PROMPT)
+        console.command("rm /opt/gizlet/boot.ini")
+        console.stop()
+    print("an update keeps the data partition and brings the factory launcher up to date, with LF or CRLF boot.ini")
     # A card missing its data partition must not pick a valid data volume on another disk.
     # The second disk is the real, populated data partition as a standalone virtual disk.
     index, offset, size = parts["data"]
@@ -362,4 +409,4 @@ def scenarios(image, kernel_name, work):
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(dir=os.environ.get("TEST_TMPDIR")) as temp:
-        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], Path(temp))
+        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3], sys.argv[4], Path(temp))

@@ -136,6 +136,7 @@ gizlet_rootfs_test(
     name = "rootfs_test",
     booter = "//session:booter",
     data_uuid = R36S_DATA_UUID,
+    flash = _BOARD + "flash.sh",
     image = ":gizlet-os-r36s",
     licenses = ROOTFS_LICENSES + [
         "linux-firmware/LICENCE.rtlwifi_firmware.txt",
@@ -153,6 +154,7 @@ gizlet_rootfs_test(
 gizlet_qemu_test(
     name = "boot_test",
     size = "medium",
+    flash = _BOARD + "flash.sh",
     image = ":gizlet-os-r36s",
     tags = ["manual"],
     target_compatible_with = _R36S,
