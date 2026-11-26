@@ -27,6 +27,7 @@ set -euo pipefail
 
 main() {
     RELEASE=${GIZLET_RELEASE:-https://github.com/gizlet/os/releases/latest/download}
+    local original_args=("$@")
     # Disks larger than this are listed, but flagged as unlikely to be a TF card.
     LARGE=$((256 * 1000 * 1000 * 1000))
 
@@ -44,6 +45,15 @@ main() {
             *) printf 'error: unknown option %s\n' "$1" >&2; exit 1 ;;
         esac
     done
+    if [ -z "${image}${dry_run}${GIZLET_IMAGE_URL:-}${GIZLET_RELEASE:-}" ]; then
+        local entry
+        local entry_args=(--board gameconsole.r36s)
+        entry=$(curl -fsSL --proto '=https' --proto-redir '=https' https://dl.gizlet.io/releases/latest/flash.sh) ||
+            { printf '%s\n' 'Cannot load the latest Gizlet OS release. / 无法加载最新的 Gizlet OS 版本。' >&2; exit 1; }
+        if [ -n "${lang}" ]; then entry_args+=(--lang "${lang}"); fi
+        bash -s -- "${entry_args[@]}" -- ${original_args[@]+"${original_args[@]}"} <<< "${entry}"
+        return
+    fi
     [ -r /dev/tty ] || { printf '%s\n' 'error: run this from a terminal / 请在终端里运行' >&2; exit 1; }
 
     choose_language
@@ -419,18 +429,16 @@ confirm_erase() {
 # Downloads and verifies the image, and decompresses it before the card is
 # touched: a raw disk takes whole sectors, which a pipe does not guarantee.
 get_image() {
-    if [ -n "${image}" ]; then
+    if [ -n "${GIZLET_IMAGE_URL:-}" ]; then
+        source_url=${GIZLET_IMAGE_URL}
+        sums_url=${GIZLET_CHECKSUM_URL:?missing release checksum URL}
+        verify_image
+    elif [ -n "${image}" ]; then
         [ -f "${image}" ] || die "$(m "no such file ${image}" "文件不存在：${image}")"
     else
-        image=${work}/${name}.img.gz
-        say "$(m 'Downloading' '正在下载') ${name}.img.gz ..."
-        curl -fL --progress-bar -o "${image}" "${RELEASE}/${name}.img.gz" || die "$(m 'download failed:' '下载失败：') ${RELEASE}/${name}.img.gz"
-        curl -fsSL -o "${work}/SHA256SUMS" "${RELEASE}/SHA256SUMS" || die "$(m 'cannot download SHA256SUMS' '无法下载 SHA256SUMS')"
-        expected=$(awk -v f="${name}.img.gz" '$2 == f || $2 == "*" f {print $1}' "${work}/SHA256SUMS")
-        [ -n "${expected}" ] || die "$(m "SHA256SUMS does not list ${name}.img.gz" "SHA256SUMS 里没有 ${name}.img.gz")"
-        if command -v sha256sum >/dev/null; then actual=$(sha256sum "${image}" | cut -d' ' -f1)
-        else actual=$(shasum -a 256 "${image}" | cut -d' ' -f1); fi
-        [ "${actual}" = "${expected}" ] || die "$(m 'the download is corrupt (SHA-256 mismatch)' '下载的文件已损坏（SHA-256 不一致）')"
+        source_url=${RELEASE}/${name}.img.gz
+        sums_url=${RELEASE}/SHA256SUMS
+        verify_image
     fi
     case "${image}" in
         *.gz)
@@ -443,6 +451,40 @@ get_image() {
     # The card may have been swapped while the image downloaded.
     check_same_disk
     [ "${bytes}" -ge "${image_bytes}" ] || die "$(m 'the card is smaller than the image' '这张卡比镜像还小')"
+}
+
+verify_image() {
+    local filename expected actual
+    filename=${source_url##*/}
+    image=${work}/${filename}
+    say "$(m 'Downloading' '正在下载') ${filename} ..."
+    curl -fL --proto '=https' --proto-redir '=https' --progress-bar -o "${image}" "${source_url}" ||
+        die "$(m 'download failed:' '下载失败：') ${source_url}"
+    curl -fsSL --proto '=https' --proto-redir '=https' -o "${work}/SHA256SUMS" "${sums_url}" ||
+        die "$(m 'cannot download SHA256SUMS' '无法下载 SHA256SUMS')"
+    expected=$(awk -v f="${filename}" '$2 == f || $2 == "*" f {print $1}' "${work}/SHA256SUMS")
+    if command -v sha256sum >/dev/null; then actual=$(sha256sum "${image}" | cut -d' ' -f1)
+    else actual=$(shasum -a 256 "${image}" | cut -d' ' -f1); fi
+    [ "${actual}" = "${expected}" ] || die "$(m 'the download is corrupt (SHA-256 mismatch)' '下载的文件已损坏（SHA-256 不一致）')"
+}
+
+configure_release_panel() {
+    [ -n "${GIZLET_IMAGE_URL:-}" ] && [ "${panel}" = v30-panel4 ] || return 0
+    local attempt copied=''
+    for attempt in 1 2 3 4 5; do
+        if mount_boot rw; then
+            if [ "${os}" = mac ]; then
+                cp -X "${boot_dir}/r36s-v30-panel4.dtbo" "${boot_dir}/mipi-panel.dtbo" && copied=yes
+            else
+                as_root cp "${boot_dir}/r36s-v30-panel4.dtbo" "${boot_dir}/mipi-panel.dtbo" && copied=yes
+            fi
+            unmount_boot || die "$(m 'cannot unmount the written boot partition' '无法卸载写入后的启动分区')"
+            [ -n "${copied}" ] && return 0
+            break
+        fi
+        sleep 1
+    done
+    die "$(m 'Card written, but Panel 4 setup failed. Copy r36s-v30-panel4.dtbo to mipi-panel.dtbo on GIZLETBOOT.' '已写卡，但无法配置 Panel 4。请在 GIZLETBOOT 上把 r36s-v30-panel4.dtbo 复制为 mipi-panel.dtbo。')"
 }
 
 write_card() {
@@ -471,6 +513,7 @@ write_card() {
     else
         erase_card
     fi
+    configure_release_panel
     sync
     [ "${os}" != mac ] || diskutil eject "${disk}" >/dev/null 2>&1 || true
     say ''

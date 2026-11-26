@@ -416,7 +416,18 @@ function Update-Card([string]$raw, $disk) {
     $ProgressPreference = 'SilentlyContinue'
     # Windows PowerShell 5.1 on older Windows 10 does not offer TLS 1.2 by default; GitHub needs it.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    if (-not ($env:GIZLET_IMAGE -or $env:GIZLET_IMAGE_URL -or $env:GIZLET_RELEASE)) {
+        $entryPath = Join-Path ([IO.Path]::GetTempPath()) "gizlet-entry-$([guid]::NewGuid()).ps1"
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://dl.gizlet.io/releases/latest/flash.ps1' -OutFile $entryPath
+            & ([scriptblock]::Create([IO.File]::ReadAllText($entryPath))) -Board gameconsole.r36s
+        } finally {
+            Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
+        }
+        return
+    }
     $release = if ($env:GIZLET_RELEASE) { $env:GIZLET_RELEASE } else { 'https://github.com/gizlet/os/releases/latest/download' }
+    $managedImage = $env:GIZLET_IMAGE_URL
     $large = 256GB
 
     # --- language
@@ -552,18 +563,22 @@ function Update-Card([string]$raw, $disk) {
     New-Item -ItemType Directory $work | Out-Null
     try {
         $image = $env:GIZLET_IMAGE
-        if ($image) {
+        if ($image -and -not $managedImage) {
             if (-not (Test-Path -LiteralPath $image -PathType Leaf)) { throw (M "No such file $image." "文件不存在：$image。") }
             # .NET resolves relative paths against the process's directory, not PowerShell's.
             $image = (Resolve-Path -LiteralPath $image).ProviderPath
         } else {
-            $image = Join-Path $work "$name.img.gz"
-            Write-Host ((M 'Downloading' '正在下载') + " $name.img.gz ...")
-            Invoke-WebRequest -UseBasicParsing -Uri "$release/$name.img.gz" -OutFile $image
-            $sums = (Invoke-WebRequest -UseBasicParsing -Uri "$release/SHA256SUMS").Content
+            $imageUrl = if ($managedImage) { $managedImage } else { "$release/$name.img.gz" }
+            $sumsUrl = if ($managedImage) { $env:GIZLET_CHECKSUM_URL } else { "$release/SHA256SUMS" }
+            $file = ([uri]$imageUrl).Segments[-1]
+            $image = Join-Path $work $file
+            Write-Host ((M 'Downloading' '正在下载') + " $file ...")
+            $downloadOptions = if ($managedImage) { @{ MaximumRedirection = 0 } } else { @{} }
+            Invoke-WebRequest -UseBasicParsing -Uri $imageUrl -OutFile $image @downloadOptions
+            $sums = (Invoke-WebRequest -UseBasicParsing -Uri $sumsUrl @downloadOptions).Content
             if ($sums -is [byte[]]) { $sums = [Text.Encoding]::ASCII.GetString($sums) }
-            $line = $sums -split "`n" | Where-Object { $_ -match "^([0-9a-f]{64}) +\*?$([regex]::Escape("$name.img.gz"))\s*$" } | Select-Object -First 1
-            if (-not $line) { throw (M "SHA256SUMS does not list $name.img.gz." "SHA256SUMS 里没有 $name.img.gz。") }
+            $line = $sums -split "`n" | Where-Object { $_ -match "^([0-9a-f]{64}) +\*?$([regex]::Escape($file))\s*$" } | Select-Object -First 1
+            if (-not $line) { throw (M "SHA256SUMS does not list $file." "SHA256SUMS 里没有 $file。") }
             $expected = ($line -split ' ')[0]
             if ((Get-FileHash -Algorithm SHA256 $image).Hash -ne $expected.ToUpperInvariant()) {
                 throw (M 'The download is corrupt (SHA-256 mismatch).' '下载的文件已损坏（SHA-256 不一致）。')
@@ -677,6 +692,15 @@ public static class GizletRawDisk {
                 if ($offline) { Set-Disk -Number $disk.Number -IsOffline $false }
             }
             Update-Disk -Number $disk.Number
+        }
+        if ($managedImage -and $panel -eq 'v30-panel4') {
+            try {
+                $drive = Get-BootDrive $disk.Number
+                if (-not $drive) { throw 'Boot partition unavailable.' }
+                Copy-Item -LiteralPath "$drive\r36s-v30-panel4.dtbo" -Destination "$drive\mipi-panel.dtbo" -Force
+            } catch {
+                throw (M 'Card written, but Panel 4 setup failed. Copy r36s-v30-panel4.dtbo to mipi-panel.dtbo on GIZLETBOOT.' '已写卡，但无法配置 Panel 4。请在 GIZLETBOOT 上把 r36s-v30-panel4.dtbo 复制为 mipi-panel.dtbo。')
+            }
         }
     } finally {
         Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue

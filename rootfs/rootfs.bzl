@@ -38,6 +38,7 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/systemd/system/gizlet-switches.service": "usr/lib/systemd/system/gizlet-switches.service",
     "//rootfs:usr/lib/systemd/system/gizlet-var.service": "usr/lib/systemd/system/gizlet-var.service",
     "//rootfs:usr/lib/udev/rules.d/90-gizlet-hostname.rules": "usr/lib/udev/rules.d/90-gizlet-hostname.rules",
+    "//rootfs:usr/lib/gizlet/launcher/allowed_signers": "usr/lib/gizlet/launcher/allowed_signers",
     "@bun//:LICENSE.md": "usr/share/licenses/bun/LICENSE.md",
     "//third_party/glibc:LGPL-2.1": "usr/share/licenses/glibc-LGPL-2.1",
     # Fonts built into the launcher.
