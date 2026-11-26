@@ -47,39 +47,125 @@ impl Exit {
 }
 
 /// Runs `cmd` until it exits, ending it when the player asks.
+///
+/// The app gets a process group of its own, in the terminal's foreground,
+/// so ending it reaches every program it started, as when its entry is a
+/// script such as `game & wait`. Once the entry exits, whatever is left of
+/// its group is ended too, so nothing keeps the display or the app's lock.
 pub fn run(cmd: &mut Command) -> io::Result<ExitStatus> {
-    let mut child = cmd.spawn()?;
+    let mut child = spawn(cmd)?;
     let mut pad = pad::Pad::open();
     let mut exit = Exit::default();
     let mut termed: Option<Instant> = None;
-    loop {
+    let status = loop {
         if let Some(status) = child.try_wait()? {
-            return Ok(status);
+            break status;
         }
         let held = pad.wait(Duration::from_millis(100));
         let now = Instant::now();
         match termed {
             None if exit.update(held, now) => {
                 eprintln!("gizlet: back to the launcher, ending the app");
-                terminate(&child);
+                signal_group(&child, Signal::Term);
                 termed = Some(now);
             }
             Some(t) if now - t >= KILL_AFTER => {
-                let _ = child.kill();
-                return child.wait();
+                signal_group(&child, Signal::Kill);
+                break child.wait()?;
             }
             _ => {}
         }
+    };
+    end_group(&child, termed);
+    take_terminal();
+    Ok(status)
+}
+
+#[derive(Clone, Copy)]
+enum Signal {
+    Term,
+    Kill,
+}
+
+/// Starts `cmd` as the leader of a new process group.
+fn spawn(cmd: &mut Command) -> io::Result<Child> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // In the child, before exec: a group of its own, made the terminal's
+        // foreground group so the app can still change the terminal's modes.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::isatty(0) == 1 {
+                    let old = libc::signal(libc::SIGTTOU, libc::SIG_IGN);
+                    libc::tcsetpgrp(0, libc::getpid());
+                    libc::signal(libc::SIGTTOU, old);
+                }
+                Ok(())
+            });
+        }
+    }
+    cmd.spawn()
+}
+
+/// Sends a signal to the app's whole group; false when nothing is left in it.
+fn signal_group(child: &Child, signal: Signal) -> bool {
+    #[cfg(unix)]
+    {
+        let sig = match signal {
+            Signal::Term => libc::SIGTERM,
+            Signal::Kill => libc::SIGKILL,
+        };
+        unsafe { libc::kill(-(child.id() as i32), sig) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (child, signal);
+        false
     }
 }
 
-fn terminate(child: &Child) {
+/// After the entry exits: ends what is left of its group, with SIGTERM, then
+/// SIGKILL once `KILL_AFTER` has passed since the first SIGTERM.
+fn end_group(child: &Child, termed: Option<Instant>) {
+    if !signal_group(child, Signal::Term) {
+        return;
+    }
+    let deadline = termed.unwrap_or_else(Instant::now) + KILL_AFTER;
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+        if !alive(child) {
+            return;
+        }
+    }
+    signal_group(child, Signal::Kill);
+}
+
+fn alive(child: &Child) -> bool {
     #[cfg(unix)]
     unsafe {
-        libc::kill(child.id() as i32, libc::SIGTERM);
+        libc::kill(-(child.id() as i32), 0) == 0
     }
     #[cfg(not(unix))]
-    let _ = child;
+    {
+        let _ = child;
+        false
+    }
+}
+
+/// Makes this process's group the terminal's foreground again.
+fn take_terminal() {
+    #[cfg(unix)]
+    unsafe {
+        if libc::isatty(0) == 1 {
+            let old = libc::signal(libc::SIGTTOU, libc::SIG_IGN);
+            libc::tcsetpgrp(0, libc::getpgrp());
+            libc::signal(libc::SIGTTOU, old);
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -234,6 +320,54 @@ mod tests {
         assert!(!exit.update(both, at(1600)));
         assert!(!exit.update(both, at(3500)));
         assert!(exit.update(both, at(3600)));
+    }
+
+    #[cfg(unix)]
+    fn gone(pid: i32) -> bool {
+        // Orphans are reaped by init; a zombie counts as gone.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let state = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+            let state = String::from_utf8_lossy(&state.stdout);
+            if state.trim().is_empty() || state.trim().starts_with('Z') {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ends_what_a_wrapper_script_left() {
+        let dir = std::env::temp_dir().join(format!("gizlet-supervise-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid_file = dir.join("pid");
+        // The entry starts the game in the background and exits at once.
+        let status = run(Command::new("/bin/sh").args(["-c", "sleep 60 & echo $! > \"$1\"", "sh"]).arg(&pid_file)).unwrap();
+        assert!(status.success());
+        let pid: i32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        assert!(gone(pid), "the background program outlived its entry");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ending_reaches_the_whole_group() {
+        let dir = std::env::temp_dir().join(format!("gizlet-supervise-group-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid_file = dir.join("pid");
+        // As the exit gesture does, while the entry waits for its game.
+        let mut child = spawn(Command::new("/bin/sh").args(["-c", "sleep 60 & echo $! > \"$1\"; wait", "sh"]).arg(&pid_file)).unwrap();
+        while std::fs::read_to_string(&pid_file).map_or(true, |s| !s.ends_with('\n')) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let pid: i32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        assert!(signal_group(&child, Signal::Term));
+        child.wait().unwrap();
+        end_group(&child, Some(Instant::now()));
+        assert!(gone(pid), "the game outlived the exit");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]
