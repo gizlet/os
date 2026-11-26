@@ -66,6 +66,9 @@ On Gizlet OS, `/usr/bin/gizlet` runs the CLI from the Launcher release selected 
 | `gizlet run ID [ARGS]` | Runs it here and waits; the screen must be free, as in the recovery shell |
 | `gizlet start ID` | Asks the launcher on the screen to quit and run it, then come back |
 | `gizlet target` | Prints the target triple and tier packages must match |
+| `gizlet system reload-runtime FILE.sqfs` | Activates a local runtime 1 image for new launches on Gizlet OS as root |
+
+See [Activating a new build](../runtime/README.md#activating-a-new-build) for runtime updates.
 
 ## Updating the Launcher and CLI
 

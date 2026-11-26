@@ -792,14 +792,22 @@ pub fn command(library: &Library, app: &App, lang: &str, swap_ab: bool, args: &[
     let saves = library.saves(app.id());
     fs::create_dir_all(&saves)?;
     let entry = app.entry();
-    let loader = library.prefix.join("runtime/1/bin/gizlet-run");
-    let mut cmd = if cfg!(target_os = "linux") && needs_loader(&entry) && loader.is_file() {
-        let mut c = std::process::Command::new(loader);
-        c.arg(&entry);
-        c
-    } else {
-        std::process::Command::new(&entry)
-    };
+    let mut cmd = std::process::Command::new(&entry);
+    if cfg!(target_os = "linux") && needs_loader(&entry) {
+        let loader = if cfg!(feature = "gizlet-os") {
+            let runtime = Path::new("/opt/gizlet/runtime");
+            fs::canonicalize(runtime.join("1-current/bin/gizlet-run"))
+                .unwrap_or_else(|_| runtime.join("1/bin/gizlet-run"))
+        } else {
+            library.prefix.join("runtime/1/bin/gizlet-run")
+        };
+        if loader.is_file() {
+            cmd = std::process::Command::new(loader);
+            cmd.arg(&entry);
+        } else if cfg!(feature = "gizlet-os") {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Gizlet runtime 1 is not mounted"));
+        }
+    }
     cmd.args(args)
         .current_dir(&app.dir)
         .env("GIZLET_APP_ID", app.id())

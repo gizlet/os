@@ -13,16 +13,19 @@
 # once here, with its cursor hidden, so a switch shows black rather than old
 # boot messages; the kernel prints only serious ones after boot (sysctl.d).
 dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) || exit 1
-run=/opt/gizlet/runtime/1/bin/gizlet-run
 launcher=$dir/bin/gizlet-launcher
 cli=$dir/bin/cli
 request=/run/gizlet-launch
+runtime_runner() {
+    readlink -e /opt/gizlet/runtime/1-current/bin/gizlet-run ||
+        printf '%s\n' /opt/gizlet/runtime/1/bin/gizlet-run
+}
 # Options such as --probe pass straight through.
-[ $# -eq 0 ] || exec "$run" "$launcher" "$@"
+[ $# -eq 0 ] || exec "$(runtime_runner)" "$launcher" "$@"
 printf '\033[2J\033[H\033[?25l' 2>/dev/null > /dev/tty1 || :
 while :; do
     rm -f "$request"
-    "$run" "$launcher"
+    "$(runtime_runner)" "$launcher"
     status=$?
     [ -f "$request" ] || exit "$status"
     id=$(head -n 1 "$request")

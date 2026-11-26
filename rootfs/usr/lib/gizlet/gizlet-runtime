@@ -1,0 +1,86 @@
+#!/bin/sh
+set -eu
+umask 077
+runtime=/opt/gizlet/runtime
+active=$runtime/1-current
+
+fail() {
+    printf 'gizlet: %s\n' "$*" >&2
+    exit 1
+}
+
+mount_runtime() {
+    [ -f "$1/image.sqfs" ] && [ ! -L "$1/image.sqfs" ] &&
+        [ -d "$1/root" ] && [ ! -L "$1/root" ] &&
+        mount -t squashfs -o loop,ro,nodev,nosuid "$1/image.sqfs" "$1/root"
+}
+
+check_runtime() {
+    [ -x "$1/bin/gizlet-run" ] && [ -x "$1/lib/ld-linux-aarch64.so.1" ] &&
+        [ -f "$1/lib/libraylib.so.600" ] && [ -f "$1/share/alsa/alsa.conf" ] &&
+        "$1/bin/gizlet-run" --list /usr/lib/gizlet/launcher/bin/gizlet-launcher >/dev/null
+}
+
+remove_generation() {
+    if mountpoint -q "$1/root"; then
+        umount "$1/root" || return
+    fi
+    rm -rf -- "$1"
+}
+
+restore_runtime() {
+    [ -d "$runtime" ] || return 0
+    target=$(readlink "$active") || target=
+    if [ -n "$target" ]; then
+        case $target in
+            .runtime-1.[a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9]/root)
+                generation=$runtime/${target%/root} ;;
+            *) fail "invalid runtime 1 selection in $active" ;;
+        esac
+        [ -d "$generation" ] && [ ! -L "$generation" ] || fail "missing runtime 1 generation"
+        if ! mountpoint -q "$generation/root"; then
+            mount_runtime "$generation" || fail "cannot mount selected runtime 1"
+            if ! check_runtime "$generation/root"; then
+                umount "$generation/root"
+                fail "selected image failed runtime 1 validation"
+            fi
+        fi
+    fi
+    for old in "$runtime"/.runtime-1.??????; do
+        [ -d "$old" ] && [ ! -L "$old" ] || continue
+        [ "$old/root" != "$runtime/$target" ] || continue
+        mountpoint -q "$old/root" || rm -rf -- "$old"
+    done
+}
+
+reload_runtime() {
+    [ -f /run/gizlet-data.ready ] || fail 'the data partition is not mounted'
+    [ -f "$1" ] || fail 'expected a local runtime 1 SquashFS image'
+    mkdir -p -- "$runtime"
+    generation=$(mktemp -d "$runtime/.runtime-1.XXXXXX")
+    target=${generation##*/}/root
+    trap '[ "$(readlink "$active")" = "$target" ] || remove_generation "$generation"' EXIT
+    trap 'exit 1' HUP INT TERM
+    mkdir "$generation/root"
+    cp -- "$1" "$generation/image.sqfs"
+    mount_runtime "$generation" || fail 'cannot mount runtime image'
+    check_runtime "$generation/root" || fail 'image failed runtime 1 validation'
+    chmod 0755 "$generation"
+    ln -s "$target" "$generation/active"
+    sync -f "$generation"
+    mv -fT -- "$generation/active" "$active"
+    sync -f "$runtime"
+    printf '%s\n' 'Runtime 1 activated. New launches use it immediately.'
+}
+
+[ "$(id -u)" -eq 0 ] || fail 'runtime changes require root'
+exec 9>/run/gizlet-runtime.lock
+flock -x 9
+case ${1-} in
+    restore) restore_runtime ;;
+    reload)
+        [ "$#" -eq 2 ] || fail 'usage: gizlet system reload-runtime FILE.sqfs'
+        reload_runtime "$2"
+        ;;
+    *) fail 'invalid runtime operation' ;;
+esac

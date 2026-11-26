@@ -27,7 +27,7 @@ pub fn main(args: &[String]) -> i32 {
         ("help" | "--help" | "-h", _) => {
             println!("{USAGE}");
             if cfg!(feature = "gizlet-os") {
-                println!("\nOn Gizlet OS:\n  update FILE|HTTPS_URL  install a signed Launcher and CLI update");
+                println!("\nOn Gizlet OS:\n  update FILE|HTTPS_URL  install a signed Launcher and CLI update\n  system reload-runtime FILE.sqfs\n                         activate a local runtime image for new launches");
             }
             Ok(())
         }

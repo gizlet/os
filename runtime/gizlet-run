@@ -6,7 +6,7 @@
 # GBM come from the runtime's Mesa: the GPU's driver where the kernel offers
 # one (Panfrost on the R36S), llvmpipe on the CPU otherwise.
 set -eu
-runtime=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+runtime=$(CDPATH='' cd -P -- "$(dirname -- "$0")/.." && pwd -P)
 export __EGL_VENDOR_LIBRARY_DIRS="$runtime/share/glvnd/egl_vendor.d"
 export LIBGL_DRIVERS_PATH="$runtime/lib/dri"
 export GBM_BACKENDS_PATH="$runtime/lib/gbm"

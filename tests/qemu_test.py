@@ -367,6 +367,68 @@ def install_launcher_updates(console, pack_release):
     console.expect(PROMPT)
 
 
+def check_runtime_reload(console):
+    """New apps use the active mount and a running process keeps its own runtime path."""
+    manifest = {
+        "id": "dev.gizlet.test-runtime",
+        "name": "Runtime path",
+        "version": "1.0.0",
+        "runtime": 1,
+        "target": "aarch64-unknown-linux-gnu",
+        "tier": "lite",
+        "entry": "bin/printenv",
+    }
+    send(console, gzl({"manifest.json": (json.dumps(manifest).encode(), 0o644),
+                      "bin/printenv": (b"replaced in the guest", 0o755)}), "/tmp/runtime.gzl")
+    console.command("gizlet install /tmp/runtime.gzl && cp /usr/bin/printenv /opt/gizlet/apps/dev.gizlet.test-runtime/bin/printenv")
+    console.enter("gizlet run dev.gizlet.test-runtime ALSA_CONFIG_DIR")
+    console.expect(b"\r\n/opt/gizlet/runtime/1/share/alsa\r\n")
+    console.expect(PROMPT)
+    console.command("runtime=/opt/gizlet/runtime")
+    console.enter('gizlet system reload-runtime "$runtime/1.sqfs"')
+    console.expect(b"\r\nRuntime 1 activated.")
+    console.expect(PROMPT)
+    console.command('first=$(readlink -e "$runtime/1-current")')
+    console.enter('test "$(gizlet run dev.gizlet.test-runtime ALSA_CONFIG_DIR)" = "$first/share/alsa" && echo first-runtime')
+    console.expect(b"\r\nfirst-runtime\r\n")
+    console.expect(PROMPT)
+    console.command('"$runtime/1-current/bin/gizlet-run" /bin/sh -c '
+                    '\'touch /tmp/runtime-running; while [ ! -f /tmp/runtime-continue ]; do sleep .1; done; '
+                    'test -r "$ALSA_CONFIG_PATH" && echo "$ALSA_CONFIG_DIR" > /tmp/pinned-runtime\' & '
+                    'old_runtime_pid=$!')
+    console.enter("timeout 15 sh -c 'while [ ! -f /tmp/runtime-running ]; do sleep .1; done' && echo runtime-running")
+    console.expect(b"\r\nruntime-running\r\n")
+    console.expect(PROMPT)
+    console.enter('gizlet system reload-runtime "$runtime/1.sqfs"')
+    console.expect(b"\r\nRuntime 1 activated.")
+    console.expect(PROMPT)
+    console.command('second=$(readlink -e "$runtime/1-current") && touch /tmp/runtime-continue')
+    console.enter('wait "$old_runtime_pid" && test "$first" != "$second" && mountpoint -q "$first" '
+                  '&& test "$(cat /tmp/pinned-runtime)" = "$first/share/alsa" '
+                  '&& test "$(gizlet run dev.gizlet.test-runtime ALSA_CONFIG_DIR)" = "$second/share/alsa" '
+                  '&& echo runtime-pinned')
+    console.expect(b"\r\nruntime-pinned\r\n")
+    console.expect(PROMPT)
+    console.enter('echo invalid > /tmp/invalid.sqfs; gizlet system reload-runtime /tmp/invalid.sqfs; echo status-$?')
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    console.enter('test "$(readlink -e "$runtime/1-current")" = "$second" '
+                  '&& test "$(ls -d "$runtime"/.runtime-1.* | wc -l)" -eq 2 '
+                  '&& printf "%s\\n" "$second" > /home/active-runtime && echo reload-rejected')
+    console.expect(b"\r\nreload-rejected\r\n")
+    console.expect(PROMPT)
+
+
+def check_runtime_after_reboot(console):
+    console.enter('runtime=/opt/gizlet/runtime; active=$(cat /home/active-runtime) '
+                  '&& mountpoint -q "$active" && test "$(ls -d "$runtime"/.runtime-1.* | wc -l)" -eq 1 '
+                  '&& test "$(gizlet run dev.gizlet.test-runtime ALSA_CONFIG_DIR)" = "$active/share/alsa" '
+                  '&& echo runtime-restored')
+    console.expect(b"\r\nruntime-restored\r\n")
+    console.expect(PROMPT)
+    console.command("gizlet uninstall dev.gizlet.test-runtime --saves && rm /home/active-runtime")
+
+
 def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
     parts, signature = card.partitions(image)
     root = f"PARTUUID={signature:08x}-{parts['root'][0]:02x}"
@@ -441,6 +503,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
             console.expect(line)
         console.expect(PROMPT)
         check_apps(console)
+        check_runtime_reload(console)
         console.command("mkdir /opt/gizlet/bin")
         console.command("printf '%s\\n' '#!/bin/sh' 'echo hello-from-card' > /opt/gizlet/bin/hello && chmod 755 /opt/gizlet/bin/hello")
         console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini")
@@ -468,6 +531,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         console.expect(b"\r\nhello-from-card\r\n")
         console.expect(b"boot entry finished with status 0")
         console.expect(PROMPT)
+        check_runtime_after_reboot(console)
         console.enter("cat /home/check")
         console.expect(b"\r\npersistent-user-file\r\n")
         console.expect(PROMPT)
