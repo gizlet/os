@@ -32,6 +32,20 @@ pub const LAUNCH_REQUEST: &str = "/run/gizlet-launch";
 /// The running launcher's process ID, for `gizlet start`.
 pub const LAUNCHER_PID: &str = "/run/gizlet-launcher.pid";
 
+/// Writes the request the launcher's start script reads. Each request is
+/// written to its own file, then renamed over the request, so two at once
+/// never publish a partial or each other's ID.
+pub fn request_launch(id: &str) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+    let tmp = format!("{LAUNCH_REQUEST}.{}-{}.new", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+    let result = fs::write(&tmp, format!("{id}\n")).and_then(|()| fs::rename(&tmp, LAUNCH_REQUEST));
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// `/opt/gizlet` on Gizlet OS, the launcher's data folder elsewhere, or `GIZLET_PREFIX`.
 pub fn prefix() -> PathBuf {
     if let Some(dir) = std::env::var_os("GIZLET_PREFIX") {

@@ -3,8 +3,6 @@
 //! desktop window and anything between.
 //!
 //! Options: `--probe` prints what the device reports and exits; `--version`.
-//! The `gizlet` subcommands (`install`, `uninstall`, `list`, `run`, `start`,
-//! `target`, `help`) manage installed apps instead, see `cli.rs`.
 //!
 //! Environment:
 //! - `GIZLET_WINDOW=WIDTHxHEIGHT`: the window size on desktops (default 1280x720).
@@ -15,8 +13,6 @@
 //! - `GIZLET_SCRIPT`: scripted input, see `script.rs`.
 
 mod app;
-mod apps;
-mod cli;
 mod clock;
 #[cfg(all(target_os = "linux", feature = "gizlet-os"))]
 mod evdev;
@@ -27,13 +23,12 @@ mod input;
 mod keyboard;
 mod painter;
 mod script;
-mod settings;
-mod supervise;
 mod system;
 mod theme;
 mod ui;
 mod zones;
 
+use gizlet_launcher::{apps, settings};
 use raylib_sys::{self as ffi, ConfigFlags as F};
 use std::ffi::CString;
 
@@ -49,12 +44,11 @@ const PULSE_FADE_SECONDS: f32 = 1.0;
 const STILL_REDRAW_SECONDS: f64 = 1.0;
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(status) = cli::main(&args) {
-        std::process::exit(status);
-    }
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
     match args.first().map(String::as_str) {
         None => {}
+        // The desktop shelf starts another copy to supervise the selected app.
+        Some("run") if !KMS => std::process::exit(gizlet_launcher::cli::main(&args)),
         Some("--version") => {
             println!("gizlet-launcher {VERSION}");
             return;
@@ -64,7 +58,7 @@ fn main() {
             return;
         }
         Some(other) => {
-            eprintln!("usage: gizlet-launcher [--probe | --version | help | COMMAND ...]\nunknown option {other}");
+            eprintln!("usage: gizlet-launcher [--probe | --version]\nunknown option {other}");
             std::process::exit(2);
         }
     }

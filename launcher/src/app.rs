@@ -338,9 +338,10 @@ impl App {
         let id = app.id().to_string();
         let name = app.manifest.name_for(self.lang_code()).to_string();
         let result = if cfg!(feature = "gizlet-os") {
-            crate::cli::request_launch(&id).map(|()| self.leave = true)
+            apps::request_launch(&id).map(|()| self.leave = true)
         } else {
-            // A thread waits for the app, so it leaves no zombie when it exits.
+            // The desktop executable's run command supervises the app. A
+            // thread waits for that process so it leaves no zombie.
             std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(["run", &id]).spawn()).map(|mut child| {
                 std::thread::spawn(move || child.wait());
             })

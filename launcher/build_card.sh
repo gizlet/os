@@ -3,9 +3,10 @@
 # under /in: launcher/ (this crate), vendor/ (its crates), rust/ (the
 # toolchain) and raylib/libraylib.so, Gizlet runtime 1's raylib for DRM with
 # OpenGL ES 2. The launcher links that library and runs against the runtime
-# through gizlet-run.
+# through gizlet-run. The CLI uses the base system's libraries.
 set -eu
-out=$1
+launcher_out=$1
+cli_out=$2
 
 # Rust: the three components copied into one tree (rustc finds its sysroot
 # from its own path). Each component has its own manifest.in; the last wins.
@@ -39,6 +40,8 @@ cd /tmp/src
 export RUSTFLAGS="--remap-path-prefix=/tmp/src=. --remap-path-prefix=/in/vendor=vendor --remap-path-prefix=$CARGO_HOME=cargo"
 cargo build --offline --locked --release --features gizlet-os
 launcher=/tmp/target/release/gizlet-launcher
+cli=/tmp/target/release/gizlet-cli
 soname=$(readelf -dW /in/raylib/libraylib.so | sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p')
 readelf -dW "$launcher" | grep -qF "Shared library: [$soname]" || { echo "the launcher does not link $soname" >&2; exit 1; }
-cp "$launcher" "/out/$out"
+cp "$launcher" "/out/$launcher_out"
+cp "$cli" "/out/$cli_out"

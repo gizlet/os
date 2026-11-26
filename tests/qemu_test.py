@@ -206,7 +206,7 @@ def check_ssh(private, boot_offset, kernel, root, work):
                        stdin=subprocess.DEVNULL, check=True, timeout=30)
         assert back.read_bytes() == payload.read_bytes(), "scp round trip changed the file"
         console.command("rm /home/payload")
-        console.enter("/opt/gizlet/launcher/gizlet-launcher --probe")
+        console.enter("/usr/lib/gizlet/launcher-release start --probe")
         console.expect(b"wifi: Ok(WifiState { on: true")
         console.expect(b'ssh: Ok(SshState { on: true, running: true, keys: Some(1), password: Some("gizlet test") })')
         console.expect(b'clock: Ok(ClockState { zone: "Asia/Shanghai", synced: ')
@@ -275,6 +275,12 @@ def send(console, data, path):
 
 def check_apps(console):
     """Installs, lists, runs and removes an app with the gizlet command, and refuses a tampered package."""
+    console.enter("gizlet")
+    console.expect(b"usage: gizlet <command>")
+    console.expect(PROMPT)
+    console.enter("/usr/lib/gizlet/launcher/bin/cli target")
+    console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\n")
+    console.expect(PROMPT)
     manifest = ('id = "dev.gizlet.test-hello"\nname = "Hello"\nversion = "0.1.0"\ntier = "lite"\n'
                 'target = "aarch64-unknown-linux-gnu"\nentry = "bin/hello.js"\n\n[names]\nzh-CN = "你好"\n')
     hello = (b'#!/usr/bin/bun\n'
@@ -322,7 +328,36 @@ def check_apps(console):
     print("gizlet installs, lists, runs and removes a .gzl app and refuses one that fails its checksums")
 
 
-def scenarios(image, kernel_name, flash, flash_card, work):
+def install_launcher_updates(console, pack_release):
+    console.command("set +H; mkdir -p /opt/gizlet/launcher /tmp/updates && cd /tmp/updates")
+    send(console, pack_release.read_bytes(), "/tmp/updates/pack.sh")
+    console.command("cp /usr/lib/gizlet/launcher/start start.sh && ssh-keygen -qt ed25519 -N '' -f test-key")
+    console.command("(printf 'launcher '; cat test-key.pub) > /opt/gizlet/launcher/allowed_signers")
+    console.command('pack() { printf "#!/bin/sh\\necho cli-%s\\n" "$1" > cli; '
+                    'sh pack.sh "$1" test-key /usr/lib/gizlet/launcher/bin/gizlet-launcher cli "$1.gizlet"; }')
+    for version in ("1.0.0", "1.1.0", "1.2.0"):
+        console.enter(f"pack {version} && gizlet update {version}.gizlet")
+        console.expect(f"Installed Launcher release {version}".encode())
+        console.expect(PROMPT)
+    console.enter("pack 1.10.0 && openssl req -x509 -newkey ed25519 -nodes -days 1 -subj /CN=localhost "
+                  "-addext subjectAltName=DNS:localhost -keyout tls.key -out tls.crt && echo tls-ready")
+    console.expect(b"\r\ntls-ready\r\n")
+    console.expect(PROMPT)
+    console.command("openssl s_server -quiet -WWW -accept 8443 -cert tls.crt -key tls.key </dev/null >/tmp/tls.log 2>&1 &")
+    console.enter("CURL_CA_BUNDLE=/tmp/updates/tls.crt gizlet update https://localhost:8443/1.10.0.gizlet")
+    console.expect(b"Installed Launcher release 1.10.0")
+    console.expect(PROMPT)
+    console.enter("pack 2.0.0 && printf x >> 2.0.0.gizlet; gizlet update 2.0.0.gizlet; echo status-$?")
+    console.expect(b"signature verification failed")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    console.command("mkdir -p /opt/gizlet/launcher/releases/9.0.0 /opt/gizlet/launcher/releases/.install.interrupted")
+    console.enter("gizlet target && LC_ALL=C ls -1 /opt/gizlet/launcher/releases")
+    console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\n1.1.0\r\n1.10.0\r\n1.2.0\r\n9.0.0\r\n")
+    console.expect(PROMPT)
+
+
+def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
     parts, signature = card.partitions(image)
     root = f"PARTUUID={signature:08x}-{parts['root'][0]:02x}"
     kernel = work / "kernel"
@@ -349,15 +384,14 @@ def scenarios(image, kernel_name, flash, flash_card, work):
     with boot(private, kernel, root) as console:
         # A fresh card starts the factory launcher. QEMU's machine has no
         # display, so it says so and the recovery shell opens.
-        console.expect(b"installed the factory launcher as the boot entry")
-        console.expect(b"starting /opt/gizlet/launcher/gizlet-launcher")
+        console.expect(b"starting the selected launcher")
         console.expect(b"Gizlet launcher 0.")
         console.expect(b"Gizlet launcher: no display")
         console.expect(b"boot entry finished with status 1")
         console.expect(PROMPT)
         # Its device probe runs without a display: no battery, backlight, sound or WiFi adapter here.
         # No Sleep either: gizlet-power, which suspends, needs a backlight.
-        console.enter("/opt/gizlet/launcher/gizlet-launcher --probe")
+        console.enter("/usr/lib/gizlet/launcher-release start --probe")
         for line in (b"battery: Err(NoHardware)", b"brightness: Err(NoHardware)", b"volume: Err(NoHardware)",
                      b"wifi: Ok(WifiState { on: false, adapter: false", b"ssh: Ok(SshState { on: false, running: false",
                      b"power: [Reboot, PowerOff]"):
@@ -462,42 +496,35 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.expect(PROMPT)
         console.stop()
     check_ssh(private, parts["boot"][1], kernel, root, work)
-    # flash.sh's update rewrites the system and keeps the data partition: the
-    # user's file and time zone stay. A factory launcher entry gets the base's launcher.
-    subprocess.run(["bash", flash_card, "--update", flash, image, private], check=True)
     with boot(private, kernel, root) as console:
         console.expect(PROMPT)
-        console.enter("cat /home/check; /usr/lib/gizlet/gizlet-switch timezone")
-        console.expect(b"\r\npersistent-user-file\r\nAmerica/New_York\r\n")
+        install_launcher_updates(console, pack_release)
+        console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini")
+        console.stop()
+    # The SD-card update keeps releases, settings and custom boot entries.
+    subprocess.run(["bash", flash_card, "--update", flash, image, private], check=True)
+    with boot(private, kernel, root) as console:
+        console.expect(b"starting /opt/gizlet/bin/hello")
+        console.expect(b"\r\nhello-from-card\r\n")
         console.expect(PROMPT)
-        console.command("mkdir -p /opt/gizlet/launcher/bin && echo old > /opt/gizlet/launcher/bin/gizlet-launcher")
-        console.command("printf '%s\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
-        console.enter("exit")
-        console.expect(b"updated the factory launcher")
-        console.expect(b"Gizlet launcher: no display")
+        console.enter("gizlet target; cat /home/check; /usr/lib/gizlet/gizlet-switch timezone; "
+                      "test ! -e /opt/gizlet/launcher/releases/.install.interrupted && echo staging-cleaned")
+        console.expect(b"\r\ncli-1.10.0\r\npersistent-user-file\r\nAmerica/New_York\r\nstaging-cleaned\r\n")
         console.expect(PROMPT)
-        # So does a boot.ini with Windows line endings, which the Booter accepts.
-        console.command("echo old > /opt/gizlet/launcher/bin/gizlet-launcher")
+        # A CRLF boot.ini from older images still selects the matching Launcher.
         console.command("printf '%s\\r\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
         console.enter("exit")
-        console.expect(b"updated the factory launcher")
+        console.expect(b"using Launcher from /opt/gizlet/launcher/releases/1.10.0")
         console.expect(b"Gizlet launcher: no display")
         console.expect(PROMPT)
-        # A boot.ini that is a FIFO is refused, without blocking the session.
+        # A boot.ini that is a FIFO is refused without blocking the session.
         console.command("rm /opt/gizlet/boot.ini && mkfifo /opt/gizlet/boot.ini")
         console.enter("exit")
         console.expect(b"invalid boot.ini")
         console.expect(PROMPT)
-        # An installed launcher replaced by a FIFO is installed again, without blocking.
-        console.command("rm /opt/gizlet/boot.ini && printf '%s\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
-        console.command("rm /opt/gizlet/launcher/gizlet-launcher && mkfifo /opt/gizlet/launcher/gizlet-launcher")
-        console.enter("exit")
-        console.expect(b"updated the factory launcher")
-        console.expect(b"Gizlet launcher: no display")
-        console.expect(PROMPT)
         console.command("rm /opt/gizlet/boot.ini")
         console.stop()
-    print("an update keeps the data partition and brings the factory launcher up to date, with LF or CRLF boot.ini")
+    print("signed updates select a matching Launcher and CLI and keep custom entries and user data")
     # A card missing its data partition must not pick a valid data volume on another disk.
     # The second disk is the real, populated data partition as a standalone virtual disk.
     index, offset, size = parts["data"]
@@ -519,4 +546,4 @@ def scenarios(image, kernel_name, flash, flash_card, work):
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(dir=os.environ.get("TEST_TMPDIR")) as temp:
-        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3], sys.argv[4], Path(temp))
+        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3], sys.argv[4], Path(sys.argv[5]), Path(temp))
