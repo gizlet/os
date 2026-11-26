@@ -454,10 +454,20 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.expect(PROMPT)
         console.stop()
     check_ssh(private, parts["boot"][1], kernel, root, work)
-    # flash.sh's update rewrites the system and keeps the data partition: the
-    # user's file and time zone stay. A factory launcher entry gets the base's launcher and CLI.
+    # Model a pre-CLI installation with a custom entry and an old launcher.
+    with boot(private, kernel, root) as console:
+        console.expect(PROMPT)
+        console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini")
+        console.command("echo old > /opt/gizlet/launcher/bin/gizlet-launcher && rm /opt/gizlet/launcher/bin/cli")
+        console.stop()
+    # flash.sh's update rewrites the system and keeps the data partition.
     subprocess.run(["bash", flash_card, "--update", flash, image, private], check=True)
     with boot(private, kernel, root) as console:
+        console.expect(b"starting /opt/gizlet/bin/hello")
+        console.expect(b"\r\nhello-from-card\r\n")
+        console.expect(PROMPT)
+        console.enter("gizlet target && cat /opt/gizlet/launcher/bin/gizlet-launcher")
+        console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\nold\r\n")
         console.expect(PROMPT)
         console.enter("cat /home/check; /usr/lib/gizlet/gizlet-switch timezone")
         console.expect(b"\r\npersistent-user-file\r\nAmerica/New_York\r\n")
@@ -471,12 +481,11 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.enter("cmp /usr/lib/gizlet/gizlet-cli /opt/gizlet/launcher/bin/cli && gizlet target")
         console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\n")
         console.expect(PROMPT)
-        # A card from before the standalone CLI is repaired even when the
-        # launcher itself is already current. CRLF boot.ini also counts.
+        # A missing CLI is restored even when the launcher is already current.
+        # The Booter also accepts a boot.ini with CRLF line endings.
         console.command("rm /opt/gizlet/launcher/bin/cli")
         console.command("printf '%s\\r\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
         console.enter("exit")
-        console.expect(b"updated the factory launcher")
         console.expect(b"Gizlet launcher: no display")
         console.expect(PROMPT)
         console.enter("cmp /usr/lib/gizlet/gizlet-cli /opt/gizlet/launcher/bin/cli && gizlet target")

@@ -36,8 +36,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const KMS: bool = cfg!(feature = "gizlet-os");
 
 fn main() {
-    match std::env::args().nth(1).as_deref() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    match args.first().map(String::as_str) {
         None => {}
+        // The desktop shelf starts another copy to supervise the selected app.
+        Some("run") if !KMS => std::process::exit(gizlet_launcher::cli::main(&args)),
         Some("--version") => {
             println!("gizlet-launcher {VERSION}");
             return;
