@@ -22,6 +22,7 @@ pub fn devices() -> Devices {
         wifi: Iwd::detect().map(|w| Box::new(w) as Box<dyn Wifi>),
         ssh: Sshd::detect().map(|s| Box::new(s) as Box<dyn Ssh>),
         clock: GizletClock::detect().map(|c| Box::new(c) as Box<dyn Clock>),
+        host: GizletHost::detect().map(|h| Box::new(h) as Box<dyn Host>),
         power: LinuxPower::detect().map(|p| Box::new(p) as Box<dyn Power>),
         simulated: false,
     }
@@ -471,6 +472,26 @@ impl Clock for GizletClock {
 
     fn set_zone(&mut self, zone: &str) -> Result<(), String> {
         run(SWITCH, &["timezone", zone]).map(|_| ())
+    }
+}
+
+/// The name through `gizlet-switch`, which keeps it on the data partition;
+/// systemd-resolved announces it as `NAME.local`. Elsewhere the system names itself.
+struct GizletHost;
+
+impl GizletHost {
+    fn detect() -> Option<GizletHost> {
+        Path::new(SWITCH).exists().then_some(GizletHost)
+    }
+}
+
+impl Host for GizletHost {
+    fn name(&mut self) -> String {
+        info::hostname()
+    }
+
+    fn set_name(&mut self, name: &str) -> Result<(), String> {
+        run(SWITCH, &["hostname", name]).map(|_| ())
     }
 }
 

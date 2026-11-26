@@ -172,6 +172,12 @@ def main():
         assert not os.path.lexists(systemd / link), f"systemd-resolved is enabled ({link})"
     assert "Wants=systemd-resolved.service" in (root / "usr/lib/systemd/system/iwd.service.d/gizlet.conf").read_text(), \
         "iwd.service starts systemd-resolved"
+    # It answers for the hostname by mDNS, which gizlet-hostname.service sets at
+    # boot and when udev adds a network adapter.
+    assert "MulticastDNS=yes" in (root / "usr/lib/systemd/resolved.conf.d/gizlet.conf").read_text(), "mDNS is on"
+    assert (systemd / "multi-user.target.wants/gizlet-hostname.service").is_symlink(), "gizlet-hostname.service is enabled"
+    assert "gizlet-hostname.service" in (root / "usr/lib/udev/rules.d/90-gizlet-hostname.rules").read_text(), \
+        "udev sets the hostname for a new network adapter"
     # Network time sets the clock; the time zone is linked under /run at boot (gizlet-switch).
     assert (systemd / "sysinit.target.wants/systemd-timesyncd.service").is_symlink(), "systemd-timesyncd is enabled"
     assert os.readlink(root / "etc/localtime") == "/run/gizlet-localtime", "/etc/localtime points into /run"

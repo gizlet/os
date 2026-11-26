@@ -5,14 +5,19 @@
 #   gizlet-switch wifi|ssh [on|off]     show or change a service: wifi is iwd, ssh is sshd
 #   gizlet-switch ssh-password [NEW]    show or set root's password for ssh logins
 #   gizlet-switch timezone [ZONE]       show or set the time zone, such as Asia/Shanghai
+#   gizlet-switch hostname [NAME]       show or set the device's name, NAME.local on the network;
+#                                       an empty NAME goes back to the default
 #   gizlet-switch boot                  start what is on (gizlet-switches.service)
 #   gizlet-switch apply-password        install the stored password (gizlet-ssh)
 #   gizlet-switch apply-timezone        link the stored time zone (gizlet-data.service)
+#   gizlet-switch apply-hostname        set the stored or default name (gizlet-hostname.service)
 #
 # The password is kept readable by root so the launcher can show it, and is
 # installed as root's /etc/shadow entry through a bind mount of a copy.
 # /etc/localtime links to /run/gizlet-localtime, which links to the stored
-# zone's file; without one the time zone is UTC.
+# zone's file; without one the time zone is UTC. Until a name is chosen the
+# device is named after its network adapter's MAC address, gizlet-a1b2 for
+# one ending in a1:b2, and gizlet without an adapter.
 set -eu
 dir=/run/gizlet-data/system/switches
 password_file=/run/gizlet-data/system/ssh/password
@@ -20,8 +25,9 @@ shadow=/run/gizlet-ssh/shadow
 zone_file=/run/gizlet-data/system/timezone
 localtime=/run/gizlet-localtime
 zoneinfo=/usr/share/zoneinfo
+hostname_file=/run/gizlet-data/system/hostname
 usage() {
-    echo 'usage: gizlet-switch wifi|ssh [on|off] | ssh-password [NEW] | timezone [ZONE] | boot | apply-password | apply-timezone' >&2
+    echo 'usage: gizlet-switch wifi|ssh [on|off] | ssh-password [NEW] | timezone [ZONE] | hostname [NAME] | boot | apply-password | apply-timezone | apply-hostname' >&2
     exit 2
 }
 unit_of() {
@@ -86,7 +92,77 @@ apply_timezone() {
     mv -fT "$localtime.new" "$localtime"
 }
 
+# valid_hostname NAME: one DNS label, 1 to 63 lowercase letters, digits and
+# hyphens, neither starting nor ending with a hyphen.
+valid_hostname() {
+    case "$1" in
+        '' | -* | *- | *[!a-z0-9-]*) return 1 ;;
+    esac
+    [ "${#1}" -le 63 ]
+}
+
+# The default name, from the last two bytes of the first Wi-Fi adapter's MAC
+# address, or of another network adapter's without one.
+default_hostname() {
+    for kind in wireless any; do
+        for dev in /sys/class/net/*; do
+            [ -e "$dev/device" ] || continue
+            [ "$kind" = any ] || [ -e "$dev/wireless" ] || [ -e "$dev/phy80211" ] || continue
+            mac=
+            { read -r mac < "$dev/address"; } 2>/dev/null || :
+            case "$mac" in
+                00:00:00:00:00:00) continue ;;
+                [0-9a-f][0-9a-f]:??:??:??:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]) ;;
+                *) continue ;;
+            esac
+            echo "gizlet-$(printf '%s' "$mac" | cut -c13-14,16-17 | tr -d :)"
+            return
+        done
+    done
+    echo gizlet
+}
+
+# The stored name, or the default without a valid one.
+stored_hostname() {
+    name=
+    { read -r name < "$hostname_file"; } 2>/dev/null || :
+    valid_hostname "$name" || name=$(default_hostname)
+    echo "$name"
+}
+
+# systemd-resolved follows the kernel's name and announces it by mDNS.
+apply_hostname() {
+    name=$(stored_hostname)
+    [ "$(cat /proc/sys/kernel/hostname)" = "$name" ] || printf '%s' "$name" > /proc/sys/kernel/hostname
+}
+
 case "${1:-}" in
+    hostname)
+        if [ $# -eq 1 ]; then
+            stored_hostname
+            exit 0
+        fi
+        [ $# -eq 2 ] || usage
+        need_data
+        if [ -z "$2" ]; then
+            rm -f "$hostname_file"
+        else
+            name=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+            valid_hostname "$name" || {
+                echo "gizlet-switch: a name has 1 to 63 letters, digits and hyphens, not first or last: $2" >&2
+                exit 1
+            }
+            printf '%s\n' "$name" > "$hostname_file.new"
+            mv "$hostname_file.new" "$hostname_file"
+        fi
+        sync
+        apply_hostname
+        exit 0
+        ;;
+    apply-hostname)
+        apply_hostname
+        exit 0
+        ;;
     timezone)
         if [ $# -eq 1 ]; then
             stored_zone

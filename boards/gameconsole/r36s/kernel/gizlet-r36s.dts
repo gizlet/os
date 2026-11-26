@@ -39,6 +39,18 @@
 };
 
 /*
+ * Both card slots take their power from LDO6 (vcc_sd), and the card-detect
+ * line of an empty TF2 slot is pulled up to it. When TF1's controller
+ * suspends it would switch the rail off; the line then falls, the MMC core
+ * takes that for an inserted card and holds a wakeup event for 5 s, and
+ * suspend aborts with EBUSY. The rail stays on in sleep anyway
+ * (regulator-on-in-suspend), so it now stays on throughout.
+ */
+&vcc_sd {
+	regulator-always-on;
+};
+
+/*
  * The host-port PHY is already enabled upstream. Its EHCI/OHCI controllers
  * expose USB devices wired to that port.
  */

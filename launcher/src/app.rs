@@ -6,7 +6,7 @@ use crate::i18n::{human_size, T};
 use crate::input::{Action, Input, TextEvent};
 use crate::keyboard::{self, Keyboard};
 use crate::settings::{Language, Power, Settings, Theme};
-use crate::system::{Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
+use crate::system::{valid_hostname, Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
 use crate::zones::{Zone, ZONES};
 use std::path::PathBuf;
 
@@ -111,6 +111,7 @@ pub enum ItemId {
     Language(Language),
     Clock24,
     TimeZone(String),
+    Hostname,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -678,6 +679,10 @@ impl App {
                 };
                 self.keyboard = Some(Keyboard::ssh_password(self.t(T::SshPasswordTitle).into(), &current));
             }
+            ItemId::Hostname => {
+                let current = self.snapshot.as_ref().map(|s| s.hostname.clone()).unwrap_or_default();
+                self.keyboard = Some(Keyboard::hostname(self.t(T::HostnameTitle).into(), &current));
+            }
             ItemId::WifiScan => {
                 self.wifi.networks = None;
                 self.scan();
@@ -814,8 +819,21 @@ impl App {
             self.keyboard = None;
         } else if let Some(text) = submit {
             let purpose = kb.purpose.clone();
+            // A name that cannot be used keeps the keyboard open to fix it.
+            let name = text.trim().to_ascii_lowercase();
+            if purpose == keyboard::Purpose::Hostname && !name.is_empty() && !valid_hostname(&name) {
+                self.toast(self.t(T::HostnameInvalid));
+                return;
+            }
             self.keyboard = None;
             match purpose {
+                // The same name is not stored, so a default one keeps following the adapter.
+                keyboard::Purpose::Hostname if self.snapshot.as_ref().is_some_and(|s| s.hostname == name) => {}
+                keyboard::Purpose::Hostname => {
+                    let saved = if name.is_empty() { self.t(T::HostnameDefault).into() } else { T::HostnameSaved.fmt(self.lang(), &[&name]) };
+                    self.system.send(Request::Hostname(name));
+                    self.toast(saved);
+                }
                 keyboard::Purpose::WifiPassphrase(ssid) => self.connect(&ssid, Some(text)),
                 keyboard::Purpose::SshPassword if text.is_empty() => {}
                 keyboard::Purpose::SshPassword => {
@@ -863,8 +881,15 @@ impl App {
                         let password = s.password.clone().unwrap_or_else(|| t(T::SshPasswordUnset));
                         items.push(Item::new(ItemId::SshPassword, t(T::SshPassword), ItemValue::Info(password)));
                         if s.running {
-                            let login = snap.ip.as_ref().map(|ip| format!("ssh root@{ip}")).unwrap_or_else(|| t(T::SshNeedsNetwork));
-                            items.push(Item::info(t(T::SshLogin), login));
+                            match &snap.ip {
+                                // NAME.local where the system announces it, and the address.
+                                Some(ip) if snap.can_rename => {
+                                    items.push(Item::info(t(T::SshLogin), format!("ssh root@{}.local", snap.hostname)));
+                                    items.push(Item::info("", format!("ssh root@{ip}")));
+                                }
+                                Some(ip) => items.push(Item::info(t(T::SshLogin), format!("ssh root@{ip}"))),
+                                None => items.push(Item::info(t(T::SshLogin), t(T::SshNeedsNetwork))),
+                            }
                             let keys = match s.keys {
                                 Some(0) | None => t(T::SshNoKeys),
                                 Some(n) => T::SshKeyCount.fmt(l, &[&n.to_string()]),
@@ -967,7 +992,12 @@ impl App {
                 items.push(Item::info(t(T::Arch), snap.info.arch.clone()));
                 items.push(Item::info(t(T::Cpus), snap.info.cpus.to_string()));
                 items.push(Item::info(t(T::Memory), snap.info.memory_bytes.map(human_size).unwrap_or_else(unknown)));
-                items.push(Item::info(t(T::Hostname), snap.info.hostname.clone()));
+                if snap.can_rename {
+                    items.push(Item::new(ItemId::Hostname, t(T::Hostname), ItemValue::Info(snap.hostname.clone())));
+                    items.push(Item::info(t(T::LocalAddress), format!("{}.local", snap.hostname)));
+                } else {
+                    items.push(Item::info(t(T::Hostname), snap.hostname.clone()));
+                }
                 items.push(Item::info(t(T::IpAddress), snap.ip.clone().unwrap_or_else(|| t(T::WifiNotConnected))));
                 if let Some(st) = snap.storage {
                     let used = st.total.saturating_sub(st.free);

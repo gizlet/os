@@ -7,10 +7,10 @@ Pages are laid out in logical units: the screen is 720 units tall and at least 9
 | Page | What it does |
 | --- | --- |
 | Home | The shelf of installed apps (A starts one), Library, Store, Button Test, Settings and Power |
-| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; SSH on/off with the login address and key count; brightness and theme; volume; battery; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information |
+| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; SSH on/off with the login address (`NAME.local` and the IP address) and key count; brightness and theme; volume; battery; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information and the hostname, which can be changed |
 | Button test | A handheld drawn from primitives that lights up with every button, stick and trigger; hold Back to leave |
 
-On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A, BTN_SOUTH is B), and the volume keys change the volume. Wi-Fi and ssh are switched and the time zone is set with `gizlet-switch`, which keeps the choice across reboots; the clock redraws in a new zone at once. Missing hardware or drivers are shown as such, as for the R36S's battery and sound today. [System](src/system/linux.rs) · [Controls](src/evdev.rs)
+On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A, BTN_SOUTH is B), and the volume keys change the volume. Wi-Fi and ssh are switched and the time zone and hostname are set with `gizlet-switch`, which keeps the choice across reboots; the clock redraws in a new zone at once. Missing hardware or drivers are shown as such, as for the R36S's battery and sound today. [System](src/system/linux.rs) · [Controls](src/evdev.rs)
 
 ## Apps
 
@@ -42,7 +42,7 @@ An app runs with its folder as the working directory and `GIZLET_APP_ID`, `GIZLE
 
 The launcher hands the screen to an app by writing its ID to `/run/gizlet-launch` and quitting. [start.sh](start.sh), the boot entry, then runs the app and starts the launcher again when it exits. On a computer the app opens beside the launcher.
 
-Every app can be left the same way: holding Home (the R36S's FN key) for a second, or Select and Start together for two seconds, sends it SIGTERM, then SIGKILL three seconds later if it is still running, and the launcher comes back. `gizlet run` watches the controls through evdev without grabbing them, so the app still sees them. Apps that keep progress should save it on SIGTERM. [Exit](src/supervise.rs)
+Every app can be left the same way: holding Home (the R36S's FN key) for a second, or Select and Start together for two seconds, sends it SIGTERM, then SIGKILL three seconds later if it is still running, and the launcher comes back. `gizlet run` asks every input device which buttons it holds down (`EVIOCGKEY`) ten times a second, so an app that grabs its controls cannot hide these. Apps that keep progress should save it on SIGTERM. [Exit](src/supervise.rs)
 
 While neither holds the display, the LCD shows the kernel's text console. start.sh clears it and hides its cursor, and after boot the kernel prints only critical messages there (`/usr/lib/sysctl.d/gizlet.conf`), so a switch shows black until the app draws its first frame.
 
