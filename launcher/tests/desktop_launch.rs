@@ -93,20 +93,23 @@ fn service_exec_runs_the_entry_with_its_folders() {
     fs::write(&entry, "#!/bin/sh\nprintf '%s\\n' \"$GIZLET_SERVICE_ID\" \"$GIZLET_SERVICE_DIR\" \"$GIZLET_STATE_DIR\" \"$GIZLET_RUNTIME_DIR\" \"$HOME\" \"$PWD\"\n").unwrap();
     fs::set_permissions(&entry, fs::Permissions::from_mode(0o755)).unwrap();
     let runtime = root.0.join("run").join(id);
-    let child = Command::new(env!("CARGO_BIN_EXE_gizlet-cli"))
-        .args(["service", "exec", id])
-        .env("GIZLET_PREFIX", &root.0)
-        .env("RUNTIME_DIRECTORY", &runtime)
-        .output()
-        .unwrap();
-    assert!(child.status.success(), "{child:?}");
-    let dir = fs::canonicalize(&dir).unwrap();
-    let state = fs::canonicalize(root.0.join("service-data").join(id)).unwrap();
-    let runtime = fs::canonicalize(&runtime).unwrap();
-    let lines: Vec<PathBuf> = String::from_utf8(child.stdout).unwrap().lines().map(|l| fs::canonicalize(l).unwrap_or_else(|_| PathBuf::from(l))).collect();
-    assert_eq!(lines, [PathBuf::from(id), dir.clone(), state.clone(), runtime.clone(), state.clone(), dir]);
-    for folder in [&state, &runtime] {
-        assert_eq!(fs::metadata(folder).unwrap().permissions().mode() & 0o777, 0o700, "{}", folder.display());
+    // The CLI runs it, and so does the launcher, whose Settings may register it.
+    for program in [env!("CARGO_BIN_EXE_gizlet-cli"), env!("CARGO_BIN_EXE_gizlet-launcher")] {
+        let child = Command::new(program)
+            .args(["service", "exec", id])
+            .env("GIZLET_PREFIX", &root.0)
+            .env("RUNTIME_DIRECTORY", &runtime)
+            .output()
+            .unwrap();
+        assert!(child.status.success(), "{program}: {child:?}");
+        let dir = fs::canonicalize(&dir).unwrap();
+        let state = fs::canonicalize(root.0.join("service-data").join(id)).unwrap();
+        let runtime = fs::canonicalize(&runtime).unwrap();
+        let lines: Vec<PathBuf> = String::from_utf8(child.stdout).unwrap().lines().map(|l| fs::canonicalize(l).unwrap_or_else(|_| PathBuf::from(l))).collect();
+        assert_eq!(lines, [PathBuf::from(id), dir.clone(), state.clone(), runtime.clone(), state.clone(), dir], "{program}");
+        for folder in [&state, &runtime] {
+            assert_eq!(fs::metadata(folder).unwrap().permissions().mode() & 0o777, 0o700, "{}", folder.display());
+        }
     }
     // Neither a service nor an app runs the other way.
     let child = run(&root.0, id);

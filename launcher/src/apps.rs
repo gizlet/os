@@ -410,8 +410,9 @@ impl Library {
     /// Finishes what a crash or power loss cut short, with the lock held: a
     /// backup whose app folder is missing goes back in place, one beside a
     /// complete update is deleted, and staging and removal folders, which
-    /// only a lock holder uses, are deleted; the same for services, whose
-    /// leftovers of an interrupted uninstall are then deleted.
+    /// only a lock holder uses, are deleted. A service's backup always goes
+    /// back (see [`Library::restore_service`]), and the leftovers of an
+    /// interrupted service uninstall are deleted.
     pub(crate) fn recover(&self) {
         for root in [self.apps_dir(), self.services_dir()] {
             let Ok(entries) = fs::read_dir(&root) else { continue };
@@ -422,6 +423,10 @@ impl Library {
                     continue;
                 }
                 let Some(id) = name.strip_prefix(".old-").filter(|id| is_valid_id(id)) else { continue };
+                if root == self.services_dir() {
+                    self.restore_service(id, &e.path());
+                    continue;
+                }
                 let dest = root.join(id);
                 if dest.exists() {
                     let _ = fs::remove_dir_all(e.path());

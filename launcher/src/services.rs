@@ -65,15 +65,16 @@ impl UnitState {
         matches!(self.active.as_str(), "active" | "activating" | "deactivating" | "reloading") || !self.cgroup.is_empty()
     }
 
-    /// Why a service that was just started is not running.
+    /// Why a service that was just started is not running. A service runs
+    /// until it is stopped, so exiting at all, even successfully, is a failed start.
     fn start_problem(&self) -> Option<String> {
         let result = if self.result.is_empty() { "unknown" } else { &self.result };
         if self.active == "failed" {
             Some(format!("it failed ({result})"))
         } else if self.sub == "auto-restart" || self.restarts > 0 {
             Some(format!("it exited and is being restarted ({result})"))
-        } else if self.active == "inactive" && self.result != "success" {
-            Some(format!("it stopped ({result})"))
+        } else if self.active == "inactive" {
+            Some(format!("it exited ({result})"))
         } else {
             None
         }
@@ -297,7 +298,8 @@ fn unit_safe(path: &Path) -> Option<&str> {
 }
 
 /// The command a unit runs: `/usr/bin/gizlet` on Gizlet OS, which runs the
-/// CLI of the Launcher release selected at boot; this CLI elsewhere.
+/// CLI of the Launcher release selected at boot; elsewhere this program,
+/// the CLI or the launcher, which both take `service exec ID`.
 fn cli_path() -> Result<PathBuf, String> {
     if cfg!(feature = "gizlet-os") {
         return Ok(PathBuf::from("/usr/bin/gizlet"));
@@ -590,6 +592,29 @@ impl Library {
         deleted.map_err(|e| format!("{id} is uninstalled, but {} cannot be deleted yet: {e}", trash.display()))
     }
 
+    /// After a crash in the middle of an update, with the library locked: a
+    /// backup is deleted only once the new version has started, so one left
+    /// beside an installed version means that version was never confirmed.
+    /// It is stopped and the backup goes back in place; boot then starts it
+    /// as before. Until the service can be stopped, both are left as they are.
+    pub(crate) fn restore_service(&self, id: &str, backup: &Path) {
+        let root = self.services_dir();
+        let dest = root.join(id);
+        if dest.exists() {
+            let Ok(running) = self.stop_verified(id) else { return };
+            let trash = root.join(format!(".remove-{id}-{}", std::process::id()));
+            if fs::rename(&dest, &trash).is_err() {
+                return;
+            }
+            let _ = fs::rename(backup, &dest);
+            apps::sync();
+            let _ = fs::remove_dir_all(&trash);
+            drop(running);
+        } else if fs::rename(backup, &dest).is_ok() {
+            apps::sync();
+        }
+    }
+
     /// After a crash in the middle of an uninstall, with the library locked:
     /// deletes the boot flags, running locks and state of services that are
     /// no longer installed.
@@ -785,6 +810,8 @@ pub(crate) mod tests {
         held: BTreeMap<String, File>,
         /// Units whose next start fails as soon as their process starts.
         pub crash_on_start: BTreeSet<String>,
+        /// Units whose next start exits successfully at once.
+        pub exit_on_start: BTreeSet<String>,
         /// Units that cannot be stopped.
         pub stuck: BTreeSet<String>,
         pub unavailable: bool,
@@ -825,6 +852,9 @@ pub(crate) mod tests {
             u.failed.remove(unit);
             if u.crash_on_start.remove(unit) {
                 u.failed.insert(unit.into());
+                return Ok(());
+            }
+            if u.exit_on_start.remove(unit) {
                 return Ok(());
             }
             if u.active.insert(unit.into()) {
@@ -972,6 +1002,34 @@ pub(crate) mod tests {
         units.lock().unwrap().crash_on_start.insert(unit(A));
         let err = lib.install(&service(&dir, A, "0.2.0")).unwrap_err();
         assert!(err.contains("0.2.0 did not start") && err.contains("0.1.0 is back and running"), "{err}");
+        let s = lib.service(A).unwrap();
+        assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
+        // Exiting at once, even successfully, is not starting.
+        units.lock().unwrap().exit_on_start.insert(unit(A));
+        let err = lib.install(&service(&dir, A, "0.2.0")).unwrap_err();
+        assert!(err.contains("it exited (success)") && err.contains("0.1.0 is back and running"), "{err}");
+        assert_eq!(lib.service(A).unwrap().package.manifest.version, "0.1.0");
+        assert_eq!(leftovers(&lib), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_update_cut_short_before_it_started_is_undone() {
+        let dir = temp("svc-power-loss");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        // Power is lost after 0.2.0 took its place, before it was confirmed to start:
+        // the backup and the new version are both there.
+        lib.stop_service(A).unwrap();
+        let (dest, backup) = (lib.services_dir().join(A), lib.backup_in(&lib.services_dir(), A));
+        fs::rename(&dest, &backup).unwrap();
+        fs::create_dir_all(dest.join("bin")).unwrap();
+        let newer = manifest_v(A, Some(2), Some("service")).replace("\"0.1.0\"", "\"0.2.0\"");
+        fs::write(dest.join(crate::apps::MANIFEST), newer).unwrap();
+        fs::write(dest.join("bin/hello"), "#!/bin/sh\n").unwrap();
+        drop((lib, units));
+        let (lib, _units) = library(&dir);
+        assert_eq!(lib.boot_services().unwrap(), [A]);
         let s = lib.service(A).unwrap();
         assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
         assert_eq!(leftovers(&lib), 0);
@@ -1137,7 +1195,10 @@ pub(crate) mod tests {
         assert_eq!(State::of(&state), State::Failed("exit-code".into()));
         assert!(state.start_problem().unwrap().contains("restarted"));
         let clean = UnitState { active: "inactive".into(), sub: "dead".into(), result: "success".into(), ..UnitState::default() };
-        assert_eq!((State::of(&clean), clean.start_problem(), clean.running()), (State::Stopped, None, false));
+        assert_eq!((State::of(&clean), clean.running()), (State::Stopped, false));
+        assert_eq!(clean.start_problem().as_deref(), Some("it exited (success)"));
+        let up = UnitState { active: "active".into(), sub: "running".into(), result: "success".into(), ..UnitState::default() };
+        assert_eq!(up.start_problem(), None);
         let left = UnitState { cgroup: "/system.slice/x.service".into(), ..clean };
         assert!(left.running(), "processes left in its control group still run");
     }
