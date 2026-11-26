@@ -209,6 +209,7 @@ fn run() {
         }
         // Easing advances by the time since the last drawn frame, which may be
         // a second on a still screen.
+        let first_draw = drawn.is_none();
         let draw_dt = drawn.map_or(dt, |(at, _)| ((app.time - at) as f32).min(0.1));
         drawn = Some((app.time, app.revision));
 
@@ -219,14 +220,17 @@ fn run() {
         }
         settling = ui.draw(&mut painter, &app, &pad, draw_dt);
         unsafe { ffi::EndDrawing() };
-        if KMS && frame == 1 && std::fs::symlink_metadata("/run/gizlet-ota-trial").is_ok() {
-            let confirmed = std::process::Command::new("/usr/lib/gizlet/gizlet-ota-boot")
-                .arg("confirm")
-                .status()
-                .is_ok_and(|status| status.success());
-            if !confirmed {
-                std::process::exit(1);
+        if KMS && first_draw {
+            if std::fs::symlink_metadata("/run/gizlet-ota-trial").is_ok() {
+                let confirmed = std::process::Command::new("/usr/lib/gizlet/gizlet-ota-boot")
+                    .arg("confirm")
+                    .status()
+                    .is_ok_and(|status| status.success());
+                if !confirmed {
+                    std::process::exit(1);
+                }
             }
+            app.load_update_status();
         }
 
         if let Some(path) = shot {

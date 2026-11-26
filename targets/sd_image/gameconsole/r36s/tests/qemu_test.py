@@ -513,8 +513,24 @@ def ota_scenarios(image, kernel_name, flash, flash_card, pack_release, ota_fixtu
         console.stop()
     with boot(private, kernel, root) as console:
         check_ota_after_boot(console, pack_release, ota_fixture)
+        console.command("mkdir -p /opt/gizlet/bin")
+        send(console, b"""#!/bin/sh
+set -eu
+gizlet system ota status
+current=$(readlink /opt/gizlet/ota/current)
+test "$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)" = "/opt/gizlet/ota/$current/root/share/alsa"
+test ! -L /opt/gizlet/ota/attempt
+echo custom-entry-uses-ota
+""", "/opt/gizlet/bin/ota-check")
+        console.command("chmod 755 /opt/gizlet/bin/ota-check && "
+                        "printf '%s\\n' '[boot]' 'entry=bin/ota-check' > /opt/gizlet/boot.ini")
         console.stop()
     with boot(private, kernel, root) as console:
+        console.expect(b"\r\nLauncher: 2.0.0\r\n")
+        console.expect(b"\r\nPending restart: v2.0.1\r\ncustom-entry-uses-ota\r\n")
+        console.expect(PROMPT)
+        console.command("rm /opt/gizlet/boot.ini")
+        console.enter("exit")
         console.expect(b"ota-launch-failed")
         console.expect(b"update v2.0.1 rolled back")
         console.expect(b"ota-confirmed")
@@ -527,6 +543,11 @@ def ota_scenarios(image, kernel_name, flash, flash_card, pack_release, ota_fixtu
         console.expect(b"\r\nLauncher: 2.0.0\r\n")
         console.expect(b"\r\nRolled back: v2.0.1\r\nv2.0.0\r\npersistent-user-file\r\nkept\r\n"
                        b"America/New_York\r\nota-runtime-in-use\r\n")
+        console.expect(PROMPT)
+        console.enter("/usr/lib/gizlet/gizlet-ota-boot restore 2.1.0 && "
+                      "test ! -L /run/gizlet-ota-launcher && test -L /run/gizlet-ota-runtime && "
+                      "echo newer-factory-launcher-selected")
+        console.expect(b"\r\nnewer-factory-launcher-selected\r\n")
         console.expect(PROMPT)
         console.stop()
     print("signed OTA verifies HTTPS downloads, activates a matching runtime, Launcher and CLI, and preserves user data after rollback")

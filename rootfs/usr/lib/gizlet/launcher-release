@@ -82,6 +82,15 @@ active_version() {
     fi
     printf '%s\n' "$version"
 }
+
+legacy_version() {
+    selected=$(active_version)
+    if [ "$selected" = factory ]; then
+        "$factory/bin/cli" ota factory-version
+    else
+        printf '%s\n' "$selected"
+    fi
+}
 active_dir() {
     if [ -x /run/gizlet-ota-launcher/bin/cli ]; then
         printf '%s\n' /run/gizlet-ota-launcher
@@ -190,7 +199,12 @@ if [ "${0##*/}" = gizlet ]; then
     esac
 else
     case ${1-} in
-        select) select_release ;;
+        select)
+            select_release
+            if [ -L /opt/gizlet/ota/current ]; then
+                exec /usr/lib/gizlet/gizlet-ota-boot restore "$(legacy_version)"
+            fi
+            ;;
         stage)
             [ "$#" -eq 4 ] || fail 'missing Launcher stage arguments'
             install_release "$2" "$3" "$4"
@@ -198,7 +212,12 @@ else
         start)
             shift
             if [ "$#" -eq 0 ]; then
-                exec /usr/lib/gizlet/gizlet-ota-boot run "$(legacy_dir)"
+                if [ -d /opt/gizlet/ota ]; then
+                    exec /usr/lib/gizlet/gizlet-ota-boot run "$(legacy_dir)" "$(legacy_version)"
+                fi
+                dir=$(legacy_dir)
+                printf 'Gizlet OS: using Launcher from %s\n' "$dir"
+                exec "$dir/start"
             fi
             dir=$(active_dir)
             exec "$dir/start" "$@"

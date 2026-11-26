@@ -356,7 +356,7 @@ impl App {
             power: Power::load(Power::path()),
             version,
             system: System::start(data_dir),
-            updates: Updates::new(),
+            updates: None,
             pages: vec![Page::Home],
             // The most recently played app has focus; without apps, Settings.
             home_row: if apps.is_empty() { HomeRow::Buttons } else { HomeRow::Tiles },
@@ -387,6 +387,10 @@ impl App {
 
     pub fn lang(&self) -> Language {
         self.settings.language.resolve()
+    }
+
+    pub fn load_update_status(&mut self) {
+        self.updates = Updates::new();
     }
 
     pub fn t(&self, t: T) -> &'static str {
