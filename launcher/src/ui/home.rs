@@ -17,10 +17,10 @@ const TILES_Y: f32 = 182.0;
 const BUTTON_D: f32 = 76.0;
 const BUTTON_GAP: f32 = 30.0;
 
-/// The pulsing focus color.
+/// The pulsing focus color; it settles midway as the pulse fades.
 pub fn focus_color(p: &Painter) -> Color {
-    let t = ((p.time * 3.2).sin() as f32 + 1.0) / 2.0;
-    mix(p.pal.accent, p.pal.accent_hi, t * 0.75)
+    let wave = (p.time * 3.2).sin() as f32 / 2.0;
+    mix(p.pal.accent, p.pal.accent_hi, (0.5 + wave * p.pulse) * 0.75)
 }
 
 /// The focus ring around a rounded rectangle, with a short pop when focus arrives.

@@ -7,7 +7,7 @@ Pages are laid out in logical units: the screen is 720 units tall and at least 9
 | Page | What it does |
 | --- | --- |
 | Home | The app shelf (empty for now), Library, Store, Button Test, Settings and Power |
-| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; SSH on/off with the login address and key count; brightness and theme; volume; battery; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information |
+| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; SSH on/off with the login address and key count; brightness and theme; volume; battery: charge, power draw and the time left at that draw, and the CPU and GPU clocks and CPU use behind it; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information |
 | Button test | A handheld drawn from primitives that lights up with every button, stick and trigger; hold Back to leave |
 
 On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A, BTN_SOUTH is B), and the volume keys change the volume. Wi-Fi and ssh are switched and the time zone is set with `gizlet-switch`, which keeps the choice across reboots; the clock redraws in a new zone at once. Missing hardware or drivers are shown as such, as for the R36S's battery and sound today. [System](src/system/linux.rs) · [Controls](src/evdev.rs)
@@ -27,7 +27,7 @@ Keys: arrows, Enter or K (A), Escape or J (B), I (X), U (Y), Q/E (L/R), = (Start
 bazel build --config=r36s //launcher:gizlet-launcher
 ```
 
-On the card the launcher draws with OpenGL ES 2 through Gizlet runtime 1's raylib and Mesa: Panfrost on the R36S's GPU, llvmpipe on the CPU where there is no GPU driver. It links the runtime's `libraylib.so` (`//runtime:raylib`, built from the same vendored raylib-sys sources as its bindings), and [start.sh](start.sh), installed as its boot entry, runs it through the runtime's `gizlet-run`. It redraws every frame. [Build](build_card.sh) · [Runtime](../runtime/README.md)
+On the card the launcher draws with OpenGL ES 2 through Gizlet runtime 1's raylib and Mesa: Panfrost on the R36S's GPU, llvmpipe on the CPU where there is no GPU driver. It links the runtime's `libraylib.so` (`//runtime:raylib`, built from the same vendored raylib-sys sources as its bindings), and [start.sh](start.sh), installed as its boot entry, runs it through the runtime's `gizlet-run`. It draws 60 frames a second while anything moves. Four seconds after the last input the focus stops pulsing and the screen stands still: it is drawn again only for input, a device report or the clock, about once a second, so an idle launcher leaves the CPU and GPU asleep. On the R36S this cut the idle draw from about 790 to 530 mA. [Build](build_card.sh) · [Runtime](../runtime/README.md)
 
 ## Fonts
 

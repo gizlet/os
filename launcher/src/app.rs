@@ -220,6 +220,8 @@ pub struct App {
     pub time: f64,
     pub gamepads: Vec<String>,
     pub can_quit: bool,
+    /// Counts the device reports received, so the screen is redrawn after one.
+    pub revision: u64,
 }
 
 impl App {
@@ -246,6 +248,7 @@ impl App {
             time: 0.0,
             gamepads: Vec::new(),
             can_quit: true,
+            revision: 0,
         }
     }
 
@@ -267,6 +270,20 @@ impl App {
 
     pub fn text_input_active(&self) -> bool {
         self.keyboard.is_some()
+    }
+
+    /// Something moves on screen without input: a menu, the keyboard, a
+    /// toast, a spinner while the device works, or the button test's live sticks.
+    pub fn animating(&self) -> bool {
+        self.dialog.is_some()
+            || self.keyboard.is_some()
+            || !self.toasts.is_empty()
+            || self.page() == Page::ButtonTest
+            || self.wifi.scanning
+            || self.wifi.connecting.is_some()
+            || self.wifi.switching.is_some()
+            || self.ssh_switching.is_some()
+            || self.zone_switching.is_some()
     }
 
     pub fn toast(&mut self, text: impl Into<String>) {
@@ -296,6 +313,7 @@ impl App {
         self.toasts.retain(|t| t.age < TOAST_SECONDS);
         for event in self.system.poll() {
             self.on_event(event);
+            self.revision += 1;
         }
         self.auto_scan();
 
@@ -829,6 +847,18 @@ impl App {
                             crate::system::Charge::Discharging => t(T::Discharging),
                         };
                         items.push(Item::info(t(T::BatteryState), state));
+                        if let Some(mw) = b.power_mw {
+                            let label = if b.charging() { T::ChargePower } else { T::PowerDraw };
+                            items.push(Item::info(t(label), format!("{:.2} W", mw as f32 / 1000.0)));
+                        }
+                        if let Some(m) = b.minutes_left {
+                            let left = if m < 60 {
+                                T::Minutes.fmt(l, &[&m.to_string()])
+                            } else {
+                                T::HoursMinutes.fmt(l, &[&(m / 60).to_string(), &(m % 60).to_string()])
+                            };
+                            items.push(Item::info(t(T::TimeLeft), left));
+                        }
                     }
                     Err(m) => items.push(self.missing(m, T::NoBattery, Some(T::NoBatteryBody))),
                 }
@@ -837,6 +867,21 @@ impl App {
                     items.push(Item::new(ItemId::SleepAfter, t(T::SleepAfter), ItemValue::Choice(self.sleep_after_label())));
                 }
                 items.push(Item::new(ItemId::BatteryPercent, t(T::BatteryPercent), ItemValue::Toggle(self.settings.battery_percent)));
+                // The clocks and CPU use behind the draw, refreshed with the snapshot.
+                let load = snap.load;
+                if load.cpu_mhz.is_some() || load.gpu_mhz.is_some() {
+                    items.push(Item::section(t(T::Performance)));
+                }
+                if let Some(mhz) = load.cpu_mhz {
+                    let value = match load.cpu_busy {
+                        Some(busy) => T::CpuBusy.fmt(l, &[&mhz.to_string(), &busy.to_string()]),
+                        None => format!("{mhz} MHz"),
+                    };
+                    items.push(Item::info(t(T::CpuClock), value));
+                }
+                if let Some(mhz) = load.gpu_mhz {
+                    items.push(Item::info(t(T::GpuClock), format!("{mhz} MHz")));
+                }
             }
             Category::Controls => {
                 items.push(Item::new(ItemId::ButtonTest, t(T::ButtonTestOpen), ItemValue::Button));

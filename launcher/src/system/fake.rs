@@ -14,6 +14,7 @@ pub fn devices() -> Devices {
         clock: Ok(Box::new(FakeClock { zone: "Asia/Shanghai".into() })),
         power: Some(Box::new(FakePower)),
         simulated: true,
+        load: LoadMeter::default(),
     }
 }
 
@@ -24,7 +25,10 @@ struct FakeBattery {
 impl BatterySource for FakeBattery {
     fn read(&mut self) -> Result<Battery, Missing> {
         let drained = (self.start.elapsed().as_secs() / 60) as u8;
-        Ok(Battery { percent: 82u8.saturating_sub(drained).max(5), charge: Charge::Discharging })
+        let percent = 82u8.saturating_sub(drained).max(5);
+        // A 3000 mAh, 3.7 V battery at 1.6 W.
+        let minutes_left = Some(percent as u32 * 30 * 37 * 60 / 16_000);
+        Ok(Battery { percent, charge: Charge::Discharging, power_mw: Some(1600), minutes_left })
     }
 }
 

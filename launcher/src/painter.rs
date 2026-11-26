@@ -26,6 +26,9 @@ pub struct Painter {
     pub fonts: Fonts,
     /// Seconds since start, for animations.
     pub time: f64,
+    /// How strongly the focus pulses, 0–1: it settles once the user stops, so
+    /// an idle screen stays still and need not be redrawn.
+    pub pulse: f32,
 }
 
 fn v2(x: f32, y: f32) -> Vector2 {
@@ -46,6 +49,7 @@ impl Painter {
             pal,
             fonts,
             time: 0.0,
+            pulse: 1.0,
         };
         p.resize();
         p

@@ -34,6 +34,13 @@ use std::ffi::CString;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Without a window system: raylib's DRM platform on the whole panel.
 const KMS: bool = cfg!(feature = "gizlet-os");
+/// Frames per second while anything moves; controls are polled as often when idle.
+const ACTIVE_FPS: i32 = 60;
+/// The focus pulses this long after the last input, then fades out.
+const PULSE_FOR_SECONDS: f64 = 3.0;
+const PULSE_FADE_SECONDS: f32 = 1.0;
+/// A still screen is redrawn this often, for the clock.
+const STILL_REDRAW_SECONDS: f64 = 1.0;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -123,7 +130,7 @@ fn run() {
             std::process::exit(1);
         }
         ffi::SetExitKey(0);
-        ffi::SetTargetFPS(60);
+        ffi::SetTargetFPS(ACTIVE_FPS);
         if !KMS {
             ffi::SetWindowMinSize(480, 360);
             if std::env::var("GIZLET_FULLSCREEN").is_ok_and(|v| v == "1") {
@@ -137,9 +144,15 @@ fn run() {
     let mut controls = input::Controls::default();
     let mut script = script::Script::from_env();
     let mut frame: u64 = 0;
+    let mut last = unsafe { ffi::GetTime() };
+    let mut active_at = 0.0;
+    let mut drawn: Option<(f64, u64)> = None;
 
     while !unsafe { ffi::WindowShouldClose() } {
-        let dt = unsafe { ffi::GetFrameTime() }.min(0.1);
+        // Measured here rather than by raylib, which counts drawn frames only.
+        let now = unsafe { ffi::GetTime() };
+        let dt = ((now - last) as f32).min(0.1);
+        last = now;
         painter.resize();
         painter.fonts.rebuild_if_needed();
         let (mut input, mut pad) = controls.read(dt, app.time, app.text_input_active(), app.settings.swap_ab);
@@ -157,6 +170,24 @@ fn run() {
         if !app.update(&input, dt) {
             break;
         }
+        // Every frame is drawn while the user acts and transitions run. Then
+        // the focus pulse settles and the screen stands still: it is drawn
+        // again only for a device report, a resize or the clock, and the
+        // controls are polled in between without touching the GPU.
+        if !input.pressed.is_empty() || !input.held.is_empty() || !input.text.is_empty() || app.animating() || script.running() {
+            active_at = app.time;
+        }
+        let quiet = (app.time - active_at - PULSE_FOR_SECONDS) as f32;
+        painter.pulse = 1.0 - (quiet / PULSE_FADE_SECONDS).clamp(0.0, 1.0);
+        let still = painter.pulse == 0.0 && shot.is_none() && !unsafe { ffi::IsWindowResized() };
+        if let Some((at, revision)) = drawn {
+            if still && revision == app.revision && app.time - at < STILL_REDRAW_SECONDS {
+                unsafe { ffi::PollInputEvents() };
+                std::thread::sleep(std::time::Duration::from_secs_f64(1.0 / ACTIVE_FPS as f64));
+                continue;
+            }
+        }
+        drawn = Some((app.time, app.revision));
 
         painter.time = app.time;
         unsafe {

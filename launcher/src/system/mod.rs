@@ -9,6 +9,7 @@
 
 mod fake;
 mod info;
+mod load;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(not(target_os = "linux"))]
@@ -16,6 +17,7 @@ mod other;
 mod util;
 
 pub use info::{Info, Storage};
+pub use load::{Load, LoadMeter};
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -46,6 +48,11 @@ pub enum Charge {
 pub struct Battery {
     pub percent: u8,
     pub charge: Charge,
+    /// Milliwatts leaving the battery, or entering it while charging, when the
+    /// gauge reports them.
+    pub power_mw: Option<u32>,
+    /// Minutes until empty at the present draw, while on battery.
+    pub minutes_left: Option<u32>,
 }
 
 impl Battery {
@@ -140,6 +147,7 @@ pub struct Snapshot {
     pub clock: Result<ClockState, Missing>,
     pub power: Vec<PowerAction>,
     pub info: Info,
+    pub load: Load,
     pub ip: Option<String>,
     pub storage: Option<Storage>,
     pub simulated: bool,
@@ -189,6 +197,7 @@ pub struct Devices {
     pub clock: Result<Box<dyn Clock>, Missing>,
     pub power: Option<Box<dyn Power>>,
     pub simulated: bool,
+    pub load: LoadMeter,
 }
 
 impl Devices {
@@ -263,6 +272,7 @@ fn snapshot(dev: &mut Devices, info: &Info, storage_root: &std::path::Path) -> S
         },
         power: dev.power.as_ref().map(|p| p.actions()).unwrap_or_default(),
         info: info.clone(),
+        load: dev.load.read(dev.simulated),
         ip: info::local_ip(),
         storage: info::storage(storage_root),
         simulated: dev.simulated,

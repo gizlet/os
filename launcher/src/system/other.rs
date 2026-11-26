@@ -13,6 +13,7 @@ pub fn devices() -> Devices {
         clock: Err(Missing::ManagedBySystem),
         power: None,
         simulated: false,
+        load: LoadMeter::default(),
     }
 }
 
@@ -34,7 +35,15 @@ impl BatterySource for SystemBattery {
             Some("charged") | Some("finishing charge") | Some("AC attached") => Charge::Full,
             _ => Charge::Discharging,
         };
-        Ok(Battery { percent: percent.min(100), charge })
+        // "4:12 remaining"; "(no estimate)" while macOS is still measuring.
+        let minutes_left = match charge {
+            Charge::Discharging => fields.get(2).and_then(|f| {
+                let (h, m) = f.strip_suffix(" remaining")?.split_once(':')?;
+                Some(h.parse::<u32>().ok()? * 60 + m.parse::<u32>().ok()?)
+            }),
+            _ => None,
+        };
+        Ok(Battery { percent: percent.min(100), charge, power_mw: None, minutes_left })
     }
 }
 
@@ -72,7 +81,9 @@ impl BatterySource for SystemBattery {
             (1, false) => Charge::Full,
             _ => Charge::Discharging,
         };
-        Ok(Battery { percent: s.battery_life_percent, charge })
+        // Seconds, or u32::MAX when unknown or on AC power.
+        let minutes_left = (charge == Charge::Discharging && s.battery_life_time != u32::MAX).then(|| s.battery_life_time / 60);
+        Ok(Battery { percent: s.battery_life_percent, charge, power_mw: None, minutes_left })
     }
 }
 

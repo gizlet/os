@@ -24,6 +24,7 @@ pub fn devices() -> Devices {
         clock: GizletClock::detect().map(|c| Box::new(c) as Box<dyn Clock>),
         power: LinuxPower::detect().map(|p| Box::new(p) as Box<dyn Power>),
         simulated: false,
+        load: LoadMeter::default(),
     }
 }
 
@@ -65,7 +66,25 @@ impl BatterySource for SysfsBattery {
             Some("Full") => Charge::Full,
             _ => Charge::Discharging,
         };
-        Ok(Battery { percent, charge })
+        let num = |name: &str| read_trim(&dir.join(name)).and_then(|v| v.parse::<i64>().ok());
+        let first = |names: &[&str]| names.iter().find_map(|n| num(n));
+        // Gauges report µA and µV, some µW; the sign of the current differs
+        // between drivers. The averages are steadier than the instant values.
+        let current = first(&["current_avg", "current_now"]).map(i64::abs).filter(|c| *c > 0);
+        let power_uw = first(&["power_avg", "power_now"]).map(i64::abs).filter(|p| *p > 0).or_else(|| {
+            let volts = first(&["voltage_avg", "voltage_now"])?;
+            Some(current? * volts / 1_000_000)
+        });
+        let minutes_left = match charge {
+            Charge::Discharging => num("time_to_empty_avg")
+                .or_else(|| num("time_to_empty_now"))
+                .filter(|s| *s > 0)
+                .map(|s| s / 60)
+                .or_else(|| Some(first(&["charge_now"])? * 60 / current?))
+                .map(|m| m.clamp(0, u32::MAX as i64) as u32),
+            _ => None,
+        };
+        Ok(Battery { percent, charge, power_mw: power_uw.map(|p| (p / 1000) as u32), minutes_left })
     }
 }
 

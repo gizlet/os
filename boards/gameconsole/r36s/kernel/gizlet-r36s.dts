@@ -7,6 +7,55 @@
 #include "rk3326-gameconsole-r36s.dts"
 
 /*
+ * ROCKNIX runs the performance governor and drops the low CPU and GPU steps,
+ * which leaves an idle R36S at 1.008 GHz on 1.175 V and the GPU at 560 MHz on
+ * 1.15 V. Gizlet OS scales with schedutil and devfreq, so it restores the steps
+ * of px30.dtsi: an idle launcher runs at 600 MHz on 0.95 V.
+ */
+&cpu0_opp_table {
+	opp-600000000 {
+		opp-hz = /bits/ 64 <600000000>;
+		opp-microvolt = <950000 950000 1350000>;
+		clock-latency-ns = <40000>;
+		opp-suspend;
+	};
+
+	opp-816000000 {
+		opp-hz = /bits/ 64 <816000000>;
+		opp-microvolt = <1050000 1050000 1350000>;
+		clock-latency-ns = <40000>;
+	};
+
+	opp-1200000000 {
+		opp-hz = /bits/ 64 <1200000000>;
+		opp-microvolt = <1300000 1300000 1350000>;
+		clock-latency-ns = <40000>;
+	};
+};
+
+&gpu_opp_table {
+	opp-200000000 {
+		opp-hz = /bits/ 64 <200000000>;
+		opp-microvolt = <950000>;
+	};
+
+	opp-300000000 {
+		opp-hz = /bits/ 64 <300000000>;
+		opp-microvolt = <975000>;
+	};
+
+	opp-400000000 {
+		opp-hz = /bits/ 64 <400000000>;
+		opp-microvolt = <1050000>;
+	};
+
+	opp-480000000 {
+		opp-hz = /bits/ 64 <480000000>;
+		opp-microvolt = <1125000>;
+	};
+};
+
+/*
  * The OTG port is a USB host, as in the stock firmware: OTG_SWITCH supplies
  * VBUS from boot. On V30 boards the on-board RTL8188EU WiFi shares this bus.
  */
