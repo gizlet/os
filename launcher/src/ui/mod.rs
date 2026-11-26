@@ -48,6 +48,20 @@ impl Icons {
     }
 }
 
+impl Icons {
+    /// Unloads every icon whose path is not in `paths`, as when an app is
+    /// removed or an update names another icon file.
+    pub fn keep_only(&mut self, paths: &[PathBuf]) {
+        self.loaded.retain(|path, (_, tex)| {
+            let keep = paths.contains(path);
+            if !keep && tex.id != 0 {
+                unsafe { ffi::UnloadTexture(*tex) };
+            }
+            keep
+        });
+    }
+}
+
 fn load(path: &Path) -> ffi::Texture2D {
     let Ok(c) = CString::new(path.to_string_lossy().as_bytes()) else {
         return ffi::Texture2D { id: 0, width: 0, height: 0, mipmaps: 0, format: 0 };
@@ -116,6 +130,8 @@ pub struct Ui {
     page_key: (Option<Page>, usize),
     page_since: f32,
     icons: Icons,
+    /// The installed apps' icon paths the cache was last pruned to.
+    icon_paths: Vec<PathBuf>,
     shelf_x: f32,
 }
 

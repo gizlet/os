@@ -50,6 +50,12 @@ pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     chrome::status(p, app);
     let on_tiles = app.home_row == HomeRow::Tiles;
 
+    // The library changed: free the icons of apps that are gone or renamed them.
+    let paths: Vec<_> = app.apps.iter().filter_map(|a| a.manifest.icon.as_ref().map(|i| a.dir.join(i))).collect();
+    if paths != ui.icon_paths {
+        ui.icons.keep_only(&paths);
+        ui.icon_paths = paths;
+    }
     if app.apps.is_empty() {
         empty_shelf(p, app, on_tiles);
     } else {
