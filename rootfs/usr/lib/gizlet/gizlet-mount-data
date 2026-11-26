@@ -6,9 +6,10 @@
 # under system/.
 #
 # The image's data filesystem is small. The card writers (flash.sh, flash.ps1)
-# extend its partition to the end of the card; a card written another way has
-# it extended here, as long as it is the last partition. On first boot the
-# filesystem is then grown to its partition before it is mounted.
+# extend its partition to the end of the card and grow the filesystem to fill
+# it, so their cards boot as on any later boot. A card written another way has
+# its partition extended here, as long as it is the last partition, and on
+# first boot the filesystem is then grown to it before it is mounted.
 set -eu
 # The boot waits for this script, and until the mount it shares the card with
 # udev and the other early services. Every program it starts must first be

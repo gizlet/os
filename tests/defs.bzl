@@ -2,27 +2,40 @@
 
 load("//tools/bazel/krun:defs.bzl", "vm_test")
 
-def gizlet_rootfs_test(name, image, booter, data_uuid, licenses, **kwargs):
-    """Checks the root and data filesystems, the installed Booter and license notices."""
+def gizlet_rootfs_test(name, image, booter, flash, data_uuid, licenses, **kwargs):
+    """Checks the root and data filesystems, the installed Booter and license notices.
+
+    `flash` is the card writer whose offline growth of the data filesystem is checked.
+    """
     vm_test(
         name = name,
         src = Label("//tests:rootfs_test.py"),
-        data = [image, booter, Label("//tests:card.py")],
+        data = [image, booter, flash, Label("//tests:card.py"), Label("//tests:flash_card.sh")],
         guest_args = [
             "$(rootpath %s)" % image,
             "$(rootpath %s)" % booter,
             json.encode({"data_uuid": data_uuid, "licenses": licenses}),
+            "$(rootpath %s)" % flash,
+            "$(rootpath %s)" % Label("//tests:flash_card.sh"),
         ],
         **kwargs
     )
 
-def gizlet_qemu_test(name, image, kernel = "Image", **kwargs):
-    """Boots the card on QEMU virt: recovery, installation, persistence, invalid entries and ssh."""
+def gizlet_qemu_test(name, image, flash, kernel = "Image", **kwargs):
+    """Boots the card on QEMU virt: recovery, installation, persistence, invalid entries and ssh.
+
+    The card is written as `flash`, the card writer, writes it.
+    """
     vm_test(
         name = name,
         src = Label("//tests:qemu_test.py"),
-        data = [image, Label("//tests:card.py")],
-        guest_args = ["$(rootpath %s)" % image, kernel],
+        data = [image, flash, Label("//tests:card.py"), Label("//tests:flash_card.sh")],
+        guest_args = [
+            "$(rootpath %s)" % image,
+            kernel,
+            "$(rootpath %s)" % flash,
+            "$(rootpath %s)" % Label("//tests:flash_card.sh"),
+        ],
         **kwargs
     )
 
