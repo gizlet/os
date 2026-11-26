@@ -19,7 +19,6 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 pub const MANIFEST: &str = "manifest.json";
-const LEGACY_MANIFEST: &str = "manifest.toml";
 pub const CHECKSUMS: &str = "CHECKSUMS";
 const MAX_ENTRIES: usize = 20_000;
 const MAX_TOTAL_BYTES: u64 = 8 << 30;
@@ -114,15 +113,6 @@ impl Manifest {
         }
         let manifest: Manifest = serde_json::from_str(text).map_err(|e| format!("{MANIFEST}: {e}"))?;
         manifest.validate()
-    }
-
-    fn parse_file(name: &str, text: &str) -> Result<Manifest, String> {
-        if name == LEGACY_MANIFEST {
-            let manifest: Manifest =
-                toml::from_str(text).map_err(|e| format!("{LEGACY_MANIFEST}: {}", e.message()))?;
-            return manifest.validate();
-        }
-        Self::parse(text)
     }
 
     fn validate(self) -> Result<Manifest, String> {
@@ -291,18 +281,9 @@ impl Library {
     }
 
     fn load(&self, dir: &Path) -> Result<App, String> {
-        let mut name = MANIFEST;
-        let mut path = dir.join(name);
-        let text = match fs::read_to_string(&path) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                name = LEGACY_MANIFEST;
-                path = dir.join(name);
-                fs::read_to_string(&path)
-            }
-            result => result,
-        }
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-        let manifest = Manifest::parse_file(name, &text)?;
+        let path = dir.join(MANIFEST);
+        let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let manifest = Manifest::parse(&text)?;
         if dir.file_name().is_none_or(|n| n.to_string_lossy() != manifest.id) {
             return Err(format!("{} holds {}", dir.display(), manifest.id));
         }
@@ -685,13 +666,10 @@ pub fn unpack(package: &Path, dest: &Path) -> Result<Manifest, String> {
     }
     let manifest_entry = list
         .iter()
-        .find(|e| e.name == MANIFEST)
-        .or_else(|| list.iter().find(|e| e.name == LEGACY_MANIFEST))
-        .filter(|e| !e.dir)
+        .find(|e| e.name == MANIFEST && !e.dir)
         .ok_or_else(|| format!("{what} has no {MANIFEST}"))?;
-    let manifest_name = manifest_entry.name.as_str();
     if manifest_entry.size > MAX_MANIFEST_BYTES {
-        return Err(format!("{what} has a {manifest_name} larger than 64 KiB"));
+        return Err(format!("{what} has a {MANIFEST} larger than 64 KiB"));
     }
     match list.iter().find(|e| e.name == CHECKSUMS && !e.dir) {
         None => return Err(format!("{what} has no CHECKSUMS")),
@@ -764,8 +742,8 @@ pub fn unpack(package: &Path, dest: &Path) -> Result<Manifest, String> {
         return Err(format!("{what}: {rel} is not listed in CHECKSUMS"));
     }
 
-    let text = fs::read_to_string(dest.join(manifest_name)).map_err(|e| format!("{what}: {manifest_name}: {e}"))?;
-    let manifest = Manifest::parse_file(manifest_name, &text).map_err(|e| format!("{what}: {e}"))?;
+    let text = fs::read_to_string(dest.join(MANIFEST)).map_err(|e| format!("{what}: {MANIFEST}: {e}"))?;
+    let manifest = Manifest::parse(&text).map_err(|e| format!("{what}: {e}"))?;
     let entry = dest.join(&manifest.entry);
     if !entry.is_file() {
         return Err(format!("{what} has no entry file {:?}", manifest.entry));
@@ -901,13 +879,9 @@ mod tests {
     }
 
     fn package(dir: &Path, manifest: &str, extra: &[(&str, &[u8], u32)]) -> PathBuf {
-        package_with_manifest(dir, MANIFEST, manifest, extra)
-    }
-
-    fn package_with_manifest(dir: &Path, name: &str, manifest: &str, extra: &[(&str, &[u8], u32)]) -> PathBuf {
         let exe: &[u8] = b"#!/bin/sh\necho hello\n";
         let mut files: Vec<(&str, &[u8], u32)> =
-            vec![(name, manifest.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755)];
+            vec![(MANIFEST, manifest.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755)];
         files.extend_from_slice(extra);
         let sums: String = files.iter().map(|(n, d, _)| format!("{}  {n}\n", sum(d))).collect();
         files.push(("CHECKSUMS", sums.as_bytes(), 0o100644));
@@ -956,28 +930,20 @@ mod tests {
     }
 
     #[test]
-    fn prefers_json_and_keeps_legacy_apps() {
-        let dir = temp("legacy");
+    fn requires_manifest() {
+        let dir = temp("missing-manifest");
         let lib = Library::new(dir.join("prefix"));
         let id = "dev.example.hello";
-        let target = device_target();
-        let legacy = format!(
-            "id = \"{id}\"\nname = \"Legacy\"\nversion = \"0.1.0\"\ntier = \"lite\"\ntarget = \"{target}\"\nentry = \"bin/hello\"\n"
-        );
-        let pkg = package_with_manifest(&dir, LEGACY_MANIFEST, &legacy, &[]);
-        assert_eq!(lib.install(&pkg).unwrap().manifest.name, "Legacy");
-        assert_eq!(lib.get(id).unwrap().manifest.name, "Legacy");
+        let path = dir.join("no-manifest.gzl");
+        let exe: &[u8] = b"#!/bin/sh\necho hello\n";
+        let sums = format!("{}  bin/hello\n", sum(exe));
+        fs::write(&path, zip(&[("bin/hello", exe, 0o100755), (CHECKSUMS, sums.as_bytes(), 0o100644)])).unwrap();
+        assert!(lib.install(&path).unwrap_err().contains("has no manifest.json"));
 
-        let bad = package(&dir, "{", &[(LEGACY_MANIFEST, legacy.as_bytes(), 0o100644)]);
-        assert!(lib.install(&bad).unwrap_err().contains(MANIFEST));
-        assert_eq!(lib.get(id).unwrap().manifest.name, "Legacy");
-
-        let pkg = package(&dir, &manifest(id, &target), &[(LEGACY_MANIFEST, legacy.as_bytes(), 0o100644)]);
-        let app = lib.install(&pkg).unwrap();
-        assert_eq!(app.manifest.name, "Hello");
-        assert_eq!(lib.get(id).unwrap().manifest.name, "Hello");
-        fs::write(app.dir.join(MANIFEST), "{").unwrap();
+        let app = lib.install(&package(&dir, &manifest(id, &device_target()), &[])).unwrap();
+        fs::remove_file(app.dir.join(MANIFEST)).unwrap();
         assert!(lib.get(id).unwrap_err().contains(MANIFEST));
+        assert!(lib.scan().is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -32,7 +32,7 @@ Developers write `gizlet.toml` at the repository root. The store reads that file
 }
 ```
 
-`id`, `name`, `version`, `tier`, `target` and `entry` are required. The app shelf uses the package's `icon`, `color` and localized `names` when provided. `description` and its `descriptions` translations are also optional. The OS supports schema and runtime `1` and assumes `1` when either is omitted. It reads the legacy `manifest.toml` in older packages and installed apps when `manifest.json` is absent.
+`id`, `name`, `version`, `tier`, `target` and `entry` are required. The app shelf uses the package's `icon`, `color` and localized `names` when provided. `description` and its `descriptions` translations are also optional. The OS supports schema and runtime `1` and assumes `1` when either is omitted.
 
 The installer accepts stored or deflated entries with canonical relative names. It rejects links, devices, setuid files, encryption and ZIP64, verifies every file against `CHECKSUMS`, and checks the reverse-DNS `id` and whether the device supports the package's `target` and `tier` (`aarch64-unknown-linux-gnu` or a static `-musl` program, and `lite` on the R36S). The package is unpacked beside the installed version and replaces it only when complete.
 
