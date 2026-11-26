@@ -56,6 +56,28 @@ strings! {
     CatTime => "日期与时间", "Date & Time";
     CatSystem => "系统", "System";
 
+    OtaTitle => "系统更新", "System updates";
+    OtaRuntime => "运行时", "Runtime";
+    OtaLauncher => "启动器和 CLI", "Launcher and CLI";
+    OtaBoth => "运行时、启动器和 CLI", "Runtime, Launcher and CLI";
+    OtaReading => "正在读取版本…", "Reading versions…";
+    OtaCheck => "检查更新", "Check for updates";
+    OtaChecking => "正在检查更新…", "Checking for updates…";
+    OtaCurrent => "没有可用更新", "No update available";
+    OtaAvailable => "可更新到 {}", "{} available";
+    OtaConfirm => "下载并安装更新？", "Download and install?";
+    OtaDownload => "下载并安装", "Download and install";
+    OtaPreparingRuntime => "正在准备运行时…", "Preparing Runtime…";
+    OtaDownloadingLauncher => "正在下载启动器…", "Downloading Launcher…";
+    OtaVerifying => "正在验证并暂存…", "Verifying and staging…";
+    OtaStaged => "{} 已准备就绪", "{} ready to install";
+    OtaRestart => "重启以完成更新", "Restart to finish the update";
+    OtaRolledBack => "已回退更新 {}", "{} rolled back";
+    OtaRunningPrevious => "当前运行上一个可用版本。", "Running the previous working version.";
+    OtaCheckFailed => "无法检查更新", "Couldn't check for updates";
+    OtaInstallFailed => "无法安装更新", "Couldn't install the update";
+    OtaRetry => "请检查网络和存储空间，然后重试。", "Check your connection and free space, then try again.";
+
     Wifi => "Wi-Fi", "Wi-Fi";
     WifiOffBody => "打开 Wi-Fi 后可以搜索和连接网络。", "Turn on Wi-Fi to find and join networks.";
     WifiStarting => "正在打开 Wi-Fi…", "Turning on Wi-Fi…";

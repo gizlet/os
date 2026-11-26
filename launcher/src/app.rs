@@ -9,7 +9,9 @@ use crate::settings::{Language, Power, Settings, Theme};
 use crate::sound::Sfx;
 use crate::system::{valid_hostname, Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
 use crate::zones::{Zone, ZONES};
+use gizlet_launcher::ota;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
 
 pub const TOAST_SECONDS: f32 = 2.8;
 /// How long Back is held to leave the button test.
@@ -115,6 +117,9 @@ pub enum ItemId {
     Clock24,
     TimeZone(String),
     Hostname,
+    CheckUpdate,
+    InstallUpdate,
+    RestartUpdate,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -179,6 +184,7 @@ pub enum DialogAction {
     Quit,
     WifiDisconnect,
     WifiForget(String),
+    InstallUpdate,
     Close,
 }
 
@@ -201,6 +207,90 @@ pub struct WifiUi {
     pub connecting: Option<String>,
     /// Turning Wi-Fi on or off, until the device reports it.
     pub switching: Option<bool>,
+}
+
+enum UpdateState {
+    Idle,
+    Checking,
+    Current,
+    Available(ota::Offer),
+    Installing(ota::Progress),
+    Failed(bool),
+}
+
+enum UpdateEvent {
+    Installed(ota::Installed),
+    Checked(Result<Option<ota::Offer>, String>),
+    Installing(ota::Progress),
+    Staged(Result<String, String>),
+}
+
+struct Updates {
+    installed: Option<ota::Installed>,
+    work: Option<Receiver<UpdateEvent>>,
+    state: UpdateState,
+}
+
+impl Updates {
+    fn new() -> Option<Self> {
+        if !cfg!(feature = "gizlet-os") || !std::path::Path::new("/usr/lib/gizlet/gizlet-ota-boot").is_file() {
+            return None;
+        }
+        let (send, work) = mpsc::channel();
+        std::thread::spawn(move || { let _ = send.send(UpdateEvent::Installed(ota::installed())); });
+        Some(Self { installed: None, work: Some(work), state: UpdateState::Idle })
+    }
+
+    fn check(&mut self) {
+        if self.work.is_some() { return; }
+        let Some(installed) = self.installed.clone() else { return };
+        let (send, work) = mpsc::channel();
+        self.state = UpdateState::Checking;
+        self.work = Some(work);
+        std::thread::spawn(move || { let _ = send.send(UpdateEvent::Checked(ota::check(&installed))); });
+    }
+
+    fn install(&mut self) {
+        if self.work.is_some() { return; }
+        let UpdateState::Available(offer) = &self.state else { return };
+        let offer = offer.clone();
+        let (send, work) = mpsc::channel();
+        self.state = UpdateState::Installing(ota::Progress::Runtime(0));
+        self.work = Some(work);
+        std::thread::spawn(move || {
+            let result = ota::install(&offer, |phase| { let _ = send.send(UpdateEvent::Installing(phase)); });
+            let _ = send.send(UpdateEvent::Staged(result.map(|()| offer.tag)));
+        });
+    }
+
+    fn poll(&mut self) -> bool {
+        let Some(work) = &self.work else { return false };
+        let Ok(event) = work.try_recv() else { return false };
+        self.state = match event {
+            UpdateEvent::Installed(installed) => {
+                self.installed = Some(installed);
+                UpdateState::Idle
+            }
+            UpdateEvent::Checked(Ok(Some(offer))) => UpdateState::Available(offer),
+            UpdateEvent::Checked(Ok(None)) => UpdateState::Current,
+            UpdateEvent::Installing(phase) => {
+                self.state = UpdateState::Installing(phase);
+                return true;
+            }
+            UpdateEvent::Staged(Ok(tag)) => {
+                if let Some(installed) = &mut self.installed {
+                    installed.pending = Some(tag);
+                }
+                UpdateState::Idle
+            }
+            UpdateEvent::Checked(Err(message)) | UpdateEvent::Staged(Err(message)) => {
+                eprintln!("Gizlet OTA: {message}");
+                UpdateState::Failed(matches!(self.state, UpdateState::Installing(_)))
+            }
+        };
+        self.work = None;
+        true
+    }
 }
 
 /// Where the focus is, to hear it move.
@@ -232,6 +322,7 @@ pub struct App {
     pub focus: SettingsFocus,
     pub snapshot: Option<Snapshot>,
     system: System,
+    updates: Option<Updates>,
     pub wifi: WifiUi,
     pub ssh_switching: Option<bool>,
     /// The time zone being set, until the device reports it.
@@ -265,6 +356,7 @@ impl App {
             power: Power::load(Power::path()),
             version,
             system: System::start(data_dir),
+            updates: Updates::new(),
             pages: vec![Page::Home],
             // The most recently played app has focus; without apps, Settings.
             home_row: if apps.is_empty() { HomeRow::Buttons } else { HomeRow::Tiles },
@@ -454,6 +546,13 @@ impl App {
         }
         self.toasts.retain(|t| t.age < TOAST_SECONDS);
         let events = self.system.poll();
+        if self.updates.as_ref().is_some_and(|updates| updates.work.is_some()) {
+            let focused = if self.focused_category() == Category::System { self.focused_item() } else { None };
+            if self.updates.as_mut().is_some_and(Updates::poll) {
+                self.revision += 1;
+                self.refocus(focused);
+            }
+        }
         if !events.is_empty() {
             let focused = self.focused_item();
             for event in events {
@@ -856,6 +955,31 @@ impl App {
                 let current = self.snapshot.as_ref().map(|s| s.hostname.clone()).unwrap_or_default();
                 self.keyboard = Some(Keyboard::hostname(self.t(T::HostnameTitle).into(), &current));
             }
+            ItemId::CheckUpdate => {
+                if let Some(updates) = &mut self.updates { updates.check(); }
+            }
+            ItemId::InstallUpdate => {
+                self.dialog = Some(Dialog {
+                    title: self.t(T::OtaConfirm).into(),
+                    buttons: vec![
+                        (self.t(T::Close).into(), DialogAction::Close),
+                        (self.t(T::OtaDownload).into(), DialogAction::InstallUpdate),
+                    ],
+                    focus: 0,
+                    opened: self.time,
+                });
+            }
+            ItemId::RestartUpdate => {
+                self.dialog = Some(Dialog {
+                    title: self.t(T::OtaRestart).into(),
+                    buttons: vec![
+                        (self.t(T::Close).into(), DialogAction::Close),
+                        (self.t(T::Reboot).into(), DialogAction::Power(PowerAction::Reboot)),
+                    ],
+                    focus: 0,
+                    opened: self.time,
+                });
+            }
             ItemId::WifiScan => {
                 self.wifi.networks = None;
                 self.scan();
@@ -953,6 +1077,9 @@ impl App {
                         DialogAction::WifiForget(ssid) => {
                             self.system.send(Request::WifiForget(ssid));
                             self.wifi.networks = None;
+                        }
+                        DialogAction::InstallUpdate => {
+                            if let Some(updates) = &mut self.updates { updates.install(); }
                         }
                         DialogAction::Close => {}
                     }
@@ -1196,6 +1323,7 @@ impl App {
                 }
             }
             Category::System => {
+                self.update_items(&mut items);
                 items.push(Item::section(t(T::About)));
                 items.push(Item::info(t(T::Version), self.version));
                 let unknown = || t(T::Unknown);
@@ -1230,6 +1358,72 @@ impl App {
             }
         }
         items
+    }
+
+    fn update_items(&self, items: &mut Vec<Item>) {
+        let Some(updates) = &self.updates else { return };
+        let lang = self.lang();
+        let t = |key: T| key.get(lang);
+        items.push(Item::section(t(T::OtaTitle)));
+        let Some(installed) = &updates.installed else {
+            items.push(Item::new(ItemId::None, t(T::OtaReading), ItemValue::Busy));
+            return;
+        };
+        let runtime = installed.runtime.as_ref().map(|hash| format!("1 · {}", &hash[..12]));
+        items.push(Item::info(t(T::OtaRuntime), runtime.as_deref().unwrap_or(t(T::Unknown))));
+        items.push(Item::info(t(T::OtaLauncher), &installed.launcher));
+        if let Some(tag) = &installed.pending {
+            items.push(Item::notice(T::OtaStaged.fmt(lang, &[tag]), t(T::OtaRestart)));
+            items.push(Item::new(ItemId::RestartUpdate, t(T::Reboot), ItemValue::Button));
+            return;
+        }
+        match &updates.state {
+            UpdateState::Idle => {
+                if let Some(tag) = &installed.failed {
+                    items.push(Item::notice(T::OtaRolledBack.fmt(lang, &[tag]), t(T::OtaRunningPrevious)));
+                }
+            }
+            UpdateState::Checking => {
+                items.push(Item::new(ItemId::None, t(T::OtaChecking), ItemValue::Busy));
+                return;
+            }
+            UpdateState::Current => items.push(Item::notice(t(T::OtaCurrent), "")),
+            UpdateState::Available(offer) => {
+                let component = match (offer.runtime_changed, offer.launcher_changed) {
+                    (true, true) => T::OtaBoth,
+                    (true, false) => T::OtaRuntime,
+                    _ => T::OtaLauncher,
+                };
+                let size = human_size(offer.bytes());
+                items.push(Item::notice(T::OtaAvailable.fmt(lang, &[&offer.tag]), format!("{} · {}", t(component), size)));
+                items.push(Item::new(ItemId::InstallUpdate, t(T::OtaDownload), ItemValue::Button));
+            }
+            UpdateState::Installing(phase) => {
+                match phase {
+                    ota::Progress::Runtime(percent) | ota::Progress::Launcher(percent) => {
+                        let label = if matches!(phase, ota::Progress::Runtime(_)) {
+                            T::OtaPreparingRuntime
+                        } else {
+                            T::OtaDownloadingLauncher
+                        };
+                        items.push(Item::new(ItemId::None, t(label), ItemValue::Bar {
+                            value: format!("{percent}%"),
+                            fraction: f32::from(*percent) / 100.0,
+                            warn: false,
+                        }));
+                    }
+                    ota::Progress::Verify => {
+                        items.push(Item::new(ItemId::None, t(T::OtaVerifying), ItemValue::Busy));
+                    }
+                }
+                return;
+            }
+            UpdateState::Failed(install) => items.push(Item::notice(
+                t(if *install { T::OtaInstallFailed } else { T::OtaCheckFailed }),
+                t(T::OtaRetry),
+            )),
+        }
+        items.push(Item::new(ItemId::CheckUpdate, t(T::OtaCheck), ItemValue::Button));
     }
 
     fn wifi_items(&self, w: &crate::system::WifiState, items: &mut Vec<Item>) {

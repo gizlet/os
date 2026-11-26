@@ -72,6 +72,14 @@ See [Activating a new build](../runtime/README.md#activating-a-new-build) for ru
 
 ## Updating the Launcher and CLI
 
+On an OTA-capable card, open **Settings → System → System updates**. The Launcher shows its release version and the SHA-256 prefix of the running Runtime 1 build. Check for updates, confirm the download, then restart when it is ready. The new Runtime and Launcher with its CLI start together. The system keeps the previous working pair until the new Launcher draws its first frame. A failed or interrupted trial restores the previous pair and shows the rolled-back release in Settings.
+
+Cards from before OTA support need one card-writer **Update** first. That updates the base with the boot recovery logic and preserves the data partition. OTA updates the Runtime and Launcher on that partition. The card writer still updates the base, kernel and boot files. With a custom `boot.ini`, the update trial waits until the default Launcher entry runs.
+
+Use `gizlet system ota status`, `gizlet system ota check`, and `gizlet system ota install TAG` for the same flow over SSH.
+
+### Manual Launcher bundles
+
 A Launcher release contains the UI, its start script, and `bin/cli`. On boot, Gizlet OS picks the highest complete, compatible `MAJOR.MINOR.PATCH` release under `/opt/gizlet/launcher/releases`, or the factory release from the read-only rootfs. The selection lasts for that boot. A custom `boot.ini` still controls the boot entry. `gizlet` uses the selected CLI in either case.
 
 Build both card binaries and use an OpenSSH release signing key to pack them:

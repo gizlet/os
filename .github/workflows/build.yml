@@ -130,6 +130,7 @@ jobs:
           bazel test --config=r36s --test_output=errors
           //targets/sd_image/gameconsole/r36s:image_test
           //targets/sd_image/gameconsole/r36s:boot_test
+          //targets/sd_image/gameconsole/r36s:ota_test
 
       - name: Upload test logs
         if: failure()

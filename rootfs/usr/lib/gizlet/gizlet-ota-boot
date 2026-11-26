@@ -1,0 +1,138 @@
+#!/bin/sh
+set -eu
+umask 077
+store=/opt/gizlet/ota
+launcher=/run/gizlet-ota-launcher
+runtime=/run/gizlet-ota-runtime
+trial=/run/gizlet-ota-trial
+healthy=/run/gizlet-ota-healthy
+runtime_helper=/usr/lib/gizlet/gizlet-runtime
+
+pointer() {
+    target=$(readlink "$store/$1") || return 1
+    printf '%s\n' "$target" | grep -Exq 'v(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8})){2}\.[a-zA-Z0-9]{6}' || return 1
+    [ -d "$store/$target" ] && [ ! -L "$store/$target" ] || return 1
+    printf '%s\n' "$target"
+}
+
+set_pointer() {
+    ln -sfnT -- "$2" "$store/$1.new"
+    mv -fT -- "$store/$1.new" "$store/$1"
+    sync -f "$store"
+}
+
+rollback() {
+    printf '%s\n' "${1%.*}" > "$store/failed.new"
+    mv -fT "$store/failed.new" "$store/failed"
+    rm -f "$store/pending" "$store/attempt"
+    sync -f "$store"
+    printf 'Gizlet OS: update %s rolled back\n' "${1%.*}"
+}
+
+mount_candidate() {
+    mountpoint -q "$store/$1/root" || "$runtime_helper" trial "$store/$1" || return 1
+    ln -sfnT -- "$store/$1/root" "$runtime"
+    ln -sfnT -- "$store/$1/launcher" "$launcher"
+}
+
+start_committed() {
+    chosen=$1
+    legacy=$2
+    manual_runtime=$(readlink /opt/gizlet/runtime/1-current || :)
+    if [ "$(cat "$store/$chosen/legacy-runtime")" != "$manual_runtime" ]; then
+        rm -f "$runtime"
+    fi
+    version=${chosen%.*}
+    case $legacy in
+        /opt/gizlet/launcher/releases/*)
+            manual=${legacy##*/}
+            highest=$(printf '%s\n' "${version#v}" "$manual" | sort -V | tail -n 1)
+            if [ "$highest" = "$manual" ] && [ "$manual" != "${version#v}" ]; then
+                rm -f "$launcher"
+                exec "$legacy/start"
+            fi
+            ;;
+    esac
+    exec "$launcher/start"
+}
+
+confirm() {
+    candidate=$(readlink "$trial")
+    [ "$(pointer pending)" = "$candidate" ]
+    [ "$(pointer attempt)" = "$candidate" ]
+    current=$(pointer current || :)
+    if [ -n "$current" ] && [ "$current" != "$candidate" ]; then
+        set_pointer previous "$current"
+    fi
+    set_pointer current "$candidate"
+    rm -f "$store/pending" "$store/attempt" "$store/failed"
+    sync -f "$store"
+    : > "$healthy"
+    rm -f "$trial"
+}
+
+supervise() {
+    "$@" <&0 &
+    child=$!
+    (
+        for second in $(seq 45); do
+            [ ! -f "$healthy" ] && kill -0 "$child" 2>/dev/null || exit 0
+            sleep 1
+        done
+        if [ ! -f "$healthy" ]; then kill -KILL "$child" 2>/dev/null || :; fi
+    ) &
+    watchdog=$!
+    status=0
+    wait "$child" || status=$?
+    kill "$watchdog" 2>/dev/null || :
+    wait "$watchdog" 2>/dev/null || :
+    return "$status"
+}
+
+run() {
+    legacy=$1
+    current=$(pointer current || :)
+    pending=$(pointer pending || :)
+    if [ -n "$pending" ]; then
+        attempt=$(pointer attempt || :)
+        if [ "$pending" = "$current" ]; then
+            rm -f "$store/pending" "$store/attempt"
+        elif [ "$pending" = "$attempt" ]; then
+            rollback "$pending"
+        else
+            set_pointer attempt "$pending"
+            if mount_candidate "$pending"; then
+                rm -f "$healthy"
+                ln -sfnT -- "$pending" "$trial"
+                status=0
+                "$launcher/start" || status=$?
+                if [ -f "$healthy" ]; then return "$status"; fi
+                rm -f "$trial" "$launcher" "$runtime"
+                umount "$store/$pending/root" || :
+            fi
+            rollback "$pending"
+        fi
+    fi
+    if [ -n "$current" ]; then
+        if mount_candidate "$current"; then start_committed "$current" "$legacy"; fi
+        previous=$(pointer previous || :)
+        if [ -n "$previous" ] && mount_candidate "$previous"; then
+            set_pointer current "$previous"
+            rollback "$current"
+            start_committed "$previous" "$legacy"
+        fi
+        rollback "$current"
+        rm -f "$store/current" "$store/previous"
+        sync -f "$store"
+    fi
+    rm -f "$launcher" "$runtime"
+    printf 'Gizlet OS: using Launcher from %s\n' "$legacy"
+    exec "$legacy/start"
+}
+
+case ${1-} in
+    run) run "$2" ;;
+    confirm) confirm ;;
+    supervise) shift; supervise "$@" ;;
+    *) exit 2 ;;
+esac

@@ -75,6 +75,7 @@ pub fn dialog(p: &mut Painter, app: &App) {
             }
             DialogAction::Power(PowerAction::Reboot) => icons::restart(p, icon_x, cy, 26.0, ic),
             DialogAction::Power(PowerAction::PowerOff) | DialogAction::Quit => icons::power(p, icon_x, cy, 26.0, ic),
+            DialogAction::InstallUpdate => icons::chevron(p, icon_x, cy, 26.0, true, ic),
             DialogAction::WifiForget(_) | DialogAction::WifiDisconnect | DialogAction::Close => {
                 icons::cross_circle(p, icon_x, cy, 26.0, ic)
             }

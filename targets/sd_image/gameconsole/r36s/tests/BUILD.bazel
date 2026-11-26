@@ -4,6 +4,7 @@ exports_files([
     "card.py",
     "card_test.py",
     "flash_card.sh",
+    "ota_fixture.sh",
     "qemu_test.py",
     "rootfs_test.py",
 ])

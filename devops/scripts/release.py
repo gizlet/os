@@ -16,6 +16,14 @@ VERSION = r"(?:0|[1-9][0-9]{0,8})(?:\.(?:0|[1-9][0-9]{0,8})){2}"
 BOARD = Path("boards/gameconsole/r36s")
 
 
+def artifact(output, path):
+    digest = hashlib.sha256()
+    with (output / path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {"path": path.as_posix(), "sha256": digest.hexdigest(), "bytes": (output / path).stat().st_size}
+
+
 def assemble(tag, commit, build, output, signing_key):
     version = tag[1:]
     image = BOARD / "gizlet-os-r36s.img.gz"
@@ -35,25 +43,8 @@ def assemble(tag, commit, build, output, signing_key):
         (output / filename).write_text(contents, encoding=encoding)
     windows_script = output / board_scripts["windows"]
     windows_script.write_text(windows_script.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
-    digest = hashlib.sha256()
-    with (output / image).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    (output / checksum).write_text(f"{digest.hexdigest()}  {image.name}\n")
+    (output / checksum).write_text(f"{artifact(output, image)['sha256']}  {image.name}\n")
 
-    with tempfile.TemporaryDirectory() as key_dir:
-        key = Path(key_dir) / "launcher"
-        key.touch(mode=0o600)
-        key.write_text(signing_key.rstrip("\n") + "\n")
-        public = subprocess.check_output(["ssh-keygen", "-y", "-f", key], text=True).split()[:2]
-        trusted = (ROOT / "rootfs/usr/lib/gizlet/launcher/allowed_signers").read_text().split()[-2:]
-        if public != trusted:
-            raise ValueError("Launcher signing key does not match the public key built into the image")
-        subprocess.run(
-            [ROOT / "launcher/pack_release.sh", version, key, build / "gizlet-launcher",
-             build / "gizlet-cli", output / launcher],
-            check=True,
-        )
     manifest = {
         "schema_version": 1,
         "tag": tag,
@@ -69,7 +60,29 @@ def assemble(tag, commit, build, output, signing_key):
         "runtime": {"arm64": runtime.as_posix()},
         "launcher": {"arm64": launcher.as_posix()},
     }
-    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    with tempfile.TemporaryDirectory() as key_dir:
+        key = Path(key_dir) / "launcher"
+        key.touch(mode=0o600)
+        key.write_text(signing_key.rstrip("\n") + "\n")
+        public = subprocess.check_output(["ssh-keygen", "-y", "-f", key], text=True).split()[:2]
+        trusted = (ROOT / "rootfs/usr/lib/gizlet/launcher/allowed_signers").read_text().split()[-2:]
+        if public != trusted:
+            raise ValueError("Launcher signing key does not match the public key built into the image")
+        subprocess.run(
+            [ROOT / "launcher/pack_release.sh", version, key, build / "gizlet-launcher",
+             build / "gizlet-cli", output / launcher],
+            check=True,
+        )
+        manifest["ota"] = {
+            "protocol": 1,
+            "arch": "aarch64",
+            "runtime_abi": 1,
+            "runtime": artifact(output, runtime),
+            "launcher": artifact(output, launcher),
+        }
+        manifest_path = output / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        subprocess.run(["ssh-keygen", "-Y", "sign", "-f", key, "-n", "gizlet-launcher", manifest_path], check=True)
 
 
 def publish(tag, output, credentials):

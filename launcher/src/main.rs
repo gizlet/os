@@ -219,6 +219,15 @@ fn run() {
         }
         settling = ui.draw(&mut painter, &app, &pad, draw_dt);
         unsafe { ffi::EndDrawing() };
+        if KMS && frame == 1 && std::fs::symlink_metadata("/run/gizlet-ota-trial").is_ok() {
+            let confirmed = std::process::Command::new("/usr/lib/gizlet/gizlet-ota-boot")
+                .arg("confirm")
+                .status()
+                .is_ok_and(|status| status.success());
+            if !confirmed {
+                std::process::exit(1);
+            }
+        }
 
         if let Some(path) = shot {
             if let Ok(c) = CString::new(path) {

@@ -16,8 +16,15 @@ dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) || exit 1
 launcher=$dir/bin/gizlet-launcher
 cli=$dir/bin/cli
 request=/run/gizlet-launch
+if [ -f "$dir/manifest" ]; then
+    read -r _ GIZLET_RUNNING_LAUNCHER _ < "$dir/manifest"
+else
+    GIZLET_RUNNING_LAUNCHER=factory
+fi
+export GIZLET_RUNNING_LAUNCHER
 runtime_runner() {
-    readlink -e /opt/gizlet/runtime/1-current/bin/gizlet-run ||
+    readlink -e /run/gizlet-ota-runtime/bin/gizlet-run ||
+        readlink -e /opt/gizlet/runtime/1-current/bin/gizlet-run ||
         printf '%s\n' /opt/gizlet/runtime/1/bin/gizlet-run
 }
 # Options such as --probe pass straight through.
@@ -25,7 +32,14 @@ runtime_runner() {
 printf '\033[2J\033[H\033[?25l' 2>/dev/null > /dev/tty1 || :
 while :; do
     rm -f "$request"
-    "$(runtime_runner)" "$launcher"
+    runner=$(runtime_runner)
+    GIZLET_RUNNING_RUNTIME=${runner%/bin/gizlet-run}
+    export GIZLET_RUNNING_RUNTIME
+    if [ -L /run/gizlet-ota-trial ]; then
+        /usr/lib/gizlet/gizlet-ota-boot supervise "$runner" "$launcher"
+    else
+        "$runner" "$launcher"
+    fi
     status=$?
     [ -f "$request" ] || exit "$status"
     id=$(head -n 1 "$request")

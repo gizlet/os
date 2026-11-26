@@ -22,12 +22,21 @@ prefix is /opt/gizlet on Gizlet OS, or GIZLET_PREFIX.";
 /// Runs a subcommand and returns its exit status.
 pub fn main(args: &[String]) -> i32 {
     let (command, rest) = args.split_first().map_or(("help", &[][..]), |(command, rest)| (command.as_str(), rest));
+    if cfg!(feature = "gizlet-os") && command == "ota" {
+        return match crate::ota::command(rest) {
+            Ok(()) => 0,
+            Err(message) => {
+                eprintln!("gizlet: {message}");
+                1
+            }
+        };
+    }
     let library = Library::open();
     let status = match (command, rest) {
         ("help" | "--help" | "-h", _) => {
             println!("{USAGE}");
             if cfg!(feature = "gizlet-os") {
-                println!("\nOn Gizlet OS:\n  update FILE|HTTPS_URL  install a signed Launcher and CLI update\n  system reload-runtime FILE.sqfs\n                         activate a local runtime image for new launches");
+                println!("\nOn Gizlet OS:\n  update FILE|HTTPS_URL  install a signed Launcher and CLI update\n  system reload-runtime FILE.sqfs\n                         activate a local runtime image for new launches\n  system ota status|check|install TAG\n                         check or stage an official device update");
             }
             Ok(())
         }

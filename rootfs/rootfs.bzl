@@ -48,6 +48,7 @@ ROOTFS_EXECUTABLES = {
     "//rootfs:usr/lib/gizlet/gizlet-mount-boot": "usr/lib/gizlet/gizlet-mount-boot",
     "//rootfs:usr/lib/gizlet/gizlet-mount-data": "usr/lib/gizlet/gizlet-mount-data",
     "//rootfs:usr/lib/gizlet/gizlet-runtime": "usr/lib/gizlet/gizlet-runtime",
+    "//rootfs:usr/lib/gizlet/gizlet-ota-boot": "usr/lib/gizlet/gizlet-ota-boot",
     "//rootfs:usr/lib/gizlet/gizlet-setup": "usr/lib/gizlet/gizlet-setup",
     "//rootfs:usr/lib/gizlet/gizlet-ssh": "usr/lib/gizlet/gizlet-ssh",
     "//rootfs:usr/lib/gizlet/gizlet-switch": "usr/lib/gizlet/gizlet-switch",
