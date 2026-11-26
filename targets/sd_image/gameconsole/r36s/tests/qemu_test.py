@@ -481,8 +481,8 @@ def check_ota_after_boot(console, pack_release, ota_fixture):
     console.expect(PROMPT)
     start_ota_fixture(console, pack_release, ota_fixture, "v2.0.1")
     console.enter("gizlet system ota install v2.0.1")
-    console.expect(b"Restart to finish installing v2.0.1")
-    console.expect(PROMPT)
+    output = console.expect(PROMPT)
+    assert b"\r\nRestart to finish installing v2.0.1\r\n" in output, output.decode(errors="replace")
 
 
 def ota_scenarios(image, kernel_name, flash, flash_card, pack_release, ota_fixture, work):
