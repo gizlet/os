@@ -6,7 +6,12 @@
 # /run/gizlet-launch and quits (so does `gizlet start ID` over ssh). This
 # script then runs the app with `gizlet-launcher run ID` and starts the
 # launcher again when it exits. Without a request, the launcher's exit ends
-# the entry, as Power → Quit the Launcher does.
+# the entry, as Power → Quit the Launcher does. While an app runs, holding
+# Home (FN) for a second or Select+Start for two ends it.
+#
+# Between the two, the LCD shows the kernel's text console. It is cleared
+# once here, with its cursor hidden, so a switch shows black rather than old
+# boot messages; the kernel prints only serious ones after boot (sysctl.d).
 case $0 in
     # The Booter executes its entry through a file descriptor, so $0 names no
     # directory; the boot session installs the launcher here.
@@ -18,6 +23,7 @@ launcher=$dir/bin/gizlet-launcher
 request=/run/gizlet-launch
 # Options and subcommands, such as --probe, pass straight through.
 [ $# -eq 0 ] || exec "$run" "$launcher" "$@"
+printf '\033[2J\033[H\033[?25l' 2>/dev/null > /dev/tty1 || :
 while :; do
     rm -f "$request"
     "$run" "$launcher"

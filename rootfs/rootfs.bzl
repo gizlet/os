@@ -16,6 +16,7 @@ ROOTFS_FILES = {
     "//rootfs:etc/iwd/main.conf": "etc/iwd/main.conf",
     "//rootfs:etc/ssh/sshd_config.d/gizlet.conf": "etc/ssh/sshd_config.d/gizlet.conf",
     "//rootfs:usr/lib/gizlet/inputrc": "usr/lib/gizlet/inputrc",
+    "//rootfs:usr/lib/sysctl.d/gizlet.conf": "usr/lib/sysctl.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system/iwd.service.d/gizlet.conf": "usr/lib/systemd/system/iwd.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system/ssh.service.d/gizlet.conf": "usr/lib/systemd/system/ssh.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/journald.conf.d/gizlet.conf": "usr/lib/systemd/journald.conf.d/gizlet.conf",

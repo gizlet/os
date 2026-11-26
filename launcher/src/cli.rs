@@ -11,7 +11,8 @@ usage: gizlet <command>
   install FILE.gzl       install or update an app
   uninstall ID [--saves] remove an app; its saves too with --saves
   list                   list installed apps
-  run ID [ARGS]          run an app here and wait for it
+  run ID [ARGS]          run an app here and wait for it; holding Home
+                         for 1 s or Select+Start for 2 s ends it
   start ID               hand the screen from the launcher to an app
   target                 print this device's target triple and tier
 
@@ -94,18 +95,20 @@ fn run(library: &Library, id: &str, args: &[String]) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::io::AsRawFd;
-        use std::os::unix::process::CommandExt;
-        // The app inherits the lock across exec.
+        // The app inherits the lock too, so anything it leaves running keeps it.
         unsafe { libc::fcntl(running.as_raw_fd(), libc::F_SETFD, 0) };
-        let e = cmd.exec();
-        Err(format!("cannot start {}: {e}", app.entry().display()))
     }
-    #[cfg(not(unix))]
+    // Holding Home, or Select and Start, ends the app; the launcher comes back.
+    let status = crate::supervise::run(&mut cmd).map_err(|e| format!("cannot start {}: {e}", app.entry().display()))?;
+    drop(running);
+    #[cfg(unix)]
     {
-        let status = cmd.status().map_err(|e| format!("cannot start {}: {e}", app.entry().display()))?;
-        drop(running);
-        std::process::exit(status.code().unwrap_or(1));
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            std::process::exit(128 + signal);
+        }
     }
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 /// Asks the launcher on the screen to quit and start the app; it comes back

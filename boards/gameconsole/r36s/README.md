@@ -49,6 +49,8 @@ ssh root@DEVICE gizlet install /tmp/io.gizlet.overeaten-0.1.0-aarch64-unknown-li
 ssh root@DEVICE gizlet start io.gizlet.overeaten
 ```
 
+Hold FN for a second, or Select and Start for two, to end any app and return to the launcher.
+
 ## Installing an entry
 
 On the third partition install a trusted executable at, for example, `gizlet/bin/launcher`. Give it executable mode. Write `gizlet/boot.ini` in the following format. From the running OS the same file is `/opt/gizlet/boot.ini`.

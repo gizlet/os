@@ -185,6 +185,9 @@ def main():
         assert (root / "usr/lib/gizlet" / script).stat().st_mode & 0o111, f"/usr/lib/gizlet/{script} is executable"
     # The gizlet command runs the installed launcher's app commands.
     assert (root / "usr/bin/gizlet").stat().st_mode & 0o111, "/usr/bin/gizlet is executable"
+    # After boot the kernel keeps its messages off the LCD's console, which shows between apps.
+    assert "kernel.printk = 3 " in (root / "usr/lib/sysctl.d/gizlet.conf").read_text(), "quiet console sysctl"
+    assert (root / "usr/lib/systemd/system/systemd-sysctl.service").exists(), "systemd-sysctl applies sysctl.d"
     # First boot grows the data partition and its filesystem.
     for tool in ("usr/sbin/sfdisk", "usr/bin/partx", "usr/sbin/resize2fs"):
         assert (root / tool).exists(), f"/{tool}"

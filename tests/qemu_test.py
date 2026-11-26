@@ -272,6 +272,10 @@ def check_apps(console):
     console.enter("gizlet list")
     console.expect(b"\r\ndev.gizlet.test-hello\t0.1.0\tHello\r\n")
     console.expect(PROMPT)
+    # The kernel keeps all but critical messages off the console the LCD shows between apps.
+    console.enter("cat /proc/sys/kernel/printk")
+    console.expect(b"\r\n3\t4\t1\t7\r\n")
+    console.expect(PROMPT)
     console.enter("gizlet run dev.gizlet.test-hello")
     console.expect(b"\r\nhello-app 0 /opt/gizlet/apps/dev.gizlet.test-hello /opt/gizlet/saves/dev.gizlet.test-hello\r\n")
     console.expect(PROMPT)

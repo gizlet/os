@@ -42,6 +42,10 @@ An app runs with its folder as the working directory and `GIZLET_APP_ID`, `GIZLE
 
 The launcher hands the screen to an app by writing its ID to `/run/gizlet-launch` and quitting. [start.sh](start.sh), the boot entry, then runs the app and starts the launcher again when it exits. On a computer the app opens beside the launcher.
 
+Every app can be left the same way: holding Home (the R36S's FN key) for a second, or Select and Start together for two seconds, sends it SIGTERM, then SIGKILL three seconds later if it is still running, and the launcher comes back. `gizlet run` watches the controls through evdev without grabbing them, so the app still sees them. Apps that keep progress should save it on SIGTERM. [Exit](src/supervise.rs)
+
+While neither holds the display, the LCD shows the kernel's text console. start.sh clears it and hides its cursor, and after boot the kernel prints only critical messages there (`/usr/lib/sysctl.d/gizlet.conf`), so a switch shows black until the app draws its first frame.
+
 `/usr/bin/gizlet` runs these commands from ssh or the recovery shell; elsewhere they are subcommands of `gizlet-launcher`, and `GIZLET_PREFIX` replaces `/opt/gizlet`. [Commands](src/cli.rs)
 
 | Command | Does |

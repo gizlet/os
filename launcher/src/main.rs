@@ -27,6 +27,7 @@ mod keyboard;
 mod painter;
 mod script;
 mod settings;
+mod supervise;
 mod system;
 mod theme;
 mod ui;
