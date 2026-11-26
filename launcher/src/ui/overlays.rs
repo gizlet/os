@@ -155,7 +155,8 @@ pub fn keyboard(p: &mut Painter, app: &App) {
     // Keyboard hints.
     let hy = p.h - 34.0;
     let mut x = p.w - 60.0;
-    for (g, label) in [("Y", app.t(T::KbSpace)), ("B", app.t(T::Delete)), ("A", app.t(T::Ok))].iter().rev() {
+    let select = T::KbSelectOrHold.fmt(app.lang(), &[&crate::keyboard::DONE_HOLD_SECONDS.to_string()]);
+    for (g, label) in [("Y", app.t(T::KbSpace)), ("B", app.t(T::Delete)), ("A", select.as_str())].iter().rev() {
         let g = chrome::glyph(app, g);
         x -= p.measure(label, 19.0, Weight::Regular);
         p.text_mid(label, x, hy, 19.0, Weight::Regular, pal.dim);

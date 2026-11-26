@@ -3,10 +3,12 @@
  * idle, on a press of the power key, or on SIGUSR1 (the launcher's Sleep).
  *
  * Every input device with buttons or axes is read alongside its other
- * readers. After `sleep_after` seconds without input (CONFIG, by default
+ * readers. After `sleep_after` seconds without input on battery, or
+ * `sleep_after_charging` seconds on external power (CONFIG, by default
  * /run/gizlet-data/system/power.ini, which the launcher writes; 0 is never,
- * 300 when unset) the device sleeps; 15 s before that the screen dims, and
- * any input brings the brightness back.
+ * 300 on battery and never on external power when unset) the
+ * device sleeps; 15 s before that the screen dims, and any input brings the
+ * brightness back. Plugging in or unplugging the charger counts as use.
  *
  * - Sleep waits until every control is released (buttons up, sticks back at
  *   rest), so no app is left seeing one held. The backlight turns off and
@@ -122,38 +124,75 @@ static int find_backlight(void) {
     return found;
 }
 
-/* sleep_after from CONFIG, or screen_off, its earlier name, without it;
+/* Reads FILE in DIR into BUF without its trailing newline; false when unreadable. */
+static int read_str(const char *dir, const char *file, char *buf, size_t size) {
+    char path[320];
+    snprintf(path, sizeof path, "%s/%s", dir, file);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    ssize_t n = read(fd, buf, size - 1);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = 0;
+    buf[strcspn(buf, "\n")] = 0;
+    return 1;
+}
+
+/* Whether any power supply says the device runs on external power
+ * (idle_supply_external). */
+static int external_power(void) {
+    struct dirent **names;
+    int n = scandir("/sys/class/power_supply", &names, NULL, alphasort);
+    if (n < 0) return 0;
+    int external = 0;
+    for (int i = 0; i < n; i++) {
+        char dir[320], type[32], scope[32], status[32];
+        snprintf(dir, sizeof dir, "/sys/class/power_supply/%.200s", names[i]->d_name);
+        if (!external && names[i]->d_name[0] != '.' && read_str(dir, "type", type, sizeof type)) {
+            int has_scope = read_str(dir, "scope", scope, sizeof scope);
+            int has_status = read_str(dir, "status", status, sizeof status);
+            external = idle_supply_external(type, has_scope ? scope : NULL, has_status ? status : NULL, read_int(dir, "online"));
+        }
+        free(names[i]);
+    }
+    free(names);
+    return external;
+}
+
+/* sleep_after (on battery; screen_off, its earlier name, without it) or
+ * sleep_after_charging (on EXTERNAL power; never without it) from CONFIG,
  * reread only when the file changes. */
-static int sleep_after_seconds(const char *config) {
+static int sleep_after_seconds(const char *config, int external) {
     static struct timespec seen = {-1, 0};
-    static int seconds = DEFAULT_SLEEP_AFTER;
+    static int battery = DEFAULT_SLEEP_AFTER, charging = 0;
     struct stat st;
     if (stat(config, &st) != 0) {
-        seconds = DEFAULT_SLEEP_AFTER;
+        battery = DEFAULT_SLEEP_AFTER;
+        charging = 0;
         seen.tv_sec = -1;
-        return seconds;
+        return external ? charging : battery;
     }
-    if (st.st_mtim.tv_sec == seen.tv_sec && st.st_mtim.tv_nsec == seen.tv_nsec) return seconds;
-    seen = st.st_mtim;
-    seconds = DEFAULT_SLEEP_AFTER;
-    FILE *f = fopen(config, "re");
-    if (!f) return seconds;
-    char line[128];
-    int found = 0, old = -1;
-    while (fgets(line, sizeof line, f)) {
-        int v;
-        if (sscanf(line, " sleep_after = %d", &v) == 1 && v >= 0) {
-            seconds = v;
-            found = 1;
+    if (st.st_mtim.tv_sec != seen.tv_sec || st.st_mtim.tv_nsec != seen.tv_nsec) {
+        seen = st.st_mtim;
+        int found = -1, old = -1, ac = -1;
+        FILE *f = fopen(config, "re");
+        if (f) {
+            char line[128];
+            while (fgets(line, sizeof line, f)) {
+                int v;
+                if (sscanf(line, " sleep_after = %d", &v) == 1 && v >= 0) found = v;
+                if (sscanf(line, " sleep_after_charging = %d", &v) == 1 && v >= 0) ac = v;
+                /* The key before sleep_after, read when that is absent. */
+                if (sscanf(line, " screen_off = %d", &v) == 1 && v >= 0) old = v;
+            }
+            fclose(f);
         }
-        /* The key before sleep_after, read when that is absent. */
-        if (sscanf(line, " screen_off = %d", &v) == 1 && v >= 0) old = v;
+        battery = found >= 0 ? found : old >= 0 ? old : DEFAULT_SLEEP_AFTER;
+        charging = ac >= 0 ? ac : 0;
+        printf("gizlet-power: sleep after %d s on battery, %d s on external power (0 is never)\n", battery, charging);
+        fflush(stdout);
     }
-    fclose(f);
-    if (!found && old >= 0) seconds = old;
-    printf("gizlet-power: sleep after %s%d s\n", seconds ? "" : "never, ", seconds);
-    fflush(stdout);
-    return seconds;
+    return external ? charging : battery;
 }
 
 /* Tells every reader of D where its axes are now, if they moved while it was
@@ -389,13 +428,26 @@ int main(int argc, char **argv) {
      * and every stick at rest (sticks only up to PENDING_LIMIT_MS). */
     int pending = 0;
     long long pending_since = 0;
+    int external = external_power();
+    printf("gizlet-power: on %s\n", external ? "external power" : "battery");
     while (!stopping) {
         long long t = now_ms();
         if (t - last_scan >= RESCAN_MS) {
             rescan();
             last_scan = t;
+            int now_external = external_power();
+            if (now_external != external) {
+                external = now_external;
+                printf("gizlet-power: on %s\n", external ? "external power" : "battery");
+                fflush(stdout);
+                /* Plugging in or out is use: unplugging does not sleep at once. */
+                if (screen != SCREEN_OFF) {
+                    last_use = last_event = t;
+                    set_screen(SCREEN_ON);
+                }
+            }
         }
-        int seconds = sleep_after_seconds(config);
+        int seconds = sleep_after_seconds(config, external);
         if (sleep_requested) {
             sleep_requested = 0;
             if (!pending) pending_since = t;

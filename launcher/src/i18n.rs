@@ -100,7 +100,8 @@ strings! {
     ThemeLabel => "主题", "Theme";
     ThemeDark => "深色", "Dark";
     ThemeLight => "浅色", "Light";
-    SleepAfter => "自动睡眠", "Sleep After";
+    SleepAfter => "用电池时自动睡眠", "Sleep on Battery";
+    SleepAfterCharging => "充电时自动睡眠", "Sleep While Charging";
     Never => "永不", "Never";
     Minutes => "{} 分钟", "{} min";
     Volume => "音量", "Volume";
@@ -112,6 +113,15 @@ strings! {
     Charging => "正在充电", "Charging";
     Discharging => "使用电池", "On battery";
     Full => "已充满", "Fully charged";
+    Plugged => "已接电源，未充电", "Plugged in, not charging";
+    PowerDraw => "功耗", "Power Draw";
+    ChargePower => "充电功率", "Charging Power";
+    TimeLeft => "预计可用", "Time Left";
+    HoursMinutes => "{} 小时 {} 分钟", "{} h {} min";
+    Performance => "性能", "Performance";
+    CpuClock => "处理器", "CPU";
+    GpuClock => "图形处理器", "GPU";
+    CpuBusy => "{} MHz · 占用 {}%", "{} MHz · {}% busy";
     NoBattery => "未检测到电池", "No battery detected";
     NoBatteryBody => "这台设备的系统还没有电池驱动，暂时无法显示电量。", "This device's system has no battery driver yet, so the charge can't be shown.";
     BatteryPercent => "在状态栏显示电量百分比", "Show Percentage in the Status Bar";
@@ -152,6 +162,7 @@ strings! {
     Unknown => "未知", "Unknown";
 
     KbDone => "完成", "Done";
+    KbSelectOrHold => "选择 · 长按 {} 秒完成", "Select · Hold {}s to finish";
     KbSpace => "空格", "Space";
     KbShow => "显示", "Show";
     KbHide => "隐藏", "Hide";

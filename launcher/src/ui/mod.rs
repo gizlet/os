@@ -106,10 +106,13 @@ pub fn ease_out(t: f32) -> f32 {
 pub struct Pop {
     key: Option<(u8, usize)>,
     since: f32,
+    /// Updated since the last frame was drawn.
+    drawn: bool,
 }
 
 impl Pop {
     pub fn update(&mut self, key: (u8, usize), dt: f32) -> f32 {
+        self.drawn = true;
         if self.key != Some(key) {
             self.key = Some(key);
             self.since = 0.0;
@@ -117,6 +120,11 @@ impl Pop {
             self.since += dt;
         }
         1.0 - ease_out(self.since / 0.22)
+    }
+
+    /// Still popping in this frame; a pop on a page not drawn does not count.
+    fn moving(&mut self) -> bool {
+        std::mem::take(&mut self.drawn) && self.since < 0.22
     }
 }
 
@@ -136,7 +144,11 @@ pub struct Ui {
 }
 
 impl Ui {
-    pub fn draw(&mut self, p: &mut Painter, app: &App, pad: &RawPad, dt: f32) {
+    /// Draws the frame. Returns true while something eases toward a new
+    /// layout (the shelf, the settings list, a focus pop or a page fade), so
+    /// the caller keeps drawing every frame until it settles.
+    pub fn draw(&mut self, p: &mut Painter, app: &App, pad: &RawPad, dt: f32) -> bool {
+        let before = (self.shelf_x, self.sidebar_y, self.settings_scroll);
         p.pal = theme::palette(app.settings.theme);
         let key = (Some(app.page()), app.depth());
         if key != self.page_key {
@@ -167,5 +179,11 @@ impl Ui {
         if app.keyboard.is_some() {
             overlays::keyboard(p, app);
         }
+
+        before != (self.shelf_x, self.sidebar_y, self.settings_scroll)
+            || self.page_since < 0.2
+            || self.button_pop.moving()
+            || self.tile_pop.moving()
+            || self.list_pop.moving()
     }
 }

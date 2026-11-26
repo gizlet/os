@@ -25,6 +25,7 @@ pub fn devices() -> Devices {
         host: GizletHost::detect().map(|h| Box::new(h) as Box<dyn Host>),
         power: LinuxPower::detect().map(|p| Box::new(p) as Box<dyn Power>),
         simulated: false,
+        load: LoadMeter::default(),
     }
 }
 
@@ -53,20 +54,41 @@ struct SysfsBattery;
 
 impl BatterySource for SysfsBattery {
     fn read(&mut self) -> Result<Battery, Missing> {
+        // Supplies of scope Device are peripherals', such as a gamepad's battery.
+        let own = |d: &PathBuf| read_trim(&d.join("scope")).as_deref() != Some("Device");
         let dir = class_dirs("power_supply")
             .into_iter()
-            .find(|d| read_trim(&d.join("type")).as_deref() == Some("Battery") && d.join("capacity").exists())
+            .find(|d| own(d) && read_trim(&d.join("type")).as_deref() == Some("Battery") && d.join("capacity").exists())
             .ok_or(Missing::NoHardware)?;
         let percent = read_trim(&dir.join("capacity"))
             .and_then(|c| c.parse::<u16>().ok())
             .ok_or_else(|| Missing::Error("capacity unreadable".into()))?
             .min(100) as u8;
-        let charge = match read_trim(&dir.join("status")).as_deref() {
-            Some("Charging") => Charge::Charging,
-            Some("Full") => Charge::Full,
-            _ => Charge::Discharging,
+        let num = |name: &str| read_trim(&dir.join(name)).and_then(|v| v.parse::<i64>().ok());
+        let first = |names: &[&str]| names.iter().find_map(|n| num(n));
+        // The kernel counts current into the battery as positive.
+        let inflow = first(&["current_avg", "current_now"]).is_some_and(|c| c > 0);
+        let supply_online = class_dirs("power_supply").iter().any(|d| {
+            own(d) && read_trim(&d.join("type")).as_deref() != Some("Battery") && read_trim(&d.join("online")).as_deref() == Some("1")
+        });
+        let charge = charge_state(read_trim(&dir.join("status")).as_deref(), supply_online, inflow);
+        // Gauges report µA and µV, some µW; the sign of the current differs
+        // between drivers. The averages are steadier than the instant values.
+        let current = first(&["current_avg", "current_now"]).map(i64::abs).filter(|c| *c > 0);
+        let power_uw = first(&["power_avg", "power_now"]).map(i64::abs).filter(|p| *p > 0).or_else(|| {
+            let volts = first(&["voltage_avg", "voltage_now"])?;
+            Some(current? * volts / 1_000_000)
+        });
+        let minutes_left = match charge {
+            Charge::Discharging => num("time_to_empty_avg")
+                .or_else(|| num("time_to_empty_now"))
+                .filter(|s| *s > 0)
+                .map(|s| s / 60)
+                .or_else(|| Some(first(&["charge_now"])? * 60 / current?))
+                .map(|m| m.clamp(0, u32::MAX as i64) as u32),
+            _ => None,
         };
-        Ok(Battery { percent, charge })
+        Ok(Battery { percent, charge, power_mw: power_uw.map(|p| (p / 1000) as u32), minutes_left })
     }
 }
 

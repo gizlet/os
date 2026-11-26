@@ -4,6 +4,15 @@
  * from the description below, converted with ROCKNIX's importpanel.py from the
  * stock ArkOS-clone rk3326-r36s-v30-linux.dtb ("v30 panel4" profile).
  *
+ * The controller is a NewVision NV3051D: the sequence starts with its page
+ * select, FF 30, FF 52, FF 01.
+ *
+ * Before it, the panel is asked for its identification (DCS 04, then the ID
+ * registers DA, DB and DC), which the driver logs in order as read[N] lines
+ * in dmesg, or "failed to read" when the panel does not answer; either way
+ * initialization goes on. These reads are the evidence for telling panels
+ * apart at boot instead of by the card's overlay.
+ *
  * boot.scr applies mipi-panel.dtbo from the FAT boot partition when present.
  * Copy this overlay there under that name for a V30 Panel 4 unit.
  */
@@ -26,6 +35,10 @@
 		"M clock=68690 horizontal=640,300,207,300 vertical=480,17,119,13",
 		"M clock=67860 horizontal=640,300,210,300 vertical=480,17,10,13",
 		"M clock=89610 horizontal=640,300,210,300 vertical=480,17,5,13",
+		"I seq=04 read=3",
+		"I seq=da read=1",
+		"I seq=db read=1",
+		"I seq=dc read=1",
 		"I seq=ff30",
 		"I seq=ff52",
 		"I seq=ff01",

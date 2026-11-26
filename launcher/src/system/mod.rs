@@ -9,6 +9,7 @@
 
 mod fake;
 mod info;
+mod load;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(not(target_os = "linux"))]
@@ -16,6 +17,7 @@ mod other;
 mod util;
 
 pub use info::{Info, Storage};
+pub use load::{Load, LoadMeter};
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -40,17 +42,59 @@ pub enum Charge {
     Charging,
     Discharging,
     Full,
+    /// On external power but not charging, as when the charger is too weak.
+    Plugged,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Battery {
     pub percent: u8,
     pub charge: Charge,
+    /// Milliwatts leaving the battery, or entering it while charging, when the
+    /// gauge reports them.
+    pub power_mw: Option<u32>,
+    /// Minutes until empty at the present draw, while on battery.
+    pub minutes_left: Option<u32>,
 }
 
 impl Battery {
+    /// On external power: charging, full or plugged in.
     pub fn charging(self) -> bool {
         self.charge != Charge::Discharging
+    }
+}
+
+/// The battery's state from its `status`. "Not charging" means external
+/// power, and the R36S's RK817 reports it, with its charger offline, while it
+/// charges: then the current flowing in decides.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn charge_state(status: Option<&str>, supply_online: bool, inflow: bool) -> Charge {
+    match status {
+        Some("Charging") => Charge::Charging,
+        Some("Full") => Charge::Full,
+        Some("Not charging") if inflow => Charge::Charging,
+        Some("Not charging") => Charge::Plugged,
+        _ if supply_online && inflow => Charge::Charging,
+        _ if supply_online => Charge::Plugged,
+        _ => Charge::Discharging,
+    }
+}
+
+#[cfg(test)]
+mod charge_tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_charge_state() {
+        assert_eq!(charge_state(Some("Charging"), false, false), Charge::Charging);
+        assert_eq!(charge_state(Some("Full"), true, false), Charge::Full);
+        // The RK817 while it charges, and with a charger too weak to.
+        assert_eq!(charge_state(Some("Not charging"), false, true), Charge::Charging);
+        assert_eq!(charge_state(Some("Not charging"), false, false), Charge::Plugged);
+        assert_eq!(charge_state(Some("Discharging"), true, true), Charge::Charging);
+        assert_eq!(charge_state(Some("Discharging"), false, false), Charge::Discharging);
+        assert_eq!(charge_state(Some("Discharging"), false, true), Charge::Discharging, "status wins without a supply");
+        assert_eq!(charge_state(None, false, false), Charge::Discharging);
     }
 }
 
@@ -142,6 +186,7 @@ pub struct Snapshot {
     pub clock: Result<ClockState, Missing>,
     pub power: Vec<PowerAction>,
     pub info: Info,
+    pub load: Load,
     /// The device's name now; `NAME.local` on the network where it can be renamed.
     pub hostname: String,
     /// The launcher can rename the device.
@@ -213,6 +258,7 @@ pub struct Devices {
     pub host: Option<Box<dyn Host>>,
     pub power: Option<Box<dyn Power>>,
     pub simulated: bool,
+    pub load: LoadMeter,
 }
 
 impl Devices {
@@ -287,6 +333,7 @@ fn snapshot(dev: &mut Devices, info: &Info, storage_root: &std::path::Path) -> S
         },
         power: dev.power.as_ref().map(|p| p.actions()).unwrap_or_default(),
         info: info.clone(),
+        load: dev.load.read(dev.simulated),
         // Read each time: it may be changed over ssh, or by a Wi-Fi adapter appearing.
         hostname: dev.host.as_mut().map_or_else(info::hostname, |h| h.name()),
         can_rename: dev.host.is_some(),

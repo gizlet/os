@@ -22,6 +22,8 @@ impl Key {
     }
 }
 
+pub const DONE_HOLD_SECONDS: u32 = 2;
+
 const LETTERS: [&str; 4] = ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"];
 const SYMBOLS: [&str; 4] = ["1234567890", "!@#$%^&*()", "-_=+[]{};:", "'\",.?/\\|~`<>"];
 
@@ -52,6 +54,7 @@ pub struct Keyboard {
     pub row: usize,
     pub col: usize,
     pub max_len: usize,
+    a_press: Option<(Key, f64)>,
 }
 
 impl Keyboard {
@@ -67,6 +70,7 @@ impl Keyboard {
             col: 0,
             // WPA passphrases are 8 to 63 characters.
             max_len: 63,
+            a_press: None,
         }
     }
 
@@ -123,9 +127,29 @@ impl Keyboard {
         }
     }
 
-    /// Presses the focused key.
-    pub fn press(&mut self) -> Outcome {
-        match self.focused() {
+    /// A tap activates the key focused on press; a hold submits without activating that key.
+    pub fn a_input(&mut self, pressed: bool, held: bool, now: f64) -> Outcome {
+        if pressed {
+            let key = self.focused();
+            if key == Key::Done {
+                return self.press(key);
+            }
+            self.a_press = Some((key, now));
+        }
+        let Some((key, since)) = self.a_press else { return Outcome::None };
+        let key = if !held {
+            key
+        } else if now - since >= f64::from(DONE_HOLD_SECONDS) {
+            Key::Done
+        } else {
+            return Outcome::None;
+        };
+        self.a_press = None;
+        self.press(key)
+    }
+
+    fn press(&mut self, key: Key) -> Outcome {
+        match key {
             Key::Char(c) => {
                 self.type_char(c);
                 if self.shift && !self.symbols {
@@ -174,10 +198,10 @@ mod tests {
         assert_eq!(kb.focused(), Key::Char('q'));
         kb.row = 3;
         kb.col = 0;
-        kb.press(); // shift
+        kb.press(Key::Shift);
         kb.move_by(1, 0);
         assert_eq!(kb.focused(), Key::Char('Z'));
-        kb.press();
+        kb.press(kb.focused());
         assert_eq!(kb.text, "Z");
         assert_eq!(kb.focused(), Key::Char('z'));
         kb.move_by(0, 1); // z sits closest to the symbols key
@@ -187,6 +211,34 @@ mod tests {
         kb.move_by(0, 1);
         assert_eq!(kb.focused(), Key::Space);
         kb.move_by(1, 0);
-        assert!(matches!(kb.press(), Outcome::Submit(t) if t == "Z"));
+        assert!(matches!(kb.a_input(true, true, 0.0), Outcome::Submit(t) if t == "Z"));
+    }
+
+    #[test]
+    fn tapping_a_types_the_key_focused_at_press_on_release() {
+        let mut kb = Keyboard::passphrase("t".into(), "x".into());
+        assert!(matches!(kb.a_input(true, true, 0.0), Outcome::None));
+        assert!(kb.text.is_empty());
+        kb.move_by(1, 0);
+        assert!(matches!(kb.a_input(false, false, 0.1), Outcome::None));
+        assert_eq!(kb.text, "q");
+    }
+
+    #[test]
+    fn holding_a_submits_once_without_typing() {
+        let mut kb = Keyboard::hostname("t".into(), "gizlet");
+        let threshold = f64::from(DONE_HOLD_SECONDS);
+        // The press that opened the keyboard may still be held.
+        assert!(matches!(kb.a_input(false, true, 0.0), Outcome::None));
+        assert!(matches!(kb.a_input(false, true, threshold), Outcome::None));
+        assert!(matches!(kb.a_input(false, false, threshold + 0.1), Outcome::None));
+
+        let start = threshold + 1.0;
+        assert!(matches!(kb.a_input(true, true, start), Outcome::None));
+        assert!(matches!(kb.a_input(false, true, start + threshold - 0.1), Outcome::None));
+        assert!(matches!(kb.a_input(false, true, start + threshold), Outcome::Submit(t) if t == "gizlet"));
+        assert!(matches!(kb.a_input(false, true, start + threshold + 0.1), Outcome::None));
+        assert!(matches!(kb.a_input(false, false, start + threshold + 0.2), Outcome::None));
+        assert_eq!(kb.text, "gizlet");
     }
 }

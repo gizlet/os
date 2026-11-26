@@ -159,6 +159,8 @@ def main():
     for wants in ("multi-user.target.wants/ssh.service", "multi-user.target.wants/iwd.service"):
         assert not (systemd / wants).is_symlink(), f"{wants} starts at boot"
     assert (root / "usr/lib/systemd/system/ssh.service.d/gizlet.conf").is_file(), "ssh.service uses gizlet-ssh"
+    rate = (root / "usr/lib/tmpfiles.d/gizlet-cpufreq.conf").read_text()
+    assert "w /sys/devices/system/cpu/cpufreq/schedutil/rate_limit_us - - - - 10000" in rate, "schedutil rate limit"
     # bluetoothd starts when a USB controller appears (udev pulls in bluetooth.target).
     assert (systemd / "bluetooth.target.wants/bluetooth.service").is_symlink(), "bluetooth.service is enabled"
     for tool in ("usr/libexec/bluetooth/bluetoothd", "usr/bin/bluetoothctl", "usr/bin/btmgmt"):

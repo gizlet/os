@@ -104,6 +104,7 @@ pub enum ItemId {
     Brightness,
     Theme,
     SleepAfter,
+    SleepAfterCharging,
     Volume,
     BatteryPercent,
     ButtonTest,
@@ -229,6 +230,8 @@ pub struct App {
     pub time: f64,
     pub gamepads: Vec<String>,
     pub can_quit: bool,
+    /// Counts the device reports received, so the screen is redrawn after one.
+    pub revision: u64,
 }
 
 impl App {
@@ -264,6 +267,7 @@ impl App {
             time: 0.0,
             gamepads: Vec::new(),
             can_quit: true,
+            revision: 0,
         }
     }
 
@@ -287,6 +291,20 @@ impl App {
         self.keyboard.is_some()
     }
 
+    /// Something moves on screen without input: a menu, the keyboard, a
+    /// toast, a spinner while the device works, or the button test's live sticks.
+    pub fn animating(&self) -> bool {
+        self.dialog.is_some()
+            || self.keyboard.is_some()
+            || !self.toasts.is_empty()
+            || self.page() == Page::ButtonTest
+            || self.wifi.scanning
+            || self.wifi.connecting.is_some()
+            || self.wifi.switching.is_some()
+            || self.ssh_switching.is_some()
+            || self.zone_switching.is_some()
+    }
+
     pub fn toast(&mut self, text: impl Into<String>) {
         self.toasts.push(Toast { text: text.into(), age: 0.0 });
         if self.toasts.len() > 3 {
@@ -304,6 +322,8 @@ impl App {
         self.apps_stamp = stamp;
         let focused = self.apps.get(self.home_tile).map(|a| a.id().to_string());
         self.apps = self.library.scan();
+        // The shelf changes without input: draw it, and let it settle.
+        self.revision += 1;
         self.home_tile = focused.and_then(|id| self.apps.iter().position(|a| a.id() == id)).unwrap_or(0);
         if self.apps.is_empty() && self.home_row == HomeRow::Tiles {
             self.home_row = HomeRow::Buttons;
@@ -355,8 +375,14 @@ impl App {
             t.age += dt;
         }
         self.toasts.retain(|t| t.age < TOAST_SECONDS);
-        for event in self.system.poll() {
-            self.on_event(event);
+        let events = self.system.poll();
+        if !events.is_empty() {
+            let focused = self.focused_item();
+            for event in events {
+                self.on_event(event);
+                self.revision += 1;
+            }
+            self.refocus(focused);
         }
         self.auto_scan();
 
@@ -577,7 +603,8 @@ impl App {
                     match item.as_ref().map(|i| (&i.id, &i.value)) {
                         Some((id, ItemValue::Slider(v))) => self.slide(id, *v + step * 0.05),
                         Some((ItemId::Theme, _)) => self.toggle_theme(),
-                        Some((ItemId::SleepAfter, _)) => self.cycle_sleep_after(step as i32),
+                        Some((ItemId::SleepAfter, _)) => self.cycle_sleep_after(false, step as i32),
+                        Some((ItemId::SleepAfterCharging, _)) => self.cycle_sleep_after(true, step as i32),
                         _ if a == Action::Left => self.focus.in_content = false,
                         _ => {}
                     }
@@ -618,6 +645,33 @@ impl App {
         }
     }
 
+    /// The settings row in focus, to find again after the list changes.
+    fn focused_item(&self) -> Option<Item> {
+        if self.page() != Page::Settings || !self.focus.in_content {
+            return None;
+        }
+        self.settings_items(self.focused_category()).get(self.focus.item).cloned()
+    }
+
+    /// Keeps the focus on the same row when a device report adds or removes
+    /// rows above it, as the battery's Time Left does when the charger is
+    /// plugged in: by its id, or by its label for information rows.
+    fn refocus(&mut self, before: Option<Item>) {
+        let Some(before) = before else { return };
+        let items = self.settings_items(self.focused_category());
+        if items.get(self.focus.item).is_some_and(|i| i.id == before.id && i.label == before.label) {
+            return;
+        }
+        let found = if before.id == ItemId::None {
+            items.iter().position(|i| i.id == ItemId::None && i.label == before.label && i.focusable())
+        } else {
+            items.iter().position(|i| i.id == before.id)
+        };
+        if let Some(i) = found {
+            self.focus.item = i;
+        }
+    }
+
     fn slide(&mut self, id: &ItemId, v: f32) {
         let v = (v * 20.0).round() / 20.0;
         let v = v.clamp(0.0, 1.0);
@@ -635,17 +689,17 @@ impl App {
         }
     }
 
-    fn cycle_sleep_after(&mut self, step: i32) {
-        self.power.cycle(step);
+    fn cycle_sleep_after(&mut self, charging: bool, step: i32) {
+        self.power.cycle(charging, step);
         if let Err(e) = self.power.save() {
             let msg = T::Failed.fmt(self.lang(), &[&e.to_string()]);
             self.toast(msg);
         }
     }
 
-    /// The sleep choice as shown: minutes, or never.
-    pub fn sleep_after_label(&self) -> String {
-        match self.power.sleep_after {
+    /// A sleep choice as shown: minutes, or never.
+    pub fn sleep_after_label(&self, seconds: u32) -> String {
+        match seconds {
             0 => self.t(T::Never).to_string(),
             s => T::Minutes.fmt(self.lang(), &[&(s / 60).to_string()]),
         }
@@ -691,7 +745,8 @@ impl App {
             ItemId::WifiDisconnect => self.system.send(Request::WifiDisconnect),
             ItemId::WifiNetwork(ssid) => self.choose_network(ssid),
             ItemId::Theme => self.toggle_theme(),
-            ItemId::SleepAfter => self.cycle_sleep_after(1),
+            ItemId::SleepAfter => self.cycle_sleep_after(false, 1),
+            ItemId::SleepAfterCharging => self.cycle_sleep_after(true, 1),
             ItemId::BatteryPercent => {
                 self.settings.battery_percent = !self.settings.battery_percent;
                 self.save();
@@ -802,11 +857,6 @@ impl App {
                 Action::Down => kb.move_by(0, 1),
                 Action::Left => kb.move_by(-1, 0),
                 Action::Right => kb.move_by(1, 0),
-                Action::A => {
-                    if let keyboard::Outcome::Submit(t) = kb.press() {
-                        submit = Some(t);
-                    }
-                }
                 // B deletes; on an empty field it closes the keyboard.
                 Action::B if kb.text.is_empty() => cancel = true,
                 Action::B => kb.backspace(),
@@ -815,6 +865,9 @@ impl App {
                 Action::Start => submit = Some(kb.text.clone()),
                 _ => {}
             }
+        }
+        if let keyboard::Outcome::Submit(text) = kb.a_input(input.pressed(Action::A), input.held(Action::A), self.time) {
+            submit = Some(text);
         }
         if cancel {
             self.keyboard = None;
@@ -927,16 +980,47 @@ impl App {
                             crate::system::Charge::Charging => t(T::Charging),
                             crate::system::Charge::Full => t(T::Full),
                             crate::system::Charge::Discharging => t(T::Discharging),
+                            crate::system::Charge::Plugged => t(T::Plugged),
                         };
                         items.push(Item::info(t(T::BatteryState), state));
+                        if let Some(mw) = b.power_mw {
+                            let label = if b.charge == crate::system::Charge::Charging { T::ChargePower } else { T::PowerDraw };
+                            items.push(Item::info(t(label), format!("{:.2} W", mw as f32 / 1000.0)));
+                        }
+                        if let Some(m) = b.minutes_left {
+                            let left = if m < 60 {
+                                T::Minutes.fmt(l, &[&m.to_string()])
+                            } else {
+                                T::HoursMinutes.fmt(l, &[&(m / 60).to_string(), &(m % 60).to_string()])
+                            };
+                            items.push(Item::info(t(T::TimeLeft), left));
+                        }
                     }
                     Err(m) => items.push(self.missing(m, T::NoBattery, Some(T::NoBatteryBody))),
                 }
                 // Only where the device can sleep.
                 if snap.power.contains(&PowerAction::Sleep) {
-                    items.push(Item::new(ItemId::SleepAfter, t(T::SleepAfter), ItemValue::Choice(self.sleep_after_label())));
+                    let battery = self.sleep_after_label(self.power.sleep_after);
+                    let charging = self.sleep_after_label(self.power.sleep_after_charging);
+                    items.push(Item::new(ItemId::SleepAfter, t(T::SleepAfter), ItemValue::Choice(battery)));
+                    items.push(Item::new(ItemId::SleepAfterCharging, t(T::SleepAfterCharging), ItemValue::Choice(charging)));
                 }
                 items.push(Item::new(ItemId::BatteryPercent, t(T::BatteryPercent), ItemValue::Toggle(self.settings.battery_percent)));
+                // The clocks and CPU use behind the draw, refreshed with the snapshot.
+                let load = snap.load;
+                if load.cpu_mhz.is_some() || load.gpu_mhz.is_some() {
+                    items.push(Item::section(t(T::Performance)));
+                }
+                if let Some(mhz) = load.cpu_mhz {
+                    let value = match load.cpu_busy {
+                        Some(busy) => T::CpuBusy.fmt(l, &[&mhz.to_string(), &busy.to_string()]),
+                        None => format!("{mhz} MHz"),
+                    };
+                    items.push(Item::info(t(T::CpuClock), value));
+                }
+                if let Some(mhz) = load.gpu_mhz {
+                    items.push(Item::info(t(T::GpuClock), format!("{mhz} MHz")));
+                }
             }
             Category::Controls => {
                 items.push(Item::new(ItemId::ButtonTest, t(T::ButtonTestOpen), ItemValue::Button));

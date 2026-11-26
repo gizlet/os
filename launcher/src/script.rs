@@ -79,6 +79,11 @@ impl Script {
         }
     }
 
+    /// Commands are left to run.
+    pub fn running(&self) -> bool {
+        !self.commands.is_empty() || self.wait > 0 || self.holding.is_some()
+    }
+
     /// Adds this frame's scripted input.
     pub fn step(&mut self, input: &mut Input, pad: &mut RawPad) -> Option<Step> {
         if let Some((a, left, first)) = self.holding.as_mut() {

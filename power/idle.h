@@ -9,6 +9,21 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
+
+/* Whether a power supply, from its sysfs TYPE, SCOPE, STATUS and ONLINE (NULL
+ * or -1 when absent), says the device runs on external power: a mains or USB
+ * supply online, or a battery charging, full or "Not charging". The R36S's
+ * RK817 reports its charger offline and the battery "Not charging" while it
+ * charges. Supplies of scope Device belong to peripherals, such as a gamepad
+ * charging from the OTG port, and say nothing about the device's own power. */
+static inline int idle_supply_external(const char *type, const char *scope, const char *status, int online) {
+    if (!type || (scope && strcmp(scope, "Device") == 0)) return 0;
+    if (strcmp(type, "Battery") == 0) {
+        return status && (strcmp(status, "Charging") == 0 || strcmp(status, "Full") == 0 || strcmp(status, "Not charging") == 0);
+    }
+    return online == 1;
+}
 
 /* Whether any bit of a key-state bitmap (EVIOCGKEY) is set. */
 static inline int idle_any_key(const unsigned char *keys, size_t bytes) {

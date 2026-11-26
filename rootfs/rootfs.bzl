@@ -24,6 +24,8 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/systemd/resolved.conf.d/gizlet.conf": "usr/lib/systemd/resolved.conf.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system.conf.d/gizlet.conf": "usr/lib/systemd/system.conf.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/timesyncd.conf.d/gizlet.conf": "usr/lib/systemd/timesyncd.conf.d/gizlet.conf",
+    # systemd-tmpfiles-setup sets schedutil's rate limit at boot.
+    "//rootfs:usr/lib/tmpfiles.d/gizlet-cpufreq.conf": "usr/lib/tmpfiles.d/gizlet-cpufreq.conf",
     "//rootfs:usr/lib/systemd/system/gizlet-audio-jack.service": "usr/lib/systemd/system/gizlet-audio-jack.service",
     "//rootfs:usr/lib/systemd/system/gizlet-boot-log.service": "usr/lib/systemd/system/gizlet-boot-log.service",
     "//rootfs:usr/lib/systemd/system/gizlet-data.service": "usr/lib/systemd/system/gizlet-data.service",
