@@ -23,6 +23,7 @@ mod input;
 mod keyboard;
 mod painter;
 mod script;
+mod sound;
 mod system;
 mod theme;
 mod ui;
@@ -150,6 +151,7 @@ fn run() {
     let mut painter = painter::Painter::new(fonts::Fonts::new(seed(&app).iter().map(String::as_str)), theme::palette(app.settings.theme));
     let mut ui = ui::Ui::default();
     let mut controls = input::Controls::default();
+    let mut player = sound::Player::default();
     let mut script = script::Script::from_env();
     let mut frame: u64 = 0;
     let mut last = unsafe { ffi::GetTime() };
@@ -184,6 +186,10 @@ fn run() {
         if !app.update(&input, dt) {
             break;
         }
+        for sfx in app.take_sounds() {
+            player.play(sfx, app.sound_gain(), app.time);
+        }
+        player.tick(app.time);
         // Every frame is drawn while the user acts and transitions run. Then
         // the focus pulse settles and the screen stands still: it is drawn
         // again only for a device report, a resize or the clock, and the
@@ -226,5 +232,6 @@ fn run() {
     }
     drop(ui);
     drop(painter);
+    drop(player);
     unsafe { ffi::CloseWindow() };
 }

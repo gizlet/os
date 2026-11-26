@@ -170,6 +170,8 @@ pub enum Request {
 #[derive(Clone, Debug)]
 pub enum Event {
     Snapshot(Box<Snapshot>),
+    /// The output volume was just set, so a sound played now is heard at the new level.
+    Volume,
     WifiNetworks(Result<Vec<WifiNetwork>, String>),
     WifiConnect { ssid: String, result: Result<(), String> },
     Failed(String),
@@ -194,6 +196,11 @@ pub struct Snapshot {
     pub ip: Option<String>,
     pub storage: Option<Storage>,
     pub simulated: bool,
+    /// The `SetBrightness` and `SetVolume` requests the worker had received
+    /// when it took this snapshot. A page that has sent more keeps its own
+    /// value: the snapshot was read before the latest change reached the device.
+    pub brightness_sets: u64,
+    pub volume_sets: u64,
 }
 
 pub trait BatterySource: Send {
@@ -340,6 +347,8 @@ fn snapshot(dev: &mut Devices, info: &Info, storage_root: &std::path::Path) -> S
         ip: info::local_ip(),
         storage: info::storage(storage_root),
         simulated: dev.simulated,
+        brightness_sets: 0,
+        volume_sets: 0,
     }
 }
 
@@ -356,6 +365,13 @@ fn worker(mut dev: Devices, storage_root: PathBuf, rx: Receiver<Request>, tx: Se
     if tx.send(Event::Snapshot(Box::new(snapshot(&mut dev, &info, &storage_root)))).is_err() {
         return;
     }
+    let (mut brightness_sets, mut volume_sets) = (0u64, 0u64);
+    let report = |dev: &mut Devices, brightness_sets: u64, volume_sets: u64| {
+        let mut s = snapshot(dev, &info, &storage_root);
+        s.brightness_sets = brightness_sets;
+        s.volume_sets = volume_sets;
+        Event::Snapshot(Box::new(s))
+    };
     loop {
         let first = match rx.recv_timeout(REFRESH) {
             Ok(r) => r,
@@ -367,6 +383,8 @@ fn worker(mut dev: Devices, storage_root: PathBuf, rx: Receiver<Request>, tx: Se
         batch.extend(rx.try_iter());
         let last_brightness = batch.iter().rposition(|r| matches!(r, Request::SetBrightness(_)));
         let last_volume = batch.iter().rposition(|r| matches!(r, Request::SetVolume(_)));
+        brightness_sets += batch.iter().filter(|r| matches!(r, Request::SetBrightness(_))).count() as u64;
+        volume_sets += batch.iter().filter(|r| matches!(r, Request::SetVolume(_))).count() as u64;
         let mut refresh = false;
         for (i, req) in batch.into_iter().enumerate() {
             let failed = |r: Result<(), String>| r.err().map(Event::Failed);
@@ -381,7 +399,11 @@ fn worker(mut dev: Devices, storage_root: PathBuf, rx: Receiver<Request>, tx: Se
                 }
                 Request::SetVolume(v) if Some(i) == last_volume => {
                     refresh = true;
-                    dev.volume.as_mut().ok().and_then(|l| failed(l.set(v.clamp(0.0, 1.0))))
+                    let v = v.clamp(0.0, 1.0);
+                    match dev.volume.as_mut() {
+                        Ok(l) => Some(l.set(v).map_or_else(Event::Failed, |()| Event::Volume)),
+                        Err(_) => None,
+                    }
                 }
                 Request::SetBrightness(_) | Request::SetVolume(_) => None,
                 Request::WifiPower(on) => {
@@ -450,7 +472,7 @@ fn worker(mut dev: Devices, storage_root: PathBuf, rx: Receiver<Request>, tx: Se
                 }
             }
         }
-        if refresh && tx.send(Event::Snapshot(Box::new(snapshot(&mut dev, &info, &storage_root)))).is_err() {
+        if refresh && tx.send(report(&mut dev, brightness_sets, volume_sets)).is_err() {
             return;
         }
     }
@@ -459,6 +481,31 @@ fn worker(mut dev: Devices, storage_root: PathBuf, rx: Receiver<Request>, tx: Se
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshots_count_the_level_requests_they_include() {
+        let (req_tx, req_rx) = mpsc::channel();
+        let (ev_tx, ev_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || worker(fake::devices(), std::env::temp_dir(), req_rx, ev_tx));
+        for v in [0.3, 0.35, 0.4] {
+            req_tx.send(Request::SetBrightness(v)).unwrap();
+        }
+        req_tx.send(Request::SetVolume(0.6)).unwrap();
+        let mut heard = false;
+        let last = loop {
+            match ev_rx.recv_timeout(Duration::from_secs(10)).expect("a report") {
+                Event::Volume => heard = true,
+                Event::Snapshot(s) if s.brightness_sets == 3 && s.volume_sets == 1 => break s,
+                Event::Snapshot(s) => assert!(s.brightness_sets <= 3 && s.volume_sets <= 1),
+                _ => {}
+            }
+        };
+        assert_eq!(last.brightness, Ok(0.4), "the latest brightness is applied");
+        assert_eq!(last.volume, Ok(0.6));
+        assert!(heard, "the volume is reported once set");
+        drop(req_tx);
+        worker.join().unwrap();
+    }
 
     #[test]
     fn accepts_one_dns_label() {
