@@ -144,7 +144,7 @@ def check_tf2(private, kernel, root, work):
                       "[ \"$(findmnt -n -o SOURCE /media/tf2)\" = /dev/$card ] && echo tf2-mounted; "
                       "findmnt -n -o FSTYPE /media/tf2; cat /media/tf2/nes/homebrew-test.nes")
         console.expect(b"\r\nexfat-supported\r\n")
-        console.expect(b"\r\ntf2-mounted\r\nvfat\r\n")
+        console.expect(b"tf2-mounted\r\nvfat\r\n")
         console.expect(b"synthetic test file")
         console.expect(PROMPT)
         console.enter("journalctl -b -o cat -u gizlet-tf2@$boot -u gizlet-tf2@$data | grep -c 'is on the system card'")
