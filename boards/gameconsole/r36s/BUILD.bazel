@@ -172,7 +172,8 @@ alias(
 )
 
 # flash.sh's card identity against a stub diskutil: a card ending in an ext4
-# partition without a UUID, and a failing diskutil. Runs on any computer.
+# partition without a UUID, and a failing diskutil; and the panel it reads from
+# a stock or Gizlet OS card. Runs on any computer.
 sh_test(
     name = "flash_test",
     srcs = ["flash_test.sh"],
