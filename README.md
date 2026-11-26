@@ -41,7 +41,7 @@ Both workflows run from `main` and use the shared [Gizlet workflows](https://git
 
 ## Releases
 
-Push a `vMAJOR.MINOR.PATCH` tag on a commit in `main` to run the Release workflow. The ARM64 job builds and tests the R36S image, runtime, and Launcher. The publish job signs the Launcher bundle with the key in `secrets/release.enc.yaml` and uploads the release to the private `gizlet-assets` R2 bucket. The publish job decrypts the file with the `SOPS_AGE_KEY` organization secret.
+Push a `vMAJOR.MINOR.PATCH` tag on a commit in `main` to run the Release workflow. A GitHub-hosted ARM64 runner builds and tests the R36S image, runtime, and Launcher, then publishes directly to the private `gizlet-assets` R2 bucket. The final step uses the `SOPS_AGE_KEY` organization secret to decrypt `secrets/release.enc.yaml` for Launcher signing and R2 upload.
 
 Each version lives under `releases/<tag>/`. CI uploads `manifest.json` last. All artifact paths in the manifest are relative to the version directory. `boards.gameconsole.r36s.image` gives the compressed image and its `SHA256SUMS` path, and `flash_scripts` gives the two board-specific writers. The manifest also lists the ARM64 runtime SquashFS and the signed Launcher and CLI bundle.
 
