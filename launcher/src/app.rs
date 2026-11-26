@@ -321,6 +321,8 @@ impl App {
         self.apps_stamp = stamp;
         let focused = self.apps.get(self.home_tile).map(|a| a.id().to_string());
         self.apps = self.library.scan();
+        // The shelf changes without input: draw it, and let it settle.
+        self.revision += 1;
         self.home_tile = focused.and_then(|id| self.apps.iter().position(|a| a.id() == id)).unwrap_or(0);
         if self.apps.is_empty() && self.home_row == HomeRow::Tiles {
             self.home_row = HomeRow::Buttons;
@@ -371,9 +373,14 @@ impl App {
             t.age += dt;
         }
         self.toasts.retain(|t| t.age < TOAST_SECONDS);
-        for event in self.system.poll() {
-            self.on_event(event);
-            self.revision += 1;
+        let events = self.system.poll();
+        if !events.is_empty() {
+            let focused = self.focused_item();
+            for event in events {
+                self.on_event(event);
+                self.revision += 1;
+            }
+            self.refocus(focused);
         }
         self.auto_scan();
 
@@ -632,6 +639,33 @@ impl App {
                     None => self.focus.in_content = false,
                 }
             }
+        }
+    }
+
+    /// The settings row in focus, to find again after the list changes.
+    fn focused_item(&self) -> Option<Item> {
+        if self.page() != Page::Settings || !self.focus.in_content {
+            return None;
+        }
+        self.settings_items(self.focused_category()).get(self.focus.item).cloned()
+    }
+
+    /// Keeps the focus on the same row when a device report adds or removes
+    /// rows above it, as the battery's Time Left does when the charger is
+    /// plugged in: by its id, or by its label for information rows.
+    fn refocus(&mut self, before: Option<Item>) {
+        let Some(before) = before else { return };
+        let items = self.settings_items(self.focused_category());
+        if items.get(self.focus.item).is_some_and(|i| i.id == before.id && i.label == before.label) {
+            return;
+        }
+        let found = if before.id == ItemId::None {
+            items.iter().position(|i| i.id == ItemId::None && i.label == before.label && i.focusable())
+        } else {
+            items.iter().position(|i| i.id == before.id)
+        };
+        if let Some(i) = found {
+            self.focus.item = i;
         }
     }
 
