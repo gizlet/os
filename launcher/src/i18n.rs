@@ -162,6 +162,7 @@ strings! {
     Unknown => "未知", "Unknown";
 
     KbDone => "完成", "Done";
+    KbSelectOrHold => "选择 · 长按 {} 秒完成", "Select · Hold {}s to finish";
     KbSpace => "空格", "Space";
     KbShow => "显示", "Show";
     KbHide => "隐藏", "Hide";
