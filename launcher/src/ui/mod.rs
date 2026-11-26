@@ -10,6 +10,80 @@ use crate::app::{App, Page};
 use crate::input::RawPad;
 use crate::painter::Painter;
 use crate::theme;
+use raylib_sys as ffi;
+use std::collections::HashMap;
+use std::ffi::CString;
+use std::path::{Path, PathBuf};
+
+/// Which version of a file an icon was loaded from: an update or a
+/// reinstall writes a new file, with another time or size.
+type FileId = Option<(std::time::SystemTime, u64)>;
+
+fn file_id(path: &Path) -> FileId {
+    std::fs::metadata(path).ok().and_then(|m| Some((m.modified().ok()?, m.len())))
+}
+
+/// App icons, each loaded once per version of its file.
+#[derive(Default)]
+pub struct Icons {
+    loaded: HashMap<PathBuf, (FileId, ffi::Texture2D)>,
+}
+
+impl Icons {
+    /// The icon at `path`, or `None` when it cannot be read as an image.
+    /// A file changed since it was loaded is loaded again.
+    pub fn get(&mut self, path: &Path) -> Option<ffi::Texture2D> {
+        let id = file_id(path);
+        if let Some((old_id, old)) = self.loaded.get(path) {
+            if *old_id == id {
+                return (old.id != 0).then_some(*old);
+            }
+            if old.id != 0 {
+                unsafe { ffi::UnloadTexture(*old) };
+            }
+        }
+        let tex = load(path);
+        self.loaded.insert(path.to_path_buf(), (id, tex));
+        (tex.id != 0).then_some(tex)
+    }
+}
+
+impl Icons {
+    /// Unloads every icon whose path is not in `paths`, as when an app is
+    /// removed or an update names another icon file.
+    pub fn keep_only(&mut self, paths: &[PathBuf]) {
+        self.loaded.retain(|path, (_, tex)| {
+            let keep = paths.contains(path);
+            if !keep && tex.id != 0 {
+                unsafe { ffi::UnloadTexture(*tex) };
+            }
+            keep
+        });
+    }
+}
+
+fn load(path: &Path) -> ffi::Texture2D {
+    let Ok(c) = CString::new(path.to_string_lossy().as_bytes()) else {
+        return ffi::Texture2D { id: 0, width: 0, height: 0, mipmaps: 0, format: 0 };
+    };
+    unsafe {
+        let mut tex = ffi::LoadTexture(c.as_ptr());
+        if tex.id != 0 {
+            // Icons are drawn far smaller than they are stored.
+            ffi::GenTextureMipmaps(&mut tex);
+            ffi::SetTextureFilter(tex, ffi::TextureFilter::TEXTURE_FILTER_TRILINEAR as i32);
+        }
+        tex
+    }
+}
+
+impl Drop for Icons {
+    fn drop(&mut self) {
+        for (_, tex) in self.loaded.values().filter(|(_, t)| t.id != 0) {
+            unsafe { ffi::UnloadTexture(*tex) };
+        }
+    }
+}
 
 /// Exponential smoothing toward `target`; `rate` is roughly 1/time-constant.
 pub fn approach(current: f32, target: f32, rate: f32, dt: f32) -> f32 {
@@ -51,9 +125,14 @@ pub struct Ui {
     settings_scroll: f32,
     sidebar_y: f32,
     button_pop: Pop,
+    tile_pop: Pop,
     list_pop: Pop,
     page_key: (Option<Page>, usize),
     page_since: f32,
+    icons: Icons,
+    /// The installed apps' icon paths the cache was last pruned to.
+    icon_paths: Vec<PathBuf>,
+    shelf_x: f32,
 }
 
 impl Ui {

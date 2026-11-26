@@ -16,6 +16,7 @@ ROOTFS_FILES = {
     "//rootfs:etc/iwd/main.conf": "etc/iwd/main.conf",
     "//rootfs:etc/ssh/sshd_config.d/gizlet.conf": "etc/ssh/sshd_config.d/gizlet.conf",
     "//rootfs:usr/lib/gizlet/inputrc": "usr/lib/gizlet/inputrc",
+    "//rootfs:usr/lib/sysctl.d/gizlet.conf": "usr/lib/sysctl.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system/iwd.service.d/gizlet.conf": "usr/lib/systemd/system/iwd.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system/ssh.service.d/gizlet.conf": "usr/lib/systemd/system/ssh.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/journald.conf.d/gizlet.conf": "usr/lib/systemd/journald.conf.d/gizlet.conf",
@@ -53,6 +54,8 @@ ROOTFS_EXECUTABLES = {
     "//rootfs:usr/lib/gizlet/gizlet-switch": "usr/lib/gizlet/gizlet-switch",
     "//rootfs:usr/lib/gizlet/gizlet-var": "usr/lib/gizlet/gizlet-var",
     "//rootfs:usr/lib/gizlet/save-boot-log": "usr/lib/gizlet/save-boot-log",
+    # Installs, lists, runs and removes apps with the installed launcher.
+    "//rootfs:usr/bin/gizlet": "usr/bin/gizlet",
     # The launcher runs against Gizlet runtime 1 (its raylib, Mesa and glibc)
     # through its start script; the Booter is static.
     "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",

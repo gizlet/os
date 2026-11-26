@@ -35,7 +35,8 @@ strings! {
     Settings => "设置", "Settings";
     Power => "电源", "Power";
     EmptyTitle => "还没有安装程序", "No apps installed yet";
-    EmptyBody => "商店开放后，安装的程序会出现在这里。", "Apps you install from the Store will appear here.";
+    EmptyBody => "用 gizlet install 安装的程序会出现在这里。", "Apps you install with gizlet install appear here.";
+    Starting => "正在启动 {}", "Starting {}";
     StoreSoon => "商店还没有开放", "The Store isn't open yet";
     LibrarySoon => "还没有安装程序", "No apps are installed yet";
 

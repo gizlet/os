@@ -8,8 +8,10 @@ systemd. The build VM's OpenSSH client logs in to the guest's sshd over a
 forwarded virtio-net port.
 """
 
+import base64
 from contextlib import contextmanager
 import hashlib
+import io
 import os
 from pathlib import Path
 import selectors
@@ -19,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).parent))
 import card  # noqa: E402
@@ -246,6 +249,73 @@ def check_ssh(private, boot_offset, kernel, root, work):
           "also after a reboot; mDNS runs with Wi-Fi; key and password logins and scp work")
 
 
+def gzl(files, listed=None):
+    """A .gzl package as the store's gizlet-cli packs it: FILES (name -> (bytes, mode)) and
+    CHECKSUMS, computed from LISTED instead when given."""
+    sums = "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, (data, _) in sorted((listed or files).items()))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, (data, mode) in [*sorted(files.items()), ("CHECKSUMS", (sums.encode(), 0o644))]:
+            info = zipfile.ZipInfo(name, (2024, 1, 1, 0, 0, 0))
+            info.create_system = 3
+            info.external_attr = (0o100000 | mode) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(info, data)
+    return out.getvalue()
+
+
+def send(console, data, path):
+    """Writes DATA to PATH in the guest through the console, in base64 lines."""
+    text = base64.b64encode(data).decode()
+    console.command(f"rm -f {path}.b64")
+    for i in range(0, len(text), 600):
+        console.command(f"printf '%s\\n' '{text[i:i + 600]}' >> {path}.b64")
+    console.command(f"base64 -d {path}.b64 > {path} && rm {path}.b64")
+
+
+def check_apps(console):
+    """Installs, lists, runs and removes an app with the gizlet command, and refuses a tampered package."""
+    manifest = ('id = "dev.gizlet.test-hello"\nname = "Hello"\nversion = "0.1.0"\ntier = "lite"\n'
+                'target = "aarch64-unknown-linux-gnu"\nentry = "bin/hello"\n\n[names]\nzh-CN = "你好"\n')
+    hello = (b'#!/bin/sh\necho "hello-app $GIZLET_SWAP_AB $PWD $GIZLET_SAVE_DIR"\n'
+             b'echo kept > "$GIZLET_SAVE_DIR/kept"\n')
+    files = {"manifest.toml": (manifest.encode(), 0o644), "bin/hello": (hello, 0o755), "assets/a.txt": (b"asset\n", 0o644)}
+    send(console, gzl(files), "/tmp/hello.gzl")
+    # A file changed after packing no longer matches CHECKSUMS.
+    send(console, gzl(dict(files, **{"assets/a.txt": (b"other\n", 0o644)}), listed=files), "/tmp/bad.gzl")
+    console.enter("gizlet install /tmp/bad.gzl; echo status-$?")
+    console.expect(b"does not match its checksum")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    console.enter("gizlet install /tmp/hello.gzl")
+    console.expect(b"\r\ninstalled dev.gizlet.test-hello 0.1.0 (Hello) in /opt/gizlet/apps/dev.gizlet.test-hello")
+    console.expect(PROMPT)
+    console.enter("gizlet list")
+    console.expect(b"\r\ndev.gizlet.test-hello\t0.1.0\tHello\r\n")
+    console.expect(PROMPT)
+    # The kernel keeps all but critical messages off the console the LCD shows between apps.
+    console.enter("cat /proc/sys/kernel/printk")
+    console.expect(b"\r\n3\t4\t1\t7\r\n")
+    console.expect(PROMPT)
+    console.enter("gizlet run dev.gizlet.test-hello")
+    console.expect(b"\r\nhello-app 0 /opt/gizlet/apps/dev.gizlet.test-hello /opt/gizlet/saves/dev.gizlet.test-hello\r\n")
+    console.expect(PROMPT)
+    # Without a launcher on a screen, start says to use run.
+    console.enter("gizlet start dev.gizlet.test-hello; echo status-$?")
+    console.expect(b"no launcher is on the screen")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    console.enter("gizlet uninstall dev.gizlet.test-hello && cat /opt/gizlet/saves/dev.gizlet.test-hello/kept")
+    console.expect(b"\r\nremoved dev.gizlet.test-hello; its saves stay")
+    console.expect(b"\r\nkept\r\n")
+    console.expect(PROMPT)
+    console.enter("gizlet list | wc -l; ls -A /opt/gizlet/apps | grep -vxE '[.](lock|running-.*)' | wc -l")
+    # Nothing is left but the lock files: no staging, removal or backup folders.
+    console.expect(b"\r\n0\r\n0\r\n")
+    console.expect(PROMPT)
+    print("gizlet installs, lists, runs and removes a .gzl app and refuses one that fails its checksums")
+
+
 def scenarios(image, kernel_name, flash, flash_card, work):
     parts, signature = card.partitions(image)
     root = f"PARTUUID={signature:08x}-{parts['root'][0]:02x}"
@@ -320,6 +390,7 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         for line in (b"platform: surfaceless", b"renderer: llvmpipe", b"render: ok"):
             console.expect(line)
         console.expect(PROMPT)
+        check_apps(console)
         console.command("mkdir /opt/gizlet/bin")
         console.command("printf '%s\\n' '#!/bin/sh' 'echo hello-from-card' > /opt/gizlet/bin/hello && chmod 755 /opt/gizlet/bin/hello")
         console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini")

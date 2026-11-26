@@ -3,6 +3,8 @@
 //! desktop window and anything between.
 //!
 //! Options: `--probe` prints what the device reports and exits; `--version`.
+//! The `gizlet` subcommands (`install`, `uninstall`, `list`, `run`, `start`,
+//! `target`, `help`) manage installed apps instead, see `cli.rs`.
 //!
 //! Environment:
 //! - `GIZLET_WINDOW=WIDTHxHEIGHT`: the window size on desktops (default 1280x720).
@@ -12,6 +14,8 @@
 //! - `GIZLET_SCRIPT`: scripted input, see `script.rs`.
 
 mod app;
+mod apps;
+mod cli;
 mod clock;
 #[cfg(all(target_os = "linux", feature = "gizlet-os"))]
 mod evdev;
@@ -23,6 +27,7 @@ mod keyboard;
 mod painter;
 mod script;
 mod settings;
+mod supervise;
 mod system;
 mod theme;
 mod ui;
@@ -44,6 +49,9 @@ const STILL_REDRAW_SECONDS: f64 = 1.0;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(status) = cli::main(&args) {
+        std::process::exit(status);
+    }
     match args.first().map(String::as_str) {
         None => {}
         Some("--version") => {
@@ -55,7 +63,7 @@ fn main() {
             return;
         }
         Some(other) => {
-            eprintln!("usage: gizlet-launcher [--probe | --version]\nunknown option {other}");
+            eprintln!("usage: gizlet-launcher [--probe | --version | help | COMMAND ...]\nunknown option {other}");
             std::process::exit(2);
         }
     }
@@ -64,7 +72,11 @@ fn main() {
         println!("Gizlet launcher: no display (/dev/dri/card0 is missing)");
         std::process::exit(1);
     }
+    let pid_file = KMS.then(|| std::fs::write(apps::LAUNCHER_PID, format!("{}\n", std::process::id())).is_ok());
     run();
+    if pid_file == Some(true) {
+        let _ = std::fs::remove_file(apps::LAUNCHER_PID);
+    }
     println!("Leaving the launcher.");
 }
 
@@ -159,6 +171,11 @@ fn run() {
         let (mut input, mut pad) = controls.read(dt, app.time, app.text_input_active(), app.settings.swap_ab);
         if frame % 30 == 0 {
             app.gamepads = controls.gamepads();
+            app.refresh_apps();
+            // `gizlet start` asks over ssh: the start script runs the app next.
+            if KMS && std::path::Path::new(apps::LAUNCH_REQUEST).exists() {
+                break;
+            }
         }
         frame += 1;
 
@@ -208,6 +225,7 @@ fn run() {
             }
         }
     }
+    drop(ui);
     drop(painter);
     unsafe { ffi::CloseWindow() };
 }
