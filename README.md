@@ -38,3 +38,11 @@ Pull requests to `main` must pass two checks. Whenever a pull request from a bra
 - `Codex Code Review` reviews the diff (`.github/workflows/codex-review.yml`).
 
 Both workflows run from `main` and use the shared [Gizlet workflows](https://github.com/gizlet/.github). Pushes to `main` build directly and refresh the Bazel caches.
+
+## Releases
+
+Push a `vMAJOR.MINOR.PATCH` tag on a commit in `main` to run the Release workflow. The ARM64 job builds and tests the R36S image, runtime, and Launcher. The publish job signs the Launcher bundle with the key in `secrets/release.enc.yaml` and uploads the release to the private `gizlet-assets` R2 bucket. The publish job decrypts the file with the `SOPS_AGE_KEY` organization secret.
+
+Each version lives under `releases/<tag>/`. CI uploads `manifest.json` last. All artifact paths in the manifest are relative to the version directory. `boards.gameconsole.r36s.image` gives the compressed image and its `SHA256SUMS` path, and `flash_scripts` gives the two board-specific writers. The manifest also lists the ARM64 runtime SquashFS and the signed Launcher and CLI bundle.
+
+Use the version directory's `flash.sh` on macOS or Linux with `jq` installed, or `flash.ps1` in an elevated PowerShell on Windows. The entry scripts ask for a language and board, then run the matching writer with that version's image and checksum. The R36S writer uses the stock card's panel information when available. For Panel 4 it applies the overlay shipped inside the same image. Blank cards still require selecting the panel.

@@ -81,7 +81,7 @@ bazel build --config=r36s //launcher:gizlet-launcher //launcher:gizlet-cli
 ./launcher/pack_release.sh 0.2.0 /path/to/signing-key bazel-bin/launcher/gizlet-launcher bazel-bin/launcher/gizlet-cli gizlet-launcher-0.2.0.gizlet
 ```
 
-Provision the corresponding **public** key on the device before the first update. Put a line of the form `launcher namespaces="gizlet-launcher" ssh-ed25519 KEY` in `/opt/gizlet/launcher/allowed_signers`, replacing `ssh-ed25519 KEY` with the release public key's type and value. Keep the private key on the signing host.
+Release images include the official Launcher signing public key. To use a different signing key or update an older image, put a line of the form `launcher namespaces="gizlet-launcher" ssh-ed25519 KEY` in `/opt/gizlet/launcher/allowed_signers`, replacing `ssh-ed25519 KEY` with the release public key's type and value. This file takes precedence over the built-in key.
 
 Copy the signed `.gizlet` file to the device with `scp` and pass its path to `gizlet update`. For an over-the-air update, publish the same bundle at an HTTPS URL and pass that URL instead:
 

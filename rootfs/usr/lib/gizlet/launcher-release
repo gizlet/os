@@ -89,6 +89,9 @@ active_dir() {
 
 install_release() {
     lock_releases
+    if [ ! -e "$trusted" ] && [ ! -L "$trusted" ]; then
+        trusted=$factory/allowed_signers
+    fi
     regular "$trusted" || fail "configure a trusted signing key in $trusted"
     mkdir -p "$releases"
     staging=$(mktemp -d "$releases/.install.XXXXXX")
