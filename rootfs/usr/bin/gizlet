@@ -1,0 +1,12 @@
+#!/bin/sh
+# gizlet: installs, lists, runs and removes apps (.gzl packages), from ssh or
+# the recovery shell. The commands belong to the launcher on the data
+# partition, which runs against Gizlet runtime 1; `gizlet help` lists them.
+launcher=/opt/gizlet/launcher/bin/gizlet-launcher
+run=/opt/gizlet/runtime/1/bin/gizlet-run
+if [ ! -x "$launcher" ] || [ ! -x "$run" ]; then
+    echo "gizlet: $launcher or $run is missing; the launcher is installed on the first boot of a card" >&2
+    exit 1
+fi
+[ $# -gt 0 ] || set -- help
+exec "$run" "$launcher" "$@"
