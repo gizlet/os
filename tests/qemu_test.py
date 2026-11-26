@@ -299,7 +299,7 @@ def check_apps(console):
     console.enter("cat /proc/sys/kernel/printk")
     console.expect(b"\r\n3\t4\t1\t7\r\n")
     console.expect(PROMPT)
-    console.enter("bun -e 'console.log(6 * 7)'")
+    console.enter("bun -e 'process.stdout.write(String(6 * 7) + \"\\n\")'")
     console.expect(b"\r\n42\r\n")
     console.expect(PROMPT)
     console.enter("gizlet run dev.gizlet.test-hello")
