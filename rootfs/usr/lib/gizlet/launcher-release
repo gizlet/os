@@ -57,7 +57,13 @@ select_release() {
     version=factory
     if [ -x "$runtime/1-current/bin/gizlet-run" ] || [ -x "$runtime/1/bin/gizlet-run" ]; then
         newest=$(installed_versions | head -n 1)
-        version=${newest:-factory}
+        if [ -n "$newest" ]; then
+            factory_version=$("$factory/bin/cli" ota factory-version)
+            if ! valid_version "$factory_version" ||
+                [ "$(printf '%s\n' "$factory_version" "$newest" | sort -V | tail -n 1)" = "$newest" ]; then
+                version=$newest
+            fi
+        fi
     fi
     printf '%s\n' "$version" > "$active.new"
     mv -fT "$active.new" "$active"
@@ -76,7 +82,24 @@ active_version() {
     fi
     printf '%s\n' "$version"
 }
+
+legacy_version() {
+    selected=$(active_version)
+    if [ "$selected" = factory ]; then
+        "$factory/bin/cli" ota factory-version
+    else
+        printf '%s\n' "$selected"
+    fi
+}
 active_dir() {
+    if [ -x /run/gizlet-ota-launcher/bin/cli ]; then
+        printf '%s\n' /run/gizlet-ota-launcher
+        return
+    fi
+    legacy_dir
+}
+
+legacy_dir() {
     version=$(active_version)
     if [ "$version" = factory ]; then
         printf '%s\n' "$factory"
@@ -89,7 +112,7 @@ active_dir() {
 
 install_release() {
     lock_releases
-    if [ ! -e "$trusted" ] && [ ! -L "$trusted" ]; then
+    if [ "$#" -eq 3 ] || { [ ! -e "$trusted" ] && [ ! -L "$trusted" ]; }; then
         trusted=$factory/allowed_signers
     fi
     regular "$trusted" || fail "configure a trusted signing key in $trusted"
@@ -132,12 +155,17 @@ install_release() {
     from_tar manifest > "$release/manifest"
     IFS=' ' read -r _ version _ < "$release/manifest" || fail 'invalid release manifest'
     valid_version "$version" || fail 'invalid release version'
+    [ "$#" -eq 1 ] || [ "$version" = "$3" ] || fail 'unexpected Launcher bundle version'
     manifest "$version" | cmp -s "$release/manifest" - || fail 'unsupported Launcher bundle format, architecture, or runtime'
     for file in start bin/gizlet-launcher bin/cli; do
         from_tar "$file" > "$release/$file"
         [ -s "$release/$file" ] || fail "missing release file $file"
         chmod 0755 "$release/$file"
     done
+    if [ "$#" -eq 3 ]; then
+        mv -T -- "$release" "$2"
+        return
+    fi
     dest=$releases/$version
     if [ -e "$dest" ] || [ -L "$dest" ]; then
         release_ready "$dest" "$version" || fail "version $version already exists and is incomplete"
@@ -160,6 +188,10 @@ if [ "${0##*/}" = gizlet ]; then
             install_release "$2"
             ;;
         system)
+            if [ "${2-}" = ota ]; then
+                shift 2
+                exec "$factory/bin/cli" ota "$@"
+            fi
             [ "$#" -eq 3 ] && [ "$2" = reload-runtime ] || fail 'usage: gizlet system reload-runtime FILE.sqfs'
             exec /usr/lib/gizlet/gizlet-runtime reload "$3"
             ;;
@@ -167,11 +199,27 @@ if [ "${0##*/}" = gizlet ]; then
     esac
 else
     case ${1-} in
-        select) select_release ;;
+        select)
+            select_release
+            if [ -L /opt/gizlet/ota/current ]; then
+                exec /usr/lib/gizlet/gizlet-ota-boot restore "$(legacy_version)"
+            fi
+            ;;
+        stage)
+            [ "$#" -eq 4 ] || fail 'missing Launcher stage arguments'
+            install_release "$2" "$3" "$4"
+            ;;
         start)
             shift
+            if [ "$#" -eq 0 ]; then
+                if [ -d /opt/gizlet/ota ]; then
+                    exec /usr/lib/gizlet/gizlet-ota-boot run "$(legacy_dir)" "$(legacy_version)"
+                fi
+                dir=$(legacy_dir)
+                printf 'Gizlet OS: using Launcher from %s\n' "$dir"
+                exec "$dir/start"
+            fi
             dir=$(active_dir)
-            if [ "$#" -eq 0 ]; then printf 'Gizlet OS: using Launcher from %s\n' "$dir"; fi
             exec "$dir/start" "$@"
             ;;
         *) fail 'invalid Launcher release operation' ;;

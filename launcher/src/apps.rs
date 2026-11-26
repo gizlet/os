@@ -796,7 +796,8 @@ pub fn command(library: &Library, app: &App, lang: &str, swap_ab: bool, args: &[
     if cfg!(target_os = "linux") && needs_loader(&entry) {
         let loader = if cfg!(feature = "gizlet-os") {
             let runtime = Path::new("/opt/gizlet/runtime");
-            fs::canonicalize(runtime.join("1-current/bin/gizlet-run"))
+            fs::canonicalize("/run/gizlet-ota-runtime/bin/gizlet-run")
+                .or_else(|_| fs::canonicalize(runtime.join("1-current/bin/gizlet-run")))
                 .unwrap_or_else(|_| runtime.join("1/bin/gizlet-run"))
         } else {
             library.prefix.join("runtime/1/bin/gizlet-run")

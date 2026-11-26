@@ -2,5 +2,6 @@
 
 pub mod apps;
 pub mod cli;
+pub mod ota;
 pub mod settings;
 mod supervise;

@@ -429,6 +429,140 @@ def check_runtime_after_reboot(console):
     console.command("gizlet uninstall dev.gizlet.test-runtime --saves && rm /home/active-runtime")
 
 
+def start_ota_fixture(console, pack_release, ota_fixture, tag):
+    console.command("mkdir -p /tmp/updates && cd /tmp/updates && ssh-keygen -qt ed25519 -N '' -f test-key "
+                    "&& mkdir -p /opt/gizlet/launcher "
+                    "&& ssh-keygen -qt ed25519 -N '' -f manual-key "
+                    "&& (printf 'launcher '; cat manual-key.pub) > /opt/gizlet/launcher/allowed_signers")
+    send(console, pack_release.read_bytes(), "/tmp/updates/pack.sh")
+    send(console, ota_fixture.read_bytes(), "/tmp/updates/ota_fixture.sh")
+    console.enter("sh /tmp/updates/ota_fixture.sh && echo ota-fixture-ready")
+    console.expect(b"\r\nota-fixture-ready\r\n")
+    console.expect(PROMPT)
+    console.command(f"cd /tmp/updates/ota && echo {tag} > latest && (bun serve.js </dev/null >/tmp/ota-server.log 2>&1 &)")
+    console.command("export CURL_CA_BUNDLE=$PWD/tls.crt PATH=$PWD/bin:$PATH")
+    console.enter("timeout 15 sh -c 'until curl -qfsS https://dl.gizlet.io/; do sleep 1; done' && echo ota-https-ready")
+    console.expect(b"readyota-https-ready")
+    console.expect(PROMPT)
+
+
+def stage_ota_updates(console, pack_release, ota_fixture):
+    start_ota_fixture(console, pack_release, ota_fixture, "v2.0.0")
+    for fault, message, action in (
+        ("signature", b"Release signature verification failed", "check"),
+        ("interrupt", b"Download failed", "install v2.0.0"),
+        ("checksum", b"Update file checksum mismatch", "install v2.0.0"),
+    ):
+        console.enter(f"echo {fault} > fault; gizlet system ota {action}; "
+                      "test $? -ne 0 && test ! -L /opt/gizlet/ota/pending && echo ota-refused")
+        console.expect(message)
+        console.expect(b"\r\nota-refused\r\n")
+        console.expect(PROMPT)
+    console.enter(": > fault; gizlet system ota check && gizlet system ota install v2.0.0")
+    console.expect(b"Available: v2.0.0 (Runtime: true, Launcher: true")
+    console.expect(b"Restart to finish installing v2.0.0")
+    console.expect(PROMPT)
+    console.enter("gizlet system ota status")
+    console.expect(b"\r\nLauncher: factory\r\n")
+    console.expect(b"\r\nPending restart: v2.0.0\r\n")
+    console.expect(PROMPT)
+    console.command("umount /usr/lib/gizlet/launcher/allowed_signers")
+
+
+def check_ota_after_boot(console, pack_release, ota_fixture):
+    console.expect(b"\r\nota-confirmed\r\n")
+    console.expect(PROMPT)
+    console.enter("gizlet system ota status && current=$(readlink /opt/gizlet/ota/current) && echo \"${current%.*}\" && "
+                  "mountpoint -q \"/opt/gizlet/ota/$current/root\" && gizlet target && "
+                  "test \"$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)\" = "
+                  "\"/opt/gizlet/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
+    console.expect(b"\r\nLauncher: 2.0.0\r\n")
+    console.expect(b"\r\nv2.0.0\r\naarch64-unknown-linux-gnu lite\r\nota-runtime-in-use\r\n")
+    console.expect(PROMPT)
+    start_ota_fixture(console, pack_release, ota_fixture, "v2.0.1")
+    console.enter("gizlet system ota install v2.0.1")
+    console.expect(b"Restart to finish installing v2.0.1")
+    console.expect(PROMPT)
+
+
+def ota_scenarios(image, kernel_name, flash, flash_card, pack_release, ota_fixture, work):
+    private = work / "ota.img"
+    parts, signature = card.partitions(image)
+    root = f"PARTUUID={signature:08x}-{parts['root'][0]:02x}"
+    kernel = work / "kernel"
+    subprocess.run(["mcopy", "-i", f"{image}@@{parts['boot'][1]}", "::" + kernel_name, kernel], check=True)
+    subprocess.run(["bash", flash_card, flash, image, private, str(2 << 30)], check=True)
+    with boot(private, kernel, root) as console:
+        console.expect(PROMPT)
+        manifest = {
+            "id": "dev.gizlet.ota-test",
+            "name": "Runtime path",
+            "version": "1.0.0",
+            "runtime": 1,
+            "target": "aarch64-unknown-linux-gnu",
+            "tier": "lite",
+            "entry": "bin/printenv",
+        }
+        send(console, gzl({"manifest.json": (json.dumps(manifest).encode(), 0o644),
+                          "bin/printenv": (b"replaced in the guest", 0o755)}), "/tmp/ota-app.gzl")
+        console.command("gizlet install /tmp/ota-app.gzl && cp /usr/bin/printenv /opt/gizlet/apps/dev.gizlet.ota-test/bin/printenv")
+        console.command("echo persistent-user-file > /home/check && "
+                        "mkdir -p /opt/gizlet/saves/dev.gizlet.ota-test && "
+                        "echo kept > /opt/gizlet/saves/dev.gizlet.ota-test/kept && "
+                        "/usr/lib/gizlet/gizlet-switch timezone America/New_York")
+        stage_ota_updates(console, pack_release, ota_fixture)
+        console.stop()
+    with boot(private, kernel, root) as console:
+        check_ota_after_boot(console, pack_release, ota_fixture)
+        console.command("mkdir -p /opt/gizlet/bin")
+        send(console, b"""#!/bin/sh
+set -eu
+gizlet system ota status
+current=$(readlink /opt/gizlet/ota/current)
+test "$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)" = "/opt/gizlet/ota/$current/root/share/alsa"
+test ! -L /opt/gizlet/ota/attempt
+echo custom-entry-uses-ota
+""", "/opt/gizlet/bin/ota-check")
+        console.command("chmod 755 /opt/gizlet/bin/ota-check && "
+                        "printf '%s\\n' '[boot]' 'entry=bin/ota-check' > /opt/gizlet/boot.ini")
+        console.stop()
+    with boot(private, kernel, root) as console:
+        console.expect(b"\r\nLauncher: 2.0.0\r\n")
+        console.expect(b"\r\nPending restart: v2.0.1\r\ncustom-entry-uses-ota\r\n")
+        console.expect(PROMPT)
+        console.command("rm /opt/gizlet/boot.ini")
+        console.enter("exit")
+        console.expect(b"ota-launch-failed")
+        console.expect(b"update v2.0.1 rolled back")
+        console.expect(b"ota-confirmed")
+        console.expect(PROMPT)
+        console.enter("gizlet system ota status; current=$(readlink /opt/gizlet/ota/current); echo \"${current%.*}\"; "
+                      "cat /home/check /opt/gizlet/saves/dev.gizlet.ota-test/kept; "
+                      "/usr/lib/gizlet/gizlet-switch timezone; "
+                      "test \"$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)\" = "
+                      "\"/opt/gizlet/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
+        console.expect(b"\r\nLauncher: 2.0.0\r\n")
+        console.expect(b"\r\nRolled back: v2.0.1\r\nv2.0.0\r\npersistent-user-file\r\nkept\r\n"
+                       b"America/New_York\r\nota-runtime-in-use\r\n")
+        console.expect(PROMPT)
+        console.command("store=/opt/gizlet/ota && set -- \"$store\"/v2.0.1.* && "
+                        "candidate=${1##*/} && test -d \"$1\" && "
+                        "ln -s \"$candidate\" \"$store/pending\" && "
+                        "ln -s \"$candidate\" \"$store/attempt\" && "
+                        "ln -s \"$candidate\" /run/gizlet-ota-trial")
+        console.enter("exit")
+        console.expect(b"update v2.0.1 rolled back")
+        console.expect(b"\r\nota-confirmed\r\n")
+        console.expect(PROMPT)
+        console.enter("/usr/lib/gizlet/gizlet-ota-boot restore 2.1.0 && "
+                      "test ! -L /run/gizlet-ota-launcher && test -L /run/gizlet-ota-runtime && "
+                      "echo newer-factory-launcher-selected")
+        console.expect(b"\r\nnewer-factory-launcher-selected\r\n")
+        console.expect(PROMPT)
+        console.stop()
+    print("signed OTA verifies HTTPS downloads, activates a matching runtime, Launcher and CLI, and preserves user data after rollback")
+
+
 def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
     parts, signature = card.partitions(image)
     root = f"PARTUUID={signature:08x}-{parts['root'][0]:02x}"
@@ -620,4 +754,8 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(dir=os.environ.get("TEST_TMPDIR")) as temp:
-        scenarios(Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3], sys.argv[4], Path(sys.argv[5]), Path(temp))
+        common = (Path(sys.argv[1]).resolve(), sys.argv[2], sys.argv[3], sys.argv[4], Path(sys.argv[5]))
+        if len(sys.argv) == 7:
+            ota_scenarios(*common, Path(sys.argv[6]), Path(temp))
+        else:
+            scenarios(*common, Path(temp))

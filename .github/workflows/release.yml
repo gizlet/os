@@ -62,9 +62,9 @@ jobs:
         run: |
           board=//targets/sd_image/gameconsole/r36s
           bazel test --config=r36s --test_output=errors \
-            "$board:image_test" "$board:rootfs_test" "$board:boot_test" \
+            "$board:image_test" "$board:rootfs_test" "$board:boot_test" "$board:ota_test" \
             //boards/gameconsole/r36s:flash_test
-          bazel build --config=r36s \
+          bazel build --config=r36s --define "gizlet_release_version=${GITHUB_REF_NAME#v}" \
             "$board:gizlet-os-r36s_gz" //runtime:gizlet-runtime-1 \
             //launcher:gizlet-launcher //launcher:gizlet-cli
           mkdir -p "$RUNNER_TEMP/os-build"

@@ -3,6 +3,7 @@
 
 fn main() {
     println!("cargo:rerun-if-env-changed=GIZLET_RAYLIB_LIB");
+    println!("cargo:rerun-if-env-changed=GIZLET_RELEASE_VERSION");
     if std::env::var_os("CARGO_FEATURE_GIZLET_OS").is_none() {
         return;
     }

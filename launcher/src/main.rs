@@ -159,7 +159,7 @@ fn run() {
     let mut drawn: Option<(f64, u64)> = None;
     let mut settling = false;
 
-    while !unsafe { ffi::WindowShouldClose() } {
+    while app.installing_update() || !unsafe { ffi::WindowShouldClose() } {
         // Measured here rather than by raylib, which counts drawn frames only.
         let now = unsafe { ffi::GetTime() };
         let dt = ((now - last) as f32).min(0.1);
@@ -171,7 +171,7 @@ fn run() {
             app.gamepads = controls.gamepads();
             app.refresh_apps();
             // `gizlet start` asks over ssh: the start script runs the app next.
-            if KMS && std::path::Path::new(apps::LAUNCH_REQUEST).exists() {
+            if KMS && !app.installing_update() && std::path::Path::new(apps::LAUNCH_REQUEST).exists() {
                 break;
             }
         }
@@ -179,7 +179,8 @@ fn run() {
 
         let mut shot = None;
         match script.step(&mut input, &mut pad) {
-            Some(script::Step::Quit) => break,
+            Some(script::Step::Quit) if !app.installing_update() => break,
+            Some(script::Step::Quit) => {}
             Some(script::Step::Shot(path)) => shot = Some(path),
             None => {}
         }
@@ -209,6 +210,7 @@ fn run() {
         }
         // Easing advances by the time since the last drawn frame, which may be
         // a second on a still screen.
+        let first_draw = drawn.is_none();
         let draw_dt = drawn.map_or(dt, |(at, _)| ((app.time - at) as f32).min(0.1));
         drawn = Some((app.time, app.revision));
 
@@ -219,6 +221,18 @@ fn run() {
         }
         settling = ui.draw(&mut painter, &app, &pad, draw_dt);
         unsafe { ffi::EndDrawing() };
+        if KMS && first_draw {
+            if std::fs::symlink_metadata("/run/gizlet-ota-trial").is_ok() {
+                let confirmed = std::process::Command::new("/usr/lib/gizlet/gizlet-ota-boot")
+                    .arg("confirm")
+                    .status()
+                    .is_ok_and(|status| status.success());
+                if !confirmed {
+                    std::process::exit(1);
+                }
+            }
+            app.load_update_status();
+        }
 
         if let Some(path) = shot {
             if let Ok(c) = CString::new(path) {

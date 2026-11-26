@@ -21,7 +21,7 @@ def gizlet_rootfs_test(name, image, booter, flash, data_uuid, licenses, **kwargs
         **kwargs
     )
 
-def gizlet_qemu_test(name, image, flash, kernel = "Image", **kwargs):
+def gizlet_qemu_test(name, image, flash, kernel = "Image", ota = False, **kwargs):
     """Boots the card on QEMU virt: recovery, installation, persistence, invalid entries and ssh.
 
     The card is written as `flash`, the card writer, writes it.
@@ -29,14 +29,15 @@ def gizlet_qemu_test(name, image, flash, kernel = "Image", **kwargs):
     vm_test(
         name = name,
         src = Label(":qemu_test.py"),
-        data = [image, flash, Label(":card.py"), Label(":flash_card.sh"), Label("//launcher:pack_release.sh")],
+        data = [image, flash, Label(":card.py"), Label(":flash_card.sh"), Label("//launcher:pack_release.sh")] +
+               ([Label(":ota_fixture.sh")] if ota else []),
         guest_args = [
             "$(rootpath %s)" % image,
             kernel,
             "$(rootpath %s)" % flash,
             "$(rootpath %s)" % Label(":flash_card.sh"),
             "$(rootpath %s)" % Label("//launcher:pack_release.sh"),
-        ],
+        ] + (["$(rootpath %s)" % Label(":ota_fixture.sh")] if ota else []),
         **kwargs
     )
 

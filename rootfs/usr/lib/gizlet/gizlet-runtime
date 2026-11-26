@@ -21,6 +21,16 @@ check_runtime() {
         "$1/bin/gizlet-run" --list /usr/lib/gizlet/launcher/bin/gizlet-launcher >/dev/null
 }
 
+check_trial() {
+    mount_runtime "$1" || fail 'cannot mount OTA runtime'
+    if ! check_runtime "$1/root" ||
+        ! "$1/root/bin/gizlet-run" --list "$1/launcher/bin/gizlet-launcher" >/dev/null ||
+        ! "$1/launcher/bin/cli" target >/dev/null; then
+        umount "$1/root"
+        fail 'OTA runtime and Launcher failed compatibility checks'
+    fi
+}
+
 remove_generation() {
     if mountpoint -q "$1/root"; then
         umount "$1/root" || return
@@ -70,6 +80,7 @@ reload_runtime() {
     sync -f "$generation"
     mv -fT -- "$generation/active" "$active"
     sync -f "$runtime"
+    rm -f /run/gizlet-ota-runtime
     printf '%s\n' 'Runtime 1 activated. New launches use it immediately.'
 }
 
@@ -78,6 +89,7 @@ exec 9>/run/gizlet-runtime.lock
 flock -x 9
 case ${1-} in
     restore) restore_runtime ;;
+    trial) check_trial "$2" ;;
     reload)
         [ "$#" -eq 2 ] || fail 'usage: gizlet system reload-runtime FILE.sqfs'
         reload_runtime "$2"

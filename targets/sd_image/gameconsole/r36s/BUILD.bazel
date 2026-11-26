@@ -172,6 +172,16 @@ gizlet_qemu_test(
     target_compatible_with = _R36S,
 )
 
+gizlet_qemu_test(
+    name = "ota_test",
+    size = "medium",
+    flash = _BOARD + "flash.sh",
+    image = ":gizlet-os-r36s",
+    ota = True,
+    tags = ["manual"],
+    target_compatible_with = _R36S,
+)
+
 # Release downloads for boards/gameconsole/r36s/flash.sh and flash.ps1: the
 # compressed cards and their SHA256SUMS.
 _RELEASE_IMAGES = ["gizlet-os-r36s"] + ["gizlet-os-" + panel for panel in R36S_PANELS]
