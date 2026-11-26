@@ -41,6 +41,7 @@ strings! {
     LibrarySoon => "还没有安装程序", "No apps are installed yet";
 
     PowerTitle => "电源选项", "Power Options";
+    Sleep => "睡眠", "Sleep";
     Reboot => "重新启动", "Restart";
     PowerOff => "关机", "Power Off";
     QuitLauncher => "退出 launcher", "Quit the Launcher";
@@ -99,7 +100,7 @@ strings! {
     ThemeLabel => "主题", "Theme";
     ThemeDark => "深色", "Dark";
     ThemeLight => "浅色", "Light";
-    ScreenOff => "自动关闭屏幕", "Turn Off Screen After";
+    SleepAfter => "自动睡眠", "Sleep After";
     Never => "永不", "Never";
     Minutes => "{} 分钟", "{} min";
     Volume => "音量", "Volume";

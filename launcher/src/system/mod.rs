@@ -100,6 +100,7 @@ pub struct ClockState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PowerAction {
+    Sleep,
     Reboot,
     PowerOff,
 }

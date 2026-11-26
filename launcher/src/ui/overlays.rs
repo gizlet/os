@@ -70,6 +70,9 @@ pub fn dialog(p: &mut Painter, app: &App) {
         let ic = if danger { pal.danger } else { pal.dim };
         let (icon_x, cy) = (x + pad + 6.0, ry + 32.0);
         match action {
+            DialogAction::Power(PowerAction::Sleep) => {
+                icons::moon(p, icon_x, cy, 26.0, ic, if focused { pal.surface_hi } else { pal.surface })
+            }
             DialogAction::Power(PowerAction::Reboot) => icons::restart(p, icon_x, cy, 26.0, ic),
             DialogAction::Power(PowerAction::PowerOff) | DialogAction::Quit => icons::power(p, icon_x, cy, 26.0, ic),
             DialogAction::WifiForget(_) | DialogAction::WifiDisconnect | DialogAction::Close => {

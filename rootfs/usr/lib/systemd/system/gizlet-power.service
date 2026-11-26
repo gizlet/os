@@ -1,5 +1,5 @@
 [Unit]
-Description=Turn the screen off when the device is idle
+Description=Put the device to sleep when it is idle or on the power key
 # The timeout is in power.ini on the data partition; without it the default applies.
 After=gizlet-data.service
 ConditionPathExistsGlob=/sys/class/backlight/*

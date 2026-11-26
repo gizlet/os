@@ -136,7 +136,7 @@ pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     let mut hints: Vec<(&str, &str)> = vec![("B", app.t(T::Back))];
     if in_content {
         match items.get(sel).map(|i| (&i.id, &i.value)) {
-            Some((_, ItemValue::Slider(_))) | Some((ItemId::Theme | ItemId::ScreenOff, _)) => hints.push(("←→", app.t(T::Change))),
+            Some((_, ItemValue::Slider(_))) | Some((ItemId::Theme | ItemId::SleepAfter, _)) => hints.push(("←→", app.t(T::Change))),
             Some((ItemId::None, _)) | None => {}
             Some((ItemId::WifiNetwork(_), ItemValue::Network { status: Some(_), .. })) => {
                 hints.push(("X", app.t(T::WifiForget)));

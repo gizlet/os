@@ -133,7 +133,10 @@ def check_ssh(private, boot_offset, kernel, root, work):
         # console: let that line out before checking exact output.
         console.command("for i in $(seq 60); do systemctl is-active -q ssh && break; sleep 1; done; journalctl --sync")
         console.enter("cat '/var/lib/iwd/=54657374204e657421.psk'; /usr/lib/gizlet/gizlet-switch wifi; /usr/lib/gizlet/gizlet-switch ssh; echo \"[$(/usr/lib/gizlet/gizlet-switch ssh-password)]\"")
-        console.expect(b"[Security]\r\nPassphrase=passphrase-123\r\n\r\n[Settings]\r\nAutoConnect=true\r\non\r\non\r\n[gizlet test]\r\n")
+        # Line by line: services such as gizlet-ssh may print to the console in between.
+        for line in (b"[Security]\r\nPassphrase=passphrase-123", b"\r\n[Settings]\r\nAutoConnect=true", b"\r\non",
+                     b"\r\non", b"\r\n[gizlet test]\r\n"):
+            console.expect(line)
         console.expect(PROMPT)
         # setup.ini is imported once: renamed, without the passphrase and password.
         console.enter("mount -o ro /dev/vda1 /mnt && cat /mnt/setup.ini.done; ls /mnt/setup.ini; umount /mnt")
@@ -313,6 +316,7 @@ def scenarios(image, kernel_name, work):
         console.expect(b"boot entry finished with status 1")
         console.expect(PROMPT)
         # Its device probe runs without a display: no battery, backlight, sound or WiFi adapter here.
+        # No Sleep either: gizlet-power, which suspends, needs a backlight.
         console.enter("/opt/gizlet/launcher/gizlet-launcher --probe")
         for line in (b"battery: Err(NoHardware)", b"brightness: Err(NoHardware)", b"volume: Err(NoHardware)",
                      b"wifi: Ok(WifiState { on: false, adapter: false", b"ssh: Ok(SshState { on: false, running: false",
@@ -322,6 +326,15 @@ def scenarios(image, kernel_name, work):
         # A fresh card keeps UTC until a time zone is chosen; network time runs without a network.
         console.enter("date +%Z; /usr/lib/gizlet/gizlet-switch timezone; systemctl is-active systemd-timesyncd")
         console.expect(b"\r\nUTC\r\nEtc/UTC\r\nactive\r\n")
+        console.expect(PROMPT)
+        # The Bluetooth core is built in; with no controller plugged in, bluetoothd
+        # has not started. Started by hand it runs on the read-only base, keeps its
+        # state on the data partition and answers bluetoothctl.
+        console.enter("systemctl is-active bluetooth; systemctl start bluetooth; systemctl is-active bluetooth; "
+                      "findmnt -n -o SOURCE /var/lib/bluetooth; timeout 10 bluetoothctl show")
+        console.expect(b"\r\ninactive\r\nactive\r\n")
+        console.expect(b"[/system/bluetooth]\r\n")
+        console.expect(b"No default controller available")
         console.expect(PROMPT)
         console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 15000000 ] && echo data-grown")
         console.expect(b"\r\ndata-grown\r\n")

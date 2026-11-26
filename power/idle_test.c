@@ -66,6 +66,13 @@ int main(void) {
     check(idle_held_counts(IDLE_HELD_LIMIT_MS - 1, 0), "held within the limit");
     check(!idle_held_counts(IDLE_HELD_LIMIT_MS, 0), "held past the limit");
 
+    /* A stick held when the inputs were grabbed for sleep and let go during
+     * it: readers are told its old value, which the kernel would otherwise
+     * drop as a repeat, then where it is now. */
+    int values[2];
+    check(idle_resync(1023, 512, values) == 2 && values[0] == 1023 && values[1] == 512, "a stick let go while grabbed is replayed");
+    check(idle_resync(512, 512, values) == 0, "an unmoved stick is not");
+
     if (failures) return 1;
     puts("idle_test: sustained input counts as use");
     return 0;

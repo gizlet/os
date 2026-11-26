@@ -18,6 +18,7 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/gizlet/inputrc": "usr/lib/gizlet/inputrc",
     "//rootfs:usr/lib/systemd/system/ssh.service.d/gizlet.conf": "usr/lib/systemd/system/ssh.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/journald.conf.d/gizlet.conf": "usr/lib/systemd/journald.conf.d/gizlet.conf",
+    "//rootfs:usr/lib/systemd/logind.conf.d/gizlet.conf": "usr/lib/systemd/logind.conf.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system.conf.d/gizlet.conf": "usr/lib/systemd/system.conf.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system/gizlet-audio-jack.service": "usr/lib/systemd/system/gizlet-audio-jack.service",
     "//rootfs:usr/lib/systemd/system/gizlet-boot-log.service": "usr/lib/systemd/system/gizlet-boot-log.service",
@@ -55,11 +56,14 @@ ROOTFS_EXECUTABLES = {
     "//session:booter": "usr/lib/gizlet/gizlet-booter",
     # Follows the headphone jack; static, like the Booter.
     "//audio:audio-jack": "usr/lib/gizlet/gizlet-audio-jack",
-    # Turns the screen off when idle; static too.
+    # Puts the device to sleep when idle or on the power key; static too.
     "//power:power": "usr/lib/gizlet/gizlet-power",
 }
 
 ROOTFS_ENABLE = [
+    # bluetoothd, wanted by bluetooth.target, which udev pulls in when a
+    # controller appears: it starts once one is plugged in, not at boot.
+    "bluetooth.service",
     "gizlet-audio-jack.service",
     "gizlet-boot-log.service",
     "gizlet-data.service",

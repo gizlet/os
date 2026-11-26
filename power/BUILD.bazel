@@ -3,7 +3,8 @@ load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-# Turns the screen off when the device is idle; run by gizlet-power.service.
+# Puts the device to sleep when it is idle or on the power key; run by
+# gizlet-power.service.
 # Static, like the Booter.
 debian_cc_binary(
     name = "power",
