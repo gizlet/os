@@ -129,7 +129,10 @@ fn run(library: &Library, id: &str, args: &[String]) -> Result<(), String> {
 /// Asks the launcher on the screen to quit and start the app; it comes back
 /// when the app exits.
 fn start(library: &Library, id: &str) -> Result<(), String> {
-    library.get(id)?;
+    let app = library.get(id)?;
+    if app.manifest.kind() != apps::Kind::App {
+        return Err(apps::not_an_app(&app.manifest));
+    }
     if !cfg!(feature = "gizlet-os") {
         return run(library, id, &[]);
     }

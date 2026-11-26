@@ -327,6 +327,26 @@ def check_apps(console):
     console.expect(b"no launcher is on the screen")
     console.expect(b"\r\nstatus-1\r\n")
     console.expect(PROMPT)
+    # Manifest schema 2 names its kind: an app installs and runs like a schema 1 one, and a
+    # service is refused, since this release does not install or supervise services.
+    v2 = (b'#!/bin/sh\necho "hello-v2 $GIZLET_APP_ID"\n', 0o755)
+    for kind, app_id in (("app", "dev.gizlet.test-v2"), ("service", "dev.gizlet.test-service")):
+        v2_manifest = dict(manifest, schema=2, kind=kind, id=app_id, entry="bin/hello.sh")
+        send(console, gzl({"manifest.json": (json.dumps(v2_manifest).encode(), 0o644), "bin/hello.sh": v2}), f"/tmp/{kind}.gzl")
+    console.enter("gizlet install /tmp/app.gzl")
+    console.expect(b"\r\ninstalled dev.gizlet.test-v2 0.1.0 (Hello) in /opt/gizlet/apps/dev.gizlet.test-v2")
+    console.expect(PROMPT)
+    console.enter("gizlet run dev.gizlet.test-v2")
+    console.expect(b"\r\nhello-v2 dev.gizlet.test-v2\r\n")
+    console.expect(PROMPT)
+    console.enter("gizlet install /tmp/service.gzl; echo status-$?")
+    console.expect(b"dev.gizlet.test-service is a service; this version of Gizlet OS installs apps only")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    console.enter("gizlet list | cut -f1 | sort | tr '\\n' ' '; echo")
+    console.expect(b"\r\ndev.gizlet.test-hello dev.gizlet.test-v2 \r\n")
+    console.expect(PROMPT)
+    console.command("gizlet uninstall dev.gizlet.test-v2 --saves")
     console.enter("gizlet uninstall dev.gizlet.test-hello && cat /opt/gizlet/saves/dev.gizlet.test-hello/kept")
     console.expect(b"\r\nremoved dev.gizlet.test-hello; its saves stay")
     console.expect(b"\r\nkept\r\n")
@@ -335,7 +355,7 @@ def check_apps(console):
     # Nothing is left but the lock files: no staging, removal or backup folders.
     console.expect(b"\r\n0\r\n0\r\n")
     console.expect(PROMPT)
-    print("gizlet installs, lists, runs and removes a .gzl app and refuses one that fails its checksums")
+    print("gizlet installs, lists, runs and removes schema 1 and 2 .gzl apps, and refuses a service and one that fails its checksums")
 
 
 def install_launcher_updates(console, pack_release):
