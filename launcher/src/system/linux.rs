@@ -122,19 +122,49 @@ impl Level for SysfsBacklight {
 
 struct Amixer {
     control: String,
-    /// The control reports decibels, so the level is set along them.
-    db: bool,
+    /// The decibels the volume runs along, from the control's range; without
+    /// one, it is set by percentage.
+    curve: Option<Curve>,
+}
+
+/// Equal steps in decibels sound equally large: 0 is silent, and above it the
+/// level runs evenly from `top - span` to `top`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Curve {
+    top: f32,
+    span: f32,
+}
+
+impl Curve {
+    /// Full volume stays this far below the control's maximum: the R36S's
+    /// speaker distorts at its 0 dB.
+    const HEADROOM_DB: f32 = 10.0;
+    /// The widest range used. The R36S's `Master` spans 95 dB, half of it
+    /// too quiet to hear.
+    const SPAN_DB: f32 = 40.0;
+    /// A narrower usable range is set by percentage instead.
+    const MIN_SPAN_DB: f32 = 12.0;
+
+    /// The curve for a control from `min` to `max` dB.
+    fn new(min: f32, max: f32) -> Option<Curve> {
+        let top = max - Curve::HEADROOM_DB;
+        let span = Curve::SPAN_DB.min(top - min);
+        (span >= Curve::MIN_SPAN_DB).then_some(Curve { top, span })
+    }
+
+    /// The decibels for a 0–1 level, or None for silence at 0.
+    fn db(self, value: f32) -> Option<f32> {
+        (value > 0.0).then(|| self.top - self.span * (1.0 - value.min(1.0)))
+    }
+
+    /// The 0–1 level for decibels; louder than the top reads as 1.
+    fn level(self, db: f32) -> f32 {
+        (1.0 - (self.top - db) / self.span).clamp(0.0, 1.0)
+    }
 }
 
 impl Amixer {
     const PREFERRED: [&'static str; 6] = ["Master", "Playback", "PCM", "Speaker", "Headphone", "DAC"];
-    /// The loudest level, below the control's full scale: the R36S's speaker
-    /// distorts at 0 dB.
-    const MAX_DB: f32 = -10.0;
-    /// The decibels from the quietest audible level to the loudest. Equal
-    /// steps in decibels sound equally large, where the R36S's raw scale
-    /// spends half its range below -47 dB, which cannot be heard.
-    const SPAN_DB: f32 = 40.0;
 
     fn detect() -> Result<Amixer, Missing> {
         let cards = read_trim(Path::new("/proc/asound/cards")).unwrap_or_default();
@@ -152,8 +182,11 @@ impl Amixer {
             .or_else(|| names.first())
             .cloned()
             .ok_or(Missing::NoHardware)?;
-        let db = run("amixer", &["sget", &control]).is_ok_and(|out| bracket(&out, "dB]").is_some());
-        Ok(Amixer { control, db })
+        let curve = [format!("name={control} Playback Volume"), format!("name={control} Volume")]
+            .iter()
+            .find_map(|id| run("amixer", &["cget", id]).ok().and_then(|out| db_range(&out)))
+            .and_then(|(min, max)| Curve::new(min, max));
+        Ok(Amixer { control, curve })
     }
 }
 
@@ -162,31 +195,38 @@ fn bracket(out: &str, suffix: &str) -> Option<f32> {
     out.split('[').find_map(|p| p.split_once(suffix).map(|(n, _)| n)).and_then(|n| n.parse().ok())
 }
 
-/// The decibels for a 0–1 level, or None for silence at 0.
-fn level_db(value: f32) -> Option<f32> {
-    (value > 0.0).then(|| Amixer::MAX_DB - Amixer::SPAN_DB * (1.0 - value.min(1.0)))
-}
-
-/// The 0–1 level for decibels; louder than [`Amixer::MAX_DB`] reads as 1.
-fn db_level(db: f32) -> f32 {
-    (1.0 - (Amixer::MAX_DB - db) / Amixer::SPAN_DB).clamp(0.0, 1.0)
+/// A control's decibel range from `amixer cget`: its `dBminmax`, `dBlinear`
+/// or `dBscale` line, the last with the raw range from the type line.
+fn db_range(out: &str) -> Option<(f32, f32)> {
+    let field = |line: &str, key: &str| -> Option<f32> {
+        let rest = &line[line.find(key)? + key.len()..];
+        rest.split(|c| c == ',' || c == ' ').next()?.trim_end_matches("dB").parse().ok()
+    };
+    let db = out.lines().find(|l| l.contains("| dB"))?;
+    let min = field(db, "-min=")?;
+    if db.contains("dBscale-") {
+        let raw = out.lines().find(|l| l.contains("type=INTEGER"))?;
+        let steps = field(raw, ",max=")? - field(raw, ",min=")?;
+        return Some((min, min + field(db, ",step=")? * steps));
+    }
+    Some((min, field(db, ",max=")?))
 }
 
 impl Level for Amixer {
     fn get(&mut self) -> Option<f32> {
         let out = run("amixer", &["sget", &self.control]).ok()?;
         let pct = bracket(&out, "%]")?;
-        match bracket(&out, "dB]") {
-            Some(_) if pct == 0.0 => Some(0.0),
-            Some(db) if self.db => Some(db_level(db)),
+        match (self.curve, bracket(&out, "dB]")) {
+            (Some(_), Some(_)) if pct == 0.0 => Some(0.0),
+            (Some(curve), Some(db)) => Some(curve.level(db)),
             _ => Some(pct / 100.0),
         }
     }
     fn set(&mut self, value: f32) -> Result<(), String> {
-        let level = match level_db(value) {
-            Some(db) if self.db => format!("{db:.2}dB"),
-            Some(_) => format!("{}%", (value * 100.0).round() as u32),
-            None => "0%".into(),
+        let level = match self.curve {
+            _ if value <= 0.0 => "0%".into(),
+            Some(curve) => format!("{:.2}dB", curve.db(value).unwrap_or(curve.top)),
+            None => format!("{}%", (value * 100.0).round() as u32),
         };
         run("amixer", &["-q", "--", "sset", &self.control, &level]).map(|_| ())
     }
@@ -592,19 +632,34 @@ mod tests {
         assert_eq!(bracket(out, "%]"), Some(70.0));
         assert_eq!(bracket(out, "dB]"), Some(-28.69));
         assert_eq!(bracket("Front Left: Playback 3 [5%]", "dB]"), None);
-        assert_eq!(level_db(0.0), None, "0 is silent");
-        assert_eq!(level_db(1.0), Some(Amixer::MAX_DB), "full volume leaves headroom");
-        assert_eq!(level_db(0.5), Some(-30.0));
+
+        // The R36S's Master.
+        let r36s = "numid=2,iface=MIXER,name='Master Playback Volume'\n  ; type=INTEGER,access=rw---R--,values=2,min=0,max=255,step=0\n  : values=178,178\n  | dBminmax-min=-95.00dB,max=0.00dB\n";
+        assert_eq!(db_range(r36s), Some((-95.0, 0.0)));
+        let scale = "  ; type=INTEGER,access=rw---R--,values=2,min=0,max=63,step=0\n  | dBscale-min=-46.50dB,step=0.75dB,mute=1\n";
+        assert_eq!(db_range(scale), Some((-46.5, 0.75)));
+        assert_eq!(db_range("  ; type=INTEGER,access=rw------,values=2,min=0,max=31,step=0\n"), None);
+
+        let curve = Curve::new(-95.0, 0.0).unwrap();
+        assert_eq!(curve, Curve { top: -10.0, span: 40.0 }, "full volume leaves headroom");
+        assert_eq!(curve.db(0.0), None, "0 is silent");
+        assert_eq!(curve.db(0.5), Some(-30.0));
         for step in 1..=20 {
             let v = step as f32 / 20.0;
-            assert!((db_level(level_db(v).unwrap()) - v).abs() < 1e-5, "{v} round-trips");
+            assert!((curve.level(curve.db(v).unwrap()) - v).abs() < 1e-5, "{v} round-trips");
             // amixer sets the nearest of the R36S's 0.37 dB steps: the slider still shows the same percent.
             for off in [-0.18, 0.18] {
-                assert_eq!((db_level(level_db(v).unwrap() + off) * 100.0).round(), (v * 100.0).round(), "{v} {off}");
+                assert_eq!((curve.level(curve.db(v).unwrap() + off) * 100.0).round(), (v * 100.0).round(), "{v} {off}");
             }
         }
-        assert_eq!(db_level(0.0), 1.0, "louder than the limit, as set over ssh");
-        assert_eq!(db_level(-95.0), 0.0);
+        assert_eq!(curve.level(0.0), 1.0, "louder than the top, as set over ssh");
+        assert_eq!(curve.level(-95.0), 0.0);
+
+        // A narrower control keeps its lowest step above its minimum, so a step up from silence holds.
+        let narrow = Curve::new(-30.0, 0.0).unwrap();
+        assert_eq!(narrow, Curve { top: -10.0, span: 20.0 });
+        assert!(narrow.db(0.05).unwrap() > -30.0);
+        assert_eq!(Curve::new(-15.0, 0.0), None, "too narrow: by percentage");
     }
 
     #[test]
