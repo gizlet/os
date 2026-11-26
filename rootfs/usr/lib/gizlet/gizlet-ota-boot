@@ -104,6 +104,7 @@ supervise() {
 run() {
     legacy=$1
     legacy_version=$2
+    rm -f "$trial" "$healthy"
     current=$(pointer current || :)
     pending=$(pointer pending || :)
     if [ -n "$pending" ]; then
@@ -113,11 +114,14 @@ run() {
             rm -f "$store/pending" "$store/attempt"
             sync -f "$store"
         elif [ "$pending" = "$attempt" ]; then
+            rm -f "$launcher" "$runtime"
+            if mountpoint -q "$store/$pending/root"; then
+                umount "$store/$pending/root" || :
+            fi
             rollback "$pending"
         else
             set_pointer attempt "$pending"
             if mount_candidate "$pending"; then
-                rm -f "$healthy"
                 ln -sfnT -- "$pending" "$trial"
                 status=0
                 "$launcher/start" || status=$?

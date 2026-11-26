@@ -544,6 +544,15 @@ echo custom-entry-uses-ota
         console.expect(b"\r\nRolled back: v2.0.1\r\nv2.0.0\r\npersistent-user-file\r\nkept\r\n"
                        b"America/New_York\r\nota-runtime-in-use\r\n")
         console.expect(PROMPT)
+        console.command("store=/opt/gizlet/ota && set -- \"$store\"/v2.0.1.* && "
+                        "candidate=${1##*/} && test -d \"$1\" && "
+                        "ln -s \"$candidate\" \"$store/pending\" && "
+                        "ln -s \"$candidate\" \"$store/attempt\" && "
+                        "ln -s \"$candidate\" /run/gizlet-ota-trial")
+        console.enter("exit")
+        console.expect(b"update v2.0.1 rolled back")
+        console.expect(b"\r\nota-confirmed\r\n")
+        console.expect(PROMPT)
         console.enter("/usr/lib/gizlet/gizlet-ota-boot restore 2.1.0 && "
                       "test ! -L /run/gizlet-ota-launcher && test -L /run/gizlet-ota-runtime && "
                       "echo newer-factory-launcher-selected")
