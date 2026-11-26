@@ -3,10 +3,12 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.sh | bash
 #
-# It asks for a language, the handheld's panel and the card's disk, downloads
-# the matching image from the latest release and checks its SHA-256, then
-# writes the card. A card that already has Gizlet OS can be updated: only its
-# boot and system partitions are written, and the data partition, with the
+# It asks for a language and the card's disk, and for the handheld's panel
+# unless the card tells: a stock card's kernel dtb names the panel's
+# controller, and a Gizlet OS card keeps the overlay it was written with. It
+# downloads the matching image from the latest release and checks its SHA-256,
+# then writes the card. A card that already has Gizlet OS can be updated: only
+# its boot and system partitions are written, and the data partition, with the
 # installed programs, saves, Wi-Fi networks and settings, is kept. Otherwise
 # everything on the card is erased, which takes three confirmations: the disk
 # number, a yes, and the disk's name typed out.
@@ -50,11 +52,13 @@ main() {
         Linux) os=linux ;;
         *) die "$(m "unsupported system $(uname -s); on Windows use flash.ps1" "不支持 $(uname -s)；Windows 请用 flash.ps1")" ;;
     esac
-    choose_panel
     find_disks
     [ -z "${dry_run}" ] || exit 0
     choose_disk
     choose_mode
+    work=$(mktemp -d)
+    trap 'rm -rf "${work}"' EXIT
+    choose_panel
     if [ "${mode}" = update ]; then confirm_update; else confirm_erase; fi
     get_image
     write_card
@@ -91,15 +95,41 @@ choose_language() {
     case "${lang}" in en | zh) ;; *) say 'error: --lang must be en or zh'; exit 1 ;; esac
 }
 
+# panel_label PANEL: the panel as the questions name it, by its number in the
+# stock firmware and its controller.
+panel_label() {
+    case "$1" in
+        v30-panel4) m 'Panel 4 (NV3051D)' 'Panel 4（NV3051D）' ;;
+        original) m 'Panel 0 (ST7703)' 'Panel 0（ST7703）' ;;
+    esac
+}
+
+# The panel comes from --panel, then from the chosen card, then from the user.
+# A stock card tells for certain, so the question is skipped. A Gizlet OS card
+# only tells what it was written with, which may be the wrong panel being
+# fixed, so it becomes the question's default.
 choose_panel() {
+    local default=1 answer
     if [ -z "${panel}" ]; then
+        card_panel
+        if [ "${found_on}" = stock ]; then
+            panel=${found}
+            say ''
+            say "$(m "The stock card's kernel dtb is for $(panel_label "${panel}"); the image for it will be written." "原厂卡的内核 dtb 对应 $(panel_label "${panel}")，将写入对应的镜像。")"
+            say "$(m 'If the screen stays black after boot, run this again and choose the other panel.' '如果开机后屏幕一直黑屏，重新运行并选择另一种屏幕。')"
+        fi
+    fi
+    if [ -z "${panel}" ]; then
+        [ "${found}" != original ] || default=2
         say ''
         say "$(m 'Gizlet OS for the R36S. Which screen does the handheld have?' 'R36S 的 Gizlet OS。掌机是哪种屏幕？')"
-        say "$(m '  1) V30 board with Panel 4 (most current units)' '  1) V30 主板 + Panel 4（目前大多数机器）')"
-        say "$(m '  2) Original panel (ST7703, Panel 0)' '  2) 原版屏幕（ST7703，Panel 0）')"
-        say "$(m 'If the screen stays black after boot, write the card again with the other choice.' '如果开机后屏幕一直黑屏，换另一个选项重新写卡。')"
-        case "$(ask "$(m 'Panel [1]: ' '屏幕 [1]：')")" in
-            '' | 1) panel=v30-panel4 ;;
+        [ -z "${found}" ] || say "$(m "This card was written for $(panel_label "${found}")." "这张卡上次写入的是 $(panel_label "${found}")。")"
+        say "  1) $(panel_label v30-panel4)$(m ': V30 boards and most current units' '：V30 主板和目前大多数机器')"
+        say "  2) $(panel_label original)$(m ': earlier units' '：较早的机器')"
+        say "$(m 'Writing over the stock card finds this by itself. If the screen stays black after boot, write the card again with the other choice.' '直接写原厂卡时会自动识别。如果开机后屏幕一直黑屏，换另一个选项重新写卡。')"
+        answer=$(ask "$(m "Panel [${default}]: " "屏幕 [${default}]：")")
+        case "${answer:-${default}}" in
+            1) panel=v30-panel4 ;;
             2) panel=original ;;
             *) die "$(m 'answer 1 or 2' '请输入 1 或 2')" ;;
         esac
@@ -110,6 +140,91 @@ choose_panel() {
         *) die "$(m "unknown panel ${panel}" "未知屏幕 ${panel}")" ;;
     esac
 }
+
+# card_panel: found is the panel the chosen card was made for, and found_on
+# is stock or gizlet; both stay empty when the card does not tell. A stock
+# card's boot.ini loads the kernel dtb that describes the unit. A Gizlet OS
+# card has mipi-panel.dtbo, a copy of one of the r36s-*.dtbo beside it, when
+# it was written for a panel other than Panel 0. Nothing here stops the
+# script: a card that cannot be read leaves the question to the user.
+card_panel() {
+    local names name p f
+    found='' found_on=''
+    boot_readable || return 0
+    if has_gizlet_boot "${disk}"; then
+        if [ ! -e "${boot_dir}/mipi-panel.dtbo" ]; then
+            found=original
+        else
+            for f in "${boot_dir}"/r36s-*.dtbo; do
+                if [ -f "${f}" ] && cmp -s "${f}" "${boot_dir}/mipi-panel.dtbo"; then
+                    f=${f##*/r36s-}
+                    found=${f%.dtbo}
+                fi
+            done
+        fi
+        found_on=gizlet
+    elif [ -f "${boot_dir}/boot.ini" ]; then
+        # Every dtb it loads at ${dtb_loadaddr} must name the same panel.
+        names=$(sed 's/\r$//' "${boot_dir}/boot.ini" | awk '($1 == "load" || $1 == "fatload") && $4 ~ /dtb_loadaddr/ {print $5}') || names=''
+        for name in ${names}; do
+            case "${name}" in .* | *[!A-Za-z0-9._-]*) p='' ;; *) p=$(panel_of_dtb "${boot_dir}/${name}") ;; esac
+            if [ -z "${p}" ] || { [ -n "${found}" ] && [ "${found}" != "${p}" ]; }; then
+                found=''
+                break
+            fi
+            found=${p}
+        done
+        found_on=stock
+    fi
+    case "${found}" in v30-panel4 | original) ;; *) found='' found_on='' ;; esac
+    release_boot
+}
+
+# panel_of_dtb FILE: v30-panel4 or original for a kernel dtb, by the first
+# command of its DSI panel's panel-init-sequence, in Rockchip's format (type,
+# delay, length, payload) right after the property's 12-byte header:
+# NV3051D's page select FF 30, FF 52, FF 01 is Panel 4, and ST7703's SETEXTC
+# B9 F1 12 83 is Panel 0. Nothing for another panel, or for the R36S Plus,
+# whose ST7703 sequence starts with a sleep-out. The hex goes through a file:
+# grep -q closing a pipe early would end the script under pipefail.
+panel_of_dtb() {
+    local hex=${work}/dtb.hex nv='' st=''
+    [ -f "$1" ] || return 0
+    { printf ' '; od -An -tx1 -v "$1" | tr '\n' ' ' | tr -s ' '; printf ' '; } > "${hex}" 2>/dev/null || return 0
+    grep -qE ' 00 00 00 03( [0-9a-f]{2}){8} 15 00 02 ff 30 15 00 02 ff 52 15 00 02 ff 01 ' "${hex}" && nv=yes
+    grep -qE ' 00 00 00 03( [0-9a-f]{2}){8} 39 00 04 b9 f1 12 83 ' "${hex}" && st=yes
+    case "${nv}${st}" in
+        yes) [ -n "${nv}" ] && echo v30-panel4 || echo original ;;
+    esac
+    return 0
+}
+
+# boot_readable: boot_dir is the chosen card's partition 1, its FAT boot
+# partition, as it is mounted or else mounted read-only here; release_boot
+# unmounts what was mounted here. Fails when there is no such partition or it
+# cannot be mounted.
+boot_readable() {
+    local where
+    mounted_here=''
+    part=$(boot_partition)
+    if [ "${os}" = mac ]; then
+        where=$(diskutil info "${part}" 2>/dev/null) || return 1
+        case "${where}" in *'File System Personality:'*FAT*) ;; *) return 1 ;; esac
+        where=$(printf '%s\n' "${where}" | sed -n 's/^ *Mount Point: *//p')
+    else
+        [ -b "${part}" ] && [ "$(lsblk -no FSTYPE "${part}" 2>/dev/null)" = vfat ] || return 1
+        where=$(lsblk -no MOUNTPOINT "${part}" 2>/dev/null) || where=''
+        where=${where%%$'\n'*}
+    fi
+    if [ -n "${where}" ] && [ -d "${where}" ]; then
+        boot_dir=${where}
+        return 0
+    fi
+    [ "${os}" = mac ] || [ "$(id -u)" = 0 ] || say "$(m 'Reading the card for its panel needs administrator rights (sudo); enter your computer password if asked.' '读取卡上的屏幕信息需要管理员权限（sudo），如有提示请输入电脑的登录密码。')"
+    mount_boot ro || return 1
+    mounted_here=yes
+}
+release_boot() { [ -z "${mounted_here}" ] || unmount_boot >/dev/null 2>&1 || true; }
 
 # disk_bytes DEVICE: the size of a whole disk in bytes.
 disk_bytes() {
@@ -304,8 +419,6 @@ confirm_erase() {
 # Downloads and verifies the image, and decompresses it before the card is
 # touched: a raw disk takes whole sectors, which a pipe does not guarantee.
 get_image() {
-    work=$(mktemp -d)
-    trap 'rm -rf "${work}"' EXIT
     if [ -n "${image}" ]; then
         [ -f "${image}" ] || die "$(m "no such file ${image}" "文件不存在：${image}")"
     else

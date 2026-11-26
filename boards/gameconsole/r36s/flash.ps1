@@ -3,10 +3,12 @@
 # In PowerShell opened as Administrator:
 #   irm https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.ps1 | iex
 #
-# It asks for a language, the handheld's panel and the card's disk, downloads
-# the matching image from the latest release and checks its SHA-256, then
-# writes the card. A card that already has Gizlet OS can be updated: only its
-# boot and system partitions are written, and the data partition, with the
+# It asks for a language and the card's disk, and for the handheld's panel
+# unless the card tells: a stock card's kernel dtb names the panel's
+# controller, and a Gizlet OS card keeps the overlay it was written with. It
+# downloads the matching image from the latest release and checks its SHA-256,
+# then writes the card. A card that already has Gizlet OS can be updated: only
+# its boot and system partitions are written, and the data partition, with the
 # installed programs, saves, Wi-Fi networks and settings, is kept. Otherwise
 # everything on the card is erased, which takes three confirmations: the disk
 # number, a yes, and the disk's name typed out.
@@ -245,6 +247,61 @@ function Get-BootDrive([int]$number) {
     $null
 }
 
+# v30-panel4 or original for the kernel dtb at $path, by the first command of
+# its DSI panel's panel-init-sequence, in Rockchip's format (type, delay,
+# length, payload) right after the property's 12-byte header: NV3051D's page
+# select FF 30, FF 52, FF 01 is Panel 4, and ST7703's SETEXTC B9 F1 12 83 is
+# Panel 0. $null for another panel, or for the R36S Plus, whose ST7703
+# sequence starts with a sleep-out. As panel_of_dtb in flash.sh.
+function Get-DtbPanel([string]$path) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $hex = [BitConverter]::ToString([IO.File]::ReadAllBytes($path))
+    $nv = $hex -match '00-00-00-03(-[0-9A-F]{2}){8}-15-00-02-FF-30-15-00-02-FF-52-15-00-02-FF-01'
+    $st = $hex -match '00-00-00-03(-[0-9A-F]{2}){8}-39-00-04-B9-F1-12-83'
+    if ($nv -and -not $st) { 'v30-panel4' } elseif ($st -and -not $nv) { 'original' } else { $null }
+}
+
+# The panel the card in disk $number was made for, as @(panel, 'stock') or
+# @(panel, 'gizlet'); $null when the card does not tell. A stock card's
+# boot.ini loads the kernel dtb that describes the unit. A Gizlet OS card has
+# mipi-panel.dtbo, a copy of one of the r36s-*.dtbo beside it, when it was
+# written for a panel other than Panel 0. As card_panel in flash.sh.
+function Get-CardPanel([int]$number, [bool]$gizlet) {
+    try {
+        $volume = Get-Partition -DiskNumber $number -PartitionNumber 1 -ErrorAction Stop | Get-Volume -ErrorAction Stop
+        if ($volume.FileSystem -notmatch 'FAT') { return $null }
+        $drive = Get-BootDrive $number
+        if (-not $drive) { return $null }
+        if ($gizlet) {
+            $mipi = "$drive\mipi-panel.dtbo"
+            if (-not (Test-Path -LiteralPath $mipi -PathType Leaf)) { return , @('original', 'gizlet') }
+            $bytes = [IO.File]::ReadAllBytes($mipi)
+            foreach ($file in @(Get-ChildItem -LiteralPath "$drive\" -Filter 'r36s-*.dtbo' -File)) {
+                $other = [IO.File]::ReadAllBytes($file.FullName)
+                if ($other.Length -eq $bytes.Length -and [BitConverter]::ToString($other) -eq [BitConverter]::ToString($bytes)) {
+                    $panel = $file.Name -replace '^r36s-', '' -replace '\.dtbo$', ''
+                    if ($panel -eq 'v30-panel4') { return , @($panel, 'gizlet') }
+                }
+            }
+            return $null
+        }
+        $ini = "$drive\boot.ini"
+        if (-not (Test-Path -LiteralPath $ini -PathType Leaf)) { return $null }
+        # Every dtb it loads at ${dtb_loadaddr} must name the same panel.
+        $found = $null
+        foreach ($line in Get-Content -LiteralPath $ini) {
+            $f = -split $line
+            if ($f.Count -lt 5 -or $f[0] -notin 'load', 'fatload' -or $f[3] -notmatch 'dtb_loadaddr') { continue }
+            if ($f[4] -notmatch '^[A-Za-z0-9_-][A-Za-z0-9._-]*$') { return $null }
+            $panel = Get-DtbPanel "$drive\$($f[4])"
+            if (-not $panel -or ($found -and $found -ne $panel)) { return $null }
+            $found = $panel
+        }
+        if ($found) { return , @($found, 'stock') }
+    } catch { }
+    $null
+}
+
 # Files of the user's own on the boot partition that an update keeps: the ssh
 # public keys, and a setup file not yet imported.
 $GizletBootFiles = 'authorized_keys', 'setup.ini'
@@ -381,26 +438,6 @@ function Update-Card([string]$raw, $disk) {
         [Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { throw (M 'Open PowerShell as Administrator and run this again.' '请以管理员身份打开 PowerShell 后重新运行。') }
 
-    # --- panel
-    $panel = $env:GIZLET_PANEL
-    if (-not $panel) {
-        Write-Host ''
-        Write-Host (M 'Gizlet OS for the R36S. Which screen does the handheld have?' 'R36S 的 Gizlet OS。掌机是哪种屏幕？')
-        Write-Host (M '  1) V30 board with Panel 4 (most current units)' '  1) V30 主板 + Panel 4（目前大多数机器）')
-        Write-Host (M '  2) Original panel (ST7703, Panel 0)' '  2) 原版屏幕（ST7703，Panel 0）')
-        Write-Host (M 'If the screen stays black after boot, write the card again with the other choice.' '如果开机后屏幕一直黑屏，换另一个选项重新写卡。')
-        switch (Read-Host (M 'Panel [1]' '屏幕 [1]')) {
-            { $_ -in '', '1' } { $panel = 'v30-panel4' }
-            '2' { $panel = 'original' }
-            default { throw (M 'Answer 1 or 2.' '请输入 1 或 2。') }
-        }
-    }
-    $name = switch ($panel) {
-        'v30-panel4' { 'gizlet-os-r36s-v30-panel4' }
-        'original' { 'gizlet-os-r36s' }
-        default { throw (M "Unknown panel $panel." "未知屏幕 $panel。") }
-    }
-
     # --- disks: USB or card readers, never the boot or system disk
     # Smallest first: the TF card is usually the smallest disk, and number 1 is the default.
     $disks = @(Get-Disk | Where-Object { -not $_.IsBoot -and -not $_.IsSystem -and $_.BusType -in 'USB', 'SD', 'MMC' } |
@@ -443,6 +480,49 @@ function Update-Card([string]$raw, $disk) {
         }
     }
     if ($mode -notin 'update', 'erase') { throw 'GIZLET_MODE must be update or erase.' }
+
+    # --- panel: from GIZLET_PANEL, then from the card, then from the user. A
+    # stock card tells for certain, so the question is skipped. A Gizlet OS card
+    # only tells what it was written with, which may be the wrong panel being
+    # fixed, so it becomes the question's default.
+    function PanelLabel([string]$p) {
+        switch ($p) {
+            'v30-panel4' { M 'Panel 4 (NV3051D)' 'Panel 4（NV3051D）' }
+            'original' { M 'Panel 0 (ST7703)' 'Panel 0（ST7703）' }
+        }
+    }
+    $panel = $env:GIZLET_PANEL
+    $found = $null
+    if (-not $panel) {
+        $found = Get-CardPanel $disk.Number ($label -match 'GIZLETBOOT')
+        if ($found -and $found[1] -eq 'stock') {
+            $panel = $found[0]
+            Write-Host ''
+            Write-Host ((M "The stock card's kernel dtb is for {0}; the image for it will be written." '原厂卡的内核 dtb 对应 {0}，将写入对应的镜像。') -f (PanelLabel $panel))
+            Write-Host (M 'If the screen stays black after boot, run this again and choose the other panel.' '如果开机后屏幕一直黑屏，重新运行并选择另一种屏幕。')
+        }
+    }
+    if (-not $panel) {
+        $default = if ($found -and $found[0] -eq 'original') { '2' } else { '1' }
+        Write-Host ''
+        Write-Host (M 'Gizlet OS for the R36S. Which screen does the handheld have?' 'R36S 的 Gizlet OS。掌机是哪种屏幕？')
+        if ($found) { Write-Host ((M 'This card was written for {0}.' '这张卡上次写入的是 {0}。') -f (PanelLabel $found[0])) }
+        Write-Host ('  1) ' + (PanelLabel 'v30-panel4') + (M ': V30 boards and most current units' '：V30 主板和目前大多数机器'))
+        Write-Host ('  2) ' + (PanelLabel 'original') + (M ': earlier units' '：较早的机器'))
+        Write-Host (M 'Writing over the stock card finds this by itself. If the screen stays black after boot, write the card again with the other choice.' '直接写原厂卡时会自动识别。如果开机后屏幕一直黑屏，换另一个选项重新写卡。')
+        $answer = Read-Host ((M 'Panel [{0}]' '屏幕 [{0}]') -f $default)
+        if (-not $answer) { $answer = $default }
+        switch ($answer) {
+            '1' { $panel = 'v30-panel4' }
+            '2' { $panel = 'original' }
+            default { throw (M 'Answer 1 or 2.' '请输入 1 或 2。') }
+        }
+    }
+    $name = switch ($panel) {
+        'v30-panel4' { 'gizlet-os-r36s-v30-panel4' }
+        'original' { 'gizlet-os-r36s' }
+        default { throw (M "Unknown panel $panel." "未知屏幕 $panel。") }
+    }
 
     Write-Host ''
     Write-Host ((M 'Selected:' '已选择：') + " $diskName  $label")
