@@ -378,6 +378,13 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.enter("exit")
         console.expect(b"invalid boot.ini")
         console.expect(PROMPT)
+        # An installed launcher replaced by a FIFO is installed again, without blocking.
+        console.command("rm /opt/gizlet/boot.ini && printf '%s\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
+        console.command("rm /opt/gizlet/launcher/gizlet-launcher && mkfifo /opt/gizlet/launcher/gizlet-launcher")
+        console.enter("exit")
+        console.expect(b"updated the factory launcher")
+        console.expect(b"Gizlet launcher: no display")
+        console.expect(PROMPT)
         console.command("rm /opt/gizlet/boot.ini")
         console.stop()
     print("an update keeps the data partition and brings the factory launcher up to date, with LF or CRLF boot.ini")

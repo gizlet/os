@@ -16,6 +16,10 @@ install_launcher() {
         cp "$start" /opt/gizlet/launcher/gizlet-launcher.new &&
         mv /opt/gizlet/launcher/gizlet-launcher.new /opt/gizlet/launcher/gizlet-launcher
 }
+# same_file FILE INSTALLED: INSTALLED is a regular file, not a link, with
+# FILE's contents. Anything else, a FIFO among them, which cmp would block on,
+# counts as different, and install_launcher's mv replaces it.
+same_file() { [ -f "$2" ] && [ ! -L "$2" ] && cmp -s "$1" "$2"; }
 if [ -f /run/gizlet-data.ready ] && [ -x "$factory" ] && [ -x "$start" ]; then
     if [ ! -e /opt/gizlet/boot.ini ]; then
         install_launcher &&
@@ -28,7 +32,7 @@ if [ -f /run/gizlet-data.ready ] && [ -x "$factory" ] && [ -x "$start" ]; then
     elif [ -f /opt/gizlet/boot.ini ] && [ ! -L /opt/gizlet/boot.ini ] &&
         [ "$(wc -c < /opt/gizlet/boot.ini)" -le 4096 ] &&
         sed 's/\r$//' /opt/gizlet/boot.ini | grep -qx 'entry=launcher/gizlet-launcher' &&
-        ! { cmp -s "$factory" /opt/gizlet/launcher/bin/gizlet-launcher && cmp -s "$start" /opt/gizlet/launcher/gizlet-launcher; }; then
+        ! { same_file "$factory" /opt/gizlet/launcher/bin/gizlet-launcher && same_file "$start" /opt/gizlet/launcher/gizlet-launcher; }; then
         install_launcher && sync && echo 'Gizlet OS: updated the factory launcher'
     fi
 fi
