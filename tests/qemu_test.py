@@ -275,6 +275,12 @@ def send(console, data, path):
 
 def check_apps(console):
     """Installs, lists, runs and removes an app with the gizlet command, and refuses a tampered package."""
+    console.enter("gizlet")
+    console.expect(b"usage: gizlet <command>")
+    console.expect(PROMPT)
+    console.enter("/opt/gizlet/launcher/bin/cli target")
+    console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\n")
+    console.expect(PROMPT)
     manifest = ('id = "dev.gizlet.test-hello"\nname = "Hello"\nversion = "0.1.0"\ntier = "lite"\n'
                 'target = "aarch64-unknown-linux-gnu"\nentry = "bin/hello"\n\n[names]\nzh-CN = "你好"\n')
     hello = (b'#!/bin/sh\necho "hello-app $GIZLET_SWAP_AB $PWD $GIZLET_SAVE_DIR"\n'
@@ -449,7 +455,7 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.stop()
     check_ssh(private, parts["boot"][1], kernel, root, work)
     # flash.sh's update rewrites the system and keeps the data partition: the
-    # user's file and time zone stay. A factory launcher entry gets the base's launcher.
+    # user's file and time zone stay. A factory launcher entry gets the base's launcher and CLI.
     subprocess.run(["bash", flash_card, "--update", flash, image, private], check=True)
     with boot(private, kernel, root) as console:
         console.expect(PROMPT)
@@ -462,12 +468,19 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.expect(b"updated the factory launcher")
         console.expect(b"Gizlet launcher: no display")
         console.expect(PROMPT)
-        # So does a boot.ini with Windows line endings, which the Booter accepts.
-        console.command("echo old > /opt/gizlet/launcher/bin/gizlet-launcher")
+        console.enter("cmp /usr/lib/gizlet/gizlet-cli /opt/gizlet/launcher/bin/cli && gizlet target")
+        console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\n")
+        console.expect(PROMPT)
+        # A card from before the standalone CLI is repaired even when the
+        # launcher itself is already current. CRLF boot.ini also counts.
+        console.command("rm /opt/gizlet/launcher/bin/cli")
         console.command("printf '%s\\r\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
         console.enter("exit")
         console.expect(b"updated the factory launcher")
         console.expect(b"Gizlet launcher: no display")
+        console.expect(PROMPT)
+        console.enter("cmp /usr/lib/gizlet/gizlet-cli /opt/gizlet/launcher/bin/cli && gizlet target")
+        console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\n")
         console.expect(PROMPT)
         # A boot.ini that is a FIFO is refused, without blocking the session.
         console.command("rm /opt/gizlet/boot.ini && mkfifo /opt/gizlet/boot.ini")
@@ -483,7 +496,7 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.expect(PROMPT)
         console.command("rm /opt/gizlet/boot.ini")
         console.stop()
-    print("an update keeps the data partition and brings the factory launcher up to date, with LF or CRLF boot.ini")
+    print("an update keeps the data partition and refreshes the factory launcher and CLI, with LF or CRLF boot.ini")
     # A card missing its data partition must not pick a valid data volume on another disk.
     # The second disk is the real, populated data partition as a standalone virtual disk.
     index, offset, size = parts["data"]

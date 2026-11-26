@@ -53,11 +53,10 @@ ROOTFS_EXECUTABLES = {
     "//rootfs:usr/lib/gizlet/gizlet-switch": "usr/lib/gizlet/gizlet-switch",
     "//rootfs:usr/lib/gizlet/gizlet-var": "usr/lib/gizlet/gizlet-var",
     "//rootfs:usr/lib/gizlet/save-boot-log": "usr/lib/gizlet/save-boot-log",
-    # Installs, lists, runs and removes apps with the installed launcher.
-    "//rootfs:usr/bin/gizlet": "usr/bin/gizlet",
     # The launcher runs against Gizlet runtime 1 (its raylib, Mesa and glibc)
-    # through its start script; the Booter is static.
+    # through its start script; the CLI uses the base system's loader.
     "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",
+    "//launcher:gizlet-cli": "usr/lib/gizlet/gizlet-cli",
     "//launcher:start.sh": "usr/lib/gizlet/gizlet-launcher-start",
     "//session:booter": "usr/lib/gizlet/gizlet-booter",
     # Follows the headphone jack; static, like the Booter.
@@ -86,7 +85,10 @@ ROOTFS_ENABLE = [
 # The read-only base cannot change /etc/localtime, so it points into /run, where
 # `gizlet-switch apply-timezone` links the zone chosen in the launcher at boot
 # (gizlet-data.service). Until then, or without a data partition, it is UTC.
-ROOTFS_SYMLINKS = {"etc/localtime": "/run/gizlet-localtime"}
+ROOTFS_SYMLINKS = {
+    "etc/localtime": "/run/gizlet-localtime",
+    "usr/bin/gizlet": "/opt/gizlet/launcher/bin/cli",
+}
 
 # Started by gizlet-switches.service when turned on in the launcher, not by
 # default. Debian enables sshd. systemd-resolved, which would otherwise start

@@ -4,7 +4,7 @@
 #
 # Apps get the screen in turn: to start one, the launcher writes its ID to
 # /run/gizlet-launch and quits (so does `gizlet start ID` over ssh). This
-# script then runs the app with `gizlet-launcher run ID` and starts the
+# script then runs the app with `bin/cli run ID` and starts the
 # launcher again when it exits. Without a request, the launcher's exit ends
 # the entry, as Power → Quit the Launcher does. While an app runs, holding
 # Home (FN) for a second or Select+Start for two ends it.
@@ -20,8 +20,9 @@ case $0 in
 esac
 run=/opt/gizlet/runtime/1/bin/gizlet-run
 launcher=$dir/bin/gizlet-launcher
+cli=$dir/bin/cli
 request=/run/gizlet-launch
-# Options and subcommands, such as --probe, pass straight through.
+# Options such as --probe pass straight through.
 [ $# -eq 0 ] || exec "$run" "$launcher" "$@"
 printf '\033[2J\033[H\033[?25l' 2>/dev/null > /dev/tty1 || :
 while :; do
@@ -32,6 +33,6 @@ while :; do
     id=$(head -n 1 "$request")
     rm -f "$request"
     echo "Gizlet launcher: starting $id"
-    "$run" "$launcher" run "$id"
+    "$cli" run "$id"
     echo "Gizlet launcher: $id finished with status $?"
 done

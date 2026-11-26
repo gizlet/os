@@ -10,11 +10,12 @@ exports_files([
 
 # The Gizlet launcher for the card: home, settings and the button test. It
 # links Gizlet runtime 1's raylib, and start.sh runs it against the runtime.
-# The card installs both as the boot entry of a fresh data partition (see
+# The card installs the launcher, its CLI and start.sh together (see
 # rootfs/usr/lib/gizlet/boot-session). On a computer, `cargo run` in this
 # directory opens it in a window.
 gizlet_launcher(
     name = "gizlet-launcher",
+    cli = "gizlet-cli",
     srcs = [
         "Cargo.lock",
         "Cargo.toml",

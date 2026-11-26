@@ -1,5 +1,5 @@
 //! `gizlet`: installs, lists, runs and removes apps from the shell. On Gizlet
-//! OS `/usr/bin/gizlet` runs these subcommands of the launcher's program.
+//! OS `/usr/bin/gizlet` points to the CLI installed alongside the launcher.
 
 use crate::apps::{self, Library};
 use crate::settings::{self, Settings};
@@ -19,11 +19,11 @@ usage: gizlet <command>
 Apps live in <prefix>/apps/<ID>, their saves in <prefix>/saves/<ID>; the
 prefix is /opt/gizlet on Gizlet OS, or GIZLET_PREFIX.";
 
-/// Runs `args` if they name a subcommand, returning its exit status.
-pub fn main(args: &[String]) -> Option<i32> {
-    let (command, rest) = args.split_first()?;
+/// Runs a subcommand and returns its exit status.
+pub fn main(args: &[String]) -> i32 {
+    let (command, rest) = args.split_first().map_or(("help", &[][..]), |(command, rest)| (command.as_str(), rest));
     let library = Library::open();
-    let status = match (command.as_str(), rest) {
+    let status = match (command, rest) {
         ("help" | "--help" | "-h", _) => {
             println!("{USAGE}");
             Ok(())
@@ -46,15 +46,18 @@ pub fn main(args: &[String]) -> Option<i32> {
         ("install" | "uninstall" | "remove" | "list" | "run" | "start" | "target", _) => {
             Err(format!("wrong arguments for {command}\n{USAGE}"))
         }
-        _ => return None,
+        _ => {
+            eprintln!("gizlet: unknown command {command}\n{USAGE}");
+            return 2;
+        }
     };
-    Some(match status {
+    match status {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("gizlet: {e}");
             1
         }
-    })
+    }
 }
 
 fn install(library: &Library, file: &Path) -> Result<(), String> {

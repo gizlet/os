@@ -5,10 +5,15 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
+default-run = "gizlet-launcher"
 
 [[bin]]
 name = "gizlet-launcher"
 path = "src/main.rs"
+
+[[bin]]
+name = "gizlet-cli"
+path = "src/cli_main.rs"
 
 [features]
 # Gizlet OS: link the software-rendered DRM raylib built for the card (see

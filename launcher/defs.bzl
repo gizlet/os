@@ -21,8 +21,8 @@ def _gizlet_launcher_impl(ctx):
         ctx,
         root_disk = ctx.file._rootfs,
         inputs = inputs,
-        outputs = [out],
-        command = ["/bin/sh", "/in/build_card.sh", out.path.removeprefix(ctx.bin_dir.path + "/" + ctx.label.package + "/")],
+        outputs = [out, ctx.outputs.cli],
+        command = ["/bin/sh", "/in/build_card.sh", out.basename, ctx.outputs.cli.basename],
         env = {"LC_ALL": "C", "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch), "TZ": "UTC", "HOME": "/tmp"},
         cpus = 4,
         mem = 6144,
@@ -33,8 +33,9 @@ def _gizlet_launcher_impl(ctx):
 
 gizlet_launcher = rule(
     implementation = _gizlet_launcher_impl,
-    doc = "Builds the launcher's Rust crate for AArch64 Gizlet OS, linked with Gizlet runtime 1's raylib.",
+    doc = "Builds the launcher and its CLI for AArch64 Gizlet OS.",
     attrs = KRUN_ATTRS | {
+        "cli": attr.output(mandatory = True),
         "srcs": attr.label_list(mandatory = True, allow_files = True),
         "source_date_epoch": attr.int(default = 1704067200),
         "_crates": attr.label(default = Label("@launcher_crates//:vendor")),

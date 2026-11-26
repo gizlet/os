@@ -46,7 +46,7 @@ Every app can be left the same way: holding Home (the R36S's FN key) for a secon
 
 While neither holds the display, the LCD shows the kernel's text console. start.sh clears it and hides its cursor, and after boot the kernel prints only critical messages there (`/usr/lib/sysctl.d/gizlet.conf`), so a switch shows black until the app draws its first frame.
 
-`/usr/bin/gizlet` runs these commands from ssh or the recovery shell; elsewhere they are subcommands of `gizlet-launcher`, and `GIZLET_PREFIX` replaces `/opt/gizlet`. [Commands](src/cli.rs)
+On Gizlet OS, `/usr/bin/gizlet` links to `/opt/gizlet/launcher/bin/cli`. The factory install and update refresh the CLI together with the launcher. On a computer, run `cargo run --release --bin gizlet-cli -- COMMAND` from `launcher/`. Set `GIZLET_PREFIX` to choose where apps and saves live. [Commands](src/cli.rs)
 
 | Command | Does |
 | --- | --- |
@@ -71,7 +71,7 @@ Keys: arrows, Enter or K (A), Escape or J (B), I (X), U (Y), Q/E (L/R), = (Start
 ## Building for the card
 
 ```sh
-bazel build --config=r36s //launcher:gizlet-launcher
+bazel build --config=r36s //launcher:gizlet-launcher //launcher:gizlet-cli
 ```
 
 On the card the launcher draws with OpenGL ES 2 through Gizlet runtime 1's raylib and Mesa: Panfrost on the R36S's GPU, llvmpipe on the CPU where there is no GPU driver. It links the runtime's `libraylib.so` (`//runtime:raylib`, built from the same vendored raylib-sys sources as its bindings), and [start.sh](start.sh), installed as its boot entry, runs it through the runtime's `gizlet-run`. It redraws every frame. [Build](build_card.sh) · [Runtime](../runtime/README.md)
