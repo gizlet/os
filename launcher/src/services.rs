@@ -825,10 +825,14 @@ impl Library {
         self.manager().available()?;
         let mut changed = false;
         let mut errors = Vec::new();
+        let mut registered = Vec::new();
         for package in &packages {
             let unit = unit_name(package.id());
             match self.owns(&unit).and_then(|()| self.unit_text(package.id())).and_then(|text| self.manager().write_unit(&unit, Some(&text))) {
-                Ok(wrote) => changed |= wrote,
+                Ok(wrote) => {
+                    changed |= wrote;
+                    registered.push(package);
+                }
                 Err(e) => errors.push(format!("cannot register {}: {e}", package.id())),
             }
         }
@@ -842,7 +846,8 @@ impl Library {
             self.manager().reload()?;
         }
         let mut started = Vec::new();
-        for package in packages.iter().filter(|p| self.boot_flag(p.id()).exists()) {
+        // Only units written for this prefix: another prefix's unit of the same ID is not ours to start.
+        for package in registered.into_iter().filter(|p| self.boot_flag(p.id()).exists()) {
             match self.manager().start(&unit_name(package.id()), false) {
                 Ok(()) => started.push(package.id().to_string()),
                 Err(e) => errors.push(format!("cannot start {}: {e}", package.id())),
@@ -1446,6 +1451,17 @@ pub(crate) mod tests {
         other.scan();
         assert!(!other.uninstalling(A).exists());
         assert!(lib.service_runtime(A).join("control.sock").exists());
+        // After a reboot the other prefix installs the same ID first; booting this one leaves it alone.
+        drop((lib, other, _units));
+        let shared: Arc<Mutex<Units>> = Default::default();
+        let prefix = std::path::absolute(dir.join("prefix")).unwrap();
+        let lib = Library::with_manager(prefix.clone(), Box::new(Fake { services: prefix.join("services"), units: shared.clone() }), dir.join("run"));
+        let other_prefix = std::path::absolute(dir.join("other")).unwrap();
+        let other = Library::with_manager(other_prefix.clone(), Box::new(Fake { services: other_prefix.join("services"), units: shared.clone() }), dir.join("run"));
+        other.install(&service(&dir, A, "0.2.0")).unwrap();
+        other.stop_service(A).unwrap();
+        assert!(lib.boot_services().unwrap_err().contains("it is left alone"));
+        assert!(!shared.lock().unwrap().active.contains(&unit(A)), "the other prefix's stopped service stays stopped");
         let _ = fs::remove_dir_all(&dir);
     }
 
