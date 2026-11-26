@@ -33,7 +33,8 @@ impl BatterySource for SystemBattery {
             .ok_or_else(|| Missing::Error("unreadable".into()))?;
         let charge = match fields.get(1).copied() {
             Some("charging") => Charge::Charging,
-            Some("charged") | Some("finishing charge") | Some("AC attached") => Charge::Full,
+            Some("charged") | Some("finishing charge") => Charge::Full,
+            Some("AC attached") => Charge::Plugged,
             _ => Charge::Discharging,
         };
         let minutes_left = match charge {
@@ -102,7 +103,8 @@ impl BatterySource for SystemBattery {
         }
         let charge = match (s.ac_line_status, s.battery_flag & 8 != 0) {
             (_, true) => Charge::Charging,
-            (1, false) => Charge::Full,
+            (1, false) if s.battery_life_percent >= 100 => Charge::Full,
+            (1, false) => Charge::Plugged,
             _ => Charge::Discharging,
         };
         // Seconds, or u32::MAX when unknown or on AC power.

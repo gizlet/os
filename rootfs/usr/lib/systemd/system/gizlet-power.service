@@ -1,6 +1,7 @@
 [Unit]
 Description=Put the device to sleep when it is idle or on the power key
-# The timeout is in power.ini on the data partition; without it the default applies.
+# The timeouts, on battery and on external power, are in power.ini on the data
+# partition; without it the default applies.
 After=gizlet-data.service
 ConditionPathExistsGlob=/sys/class/backlight/*
 

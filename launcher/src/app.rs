@@ -104,6 +104,7 @@ pub enum ItemId {
     Brightness,
     Theme,
     SleepAfter,
+    SleepAfterCharging,
     Volume,
     BatteryPercent,
     ButtonTest,
@@ -601,7 +602,8 @@ impl App {
                     match item.as_ref().map(|i| (&i.id, &i.value)) {
                         Some((id, ItemValue::Slider(v))) => self.slide(id, *v + step * 0.05),
                         Some((ItemId::Theme, _)) => self.toggle_theme(),
-                        Some((ItemId::SleepAfter, _)) => self.cycle_sleep_after(step as i32),
+                        Some((ItemId::SleepAfter, _)) => self.cycle_sleep_after(false, step as i32),
+                        Some((ItemId::SleepAfterCharging, _)) => self.cycle_sleep_after(true, step as i32),
                         _ if a == Action::Left => self.focus.in_content = false,
                         _ => {}
                     }
@@ -686,17 +688,17 @@ impl App {
         }
     }
 
-    fn cycle_sleep_after(&mut self, step: i32) {
-        self.power.cycle(step);
+    fn cycle_sleep_after(&mut self, charging: bool, step: i32) {
+        self.power.cycle(charging, step);
         if let Err(e) = self.power.save() {
             let msg = T::Failed.fmt(self.lang(), &[&e.to_string()]);
             self.toast(msg);
         }
     }
 
-    /// The sleep choice as shown: minutes, or never.
-    pub fn sleep_after_label(&self) -> String {
-        match self.power.sleep_after {
+    /// A sleep choice as shown: minutes, or never.
+    pub fn sleep_after_label(&self, seconds: u32) -> String {
+        match seconds {
             0 => self.t(T::Never).to_string(),
             s => T::Minutes.fmt(self.lang(), &[&(s / 60).to_string()]),
         }
@@ -742,7 +744,8 @@ impl App {
             ItemId::WifiDisconnect => self.system.send(Request::WifiDisconnect),
             ItemId::WifiNetwork(ssid) => self.choose_network(ssid),
             ItemId::Theme => self.toggle_theme(),
-            ItemId::SleepAfter => self.cycle_sleep_after(1),
+            ItemId::SleepAfter => self.cycle_sleep_after(false, 1),
+            ItemId::SleepAfterCharging => self.cycle_sleep_after(true, 1),
             ItemId::BatteryPercent => {
                 self.settings.battery_percent = !self.settings.battery_percent;
                 self.save();
@@ -978,10 +981,11 @@ impl App {
                             crate::system::Charge::Charging => t(T::Charging),
                             crate::system::Charge::Full => t(T::Full),
                             crate::system::Charge::Discharging => t(T::Discharging),
+                            crate::system::Charge::Plugged => t(T::Plugged),
                         };
                         items.push(Item::info(t(T::BatteryState), state));
                         if let Some(mw) = b.power_mw {
-                            let label = if b.charging() { T::ChargePower } else { T::PowerDraw };
+                            let label = if b.charge == crate::system::Charge::Charging { T::ChargePower } else { T::PowerDraw };
                             items.push(Item::info(t(label), format!("{:.2} W", mw as f32 / 1000.0)));
                         }
                         if let Some(m) = b.minutes_left {
@@ -997,7 +1001,10 @@ impl App {
                 }
                 // Only where the device can sleep.
                 if snap.power.contains(&PowerAction::Sleep) {
-                    items.push(Item::new(ItemId::SleepAfter, t(T::SleepAfter), ItemValue::Choice(self.sleep_after_label())));
+                    let battery = self.sleep_after_label(self.power.sleep_after);
+                    let charging = self.sleep_after_label(self.power.sleep_after_charging);
+                    items.push(Item::new(ItemId::SleepAfter, t(T::SleepAfter), ItemValue::Choice(battery)));
+                    items.push(Item::new(ItemId::SleepAfterCharging, t(T::SleepAfterCharging), ItemValue::Choice(charging)));
                 }
                 items.push(Item::new(ItemId::BatteryPercent, t(T::BatteryPercent), ItemValue::Toggle(self.settings.battery_percent)));
                 // The clocks and CPU use behind the draw, refreshed with the snapshot.

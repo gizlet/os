@@ -100,7 +100,8 @@ strings! {
     ThemeLabel => "主题", "Theme";
     ThemeDark => "深色", "Dark";
     ThemeLight => "浅色", "Light";
-    SleepAfter => "自动睡眠", "Sleep After";
+    SleepAfter => "用电池时自动睡眠", "Sleep on Battery";
+    SleepAfterCharging => "充电时自动睡眠", "Sleep While Charging";
     Never => "永不", "Never";
     Minutes => "{} 分钟", "{} min";
     Volume => "音量", "Volume";
@@ -112,6 +113,7 @@ strings! {
     Charging => "正在充电", "Charging";
     Discharging => "使用电池", "On battery";
     Full => "已充满", "Fully charged";
+    Plugged => "已接电源，未充电", "Plugged in, not charging";
     PowerDraw => "功耗", "Power Draw";
     ChargePower => "充电功率", "Charging Power";
     TimeLeft => "预计可用", "Time Left";

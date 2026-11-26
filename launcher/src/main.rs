@@ -9,7 +9,8 @@
 //! Environment:
 //! - `GIZLET_WINDOW=WIDTHxHEIGHT`: the window size on desktops (default 1280x720).
 //! - `GIZLET_FULLSCREEN=1`: a borderless full-screen window.
-//! - `GIZLET_FAKE_DEVICES=1`: simulated battery, backlight, volume, Wi-Fi and ssh.
+//! - `GIZLET_FAKE_DEVICES=1`: simulated battery, backlight, volume, Wi-Fi and ssh;
+//!   with `GIZLET_FAKE_CHARGING=1` the battery charges.
 //! - `GIZLET_LAUNCHER_DATA`: the folder for settings.
 //! - `GIZLET_SCRIPT`: scripted input, see `script.rs`.
 

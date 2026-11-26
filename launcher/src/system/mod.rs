@@ -42,6 +42,8 @@ pub enum Charge {
     Charging,
     Discharging,
     Full,
+    /// On external power but not charging, as when the charger is too weak.
+    Plugged,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,8 +58,43 @@ pub struct Battery {
 }
 
 impl Battery {
+    /// On external power: charging, full or plugged in.
     pub fn charging(self) -> bool {
         self.charge != Charge::Discharging
+    }
+}
+
+/// The battery's state from its `status`. "Not charging" means external
+/// power, and the R36S's RK817 reports it, with its charger offline, while it
+/// charges: then the current flowing in decides.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn charge_state(status: Option<&str>, supply_online: bool, inflow: bool) -> Charge {
+    match status {
+        Some("Charging") => Charge::Charging,
+        Some("Full") => Charge::Full,
+        Some("Not charging") if inflow => Charge::Charging,
+        Some("Not charging") => Charge::Plugged,
+        _ if supply_online && inflow => Charge::Charging,
+        _ if supply_online => Charge::Plugged,
+        _ => Charge::Discharging,
+    }
+}
+
+#[cfg(test)]
+mod charge_tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_charge_state() {
+        assert_eq!(charge_state(Some("Charging"), false, false), Charge::Charging);
+        assert_eq!(charge_state(Some("Full"), true, false), Charge::Full);
+        // The RK817 while it charges, and with a charger too weak to.
+        assert_eq!(charge_state(Some("Not charging"), false, true), Charge::Charging);
+        assert_eq!(charge_state(Some("Not charging"), false, false), Charge::Plugged);
+        assert_eq!(charge_state(Some("Discharging"), true, true), Charge::Charging);
+        assert_eq!(charge_state(Some("Discharging"), false, false), Charge::Discharging);
+        assert_eq!(charge_state(Some("Discharging"), false, true), Charge::Discharging, "status wins without a supply");
+        assert_eq!(charge_state(None, false, false), Charge::Discharging);
     }
 }
 

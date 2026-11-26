@@ -27,6 +27,9 @@ impl BatterySource for FakeBattery {
     fn read(&mut self) -> Result<Battery, Missing> {
         let drained = (self.start.elapsed().as_secs() / 60) as u8;
         let percent = 82u8.saturating_sub(drained).max(5);
+        if std::env::var("GIZLET_FAKE_CHARGING").is_ok_and(|v| v == "1") {
+            return Ok(Battery { percent, charge: Charge::Charging, power_mw: Some(3500), minutes_left: None });
+        }
         // A 3000 mAh, 3.7 V battery at 1.6 W.
         let minutes_left = Some(percent as u32 * 30 * 37 * 60 / 16_000);
         Ok(Battery { percent, charge: Charge::Discharging, power_mw: Some(1600), minutes_left })
