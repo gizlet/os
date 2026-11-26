@@ -182,6 +182,8 @@ def main():
         "udev sets the hostname for a new network adapter"
     # Network time sets the clock; the time zone is linked under /run at boot (gizlet-switch).
     assert (systemd / "sysinit.target.wants/systemd-timesyncd.service").is_symlink(), "systemd-timesyncd is enabled"
+    assert "NTP=time.apple.com " in (root / "usr/lib/systemd/timesyncd.conf.d/gizlet.conf").read_text(), \
+        "systemd-timesyncd asks Apple's time servers"
     assert os.readlink(root / "etc/localtime") == "/run/gizlet-localtime", "/etc/localtime points into /run"
     for zone in ("Etc/UTC", "Asia/Shanghai", "America/New_York"):
         assert (root / "usr/share/zoneinfo" / zone).read_bytes()[:4] == b"TZif", f"zone {zone}"
