@@ -373,6 +373,12 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.expect(b"updated the factory launcher")
         console.expect(b"Gizlet launcher: no display")
         console.expect(PROMPT)
+        # A boot.ini that is a FIFO is refused, without blocking the session.
+        console.command("rm /opt/gizlet/boot.ini && mkfifo /opt/gizlet/boot.ini")
+        console.enter("exit")
+        console.expect(b"invalid boot.ini")
+        console.expect(PROMPT)
+        console.command("rm /opt/gizlet/boot.ini")
         console.stop()
     print("an update keeps the data partition and brings the factory launcher up to date, with LF or CRLF boot.ini")
     # A card missing its data partition must not pick a valid data volume on another disk.

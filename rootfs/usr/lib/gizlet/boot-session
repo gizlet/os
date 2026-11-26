@@ -22,8 +22,12 @@ if [ -f /run/gizlet-data.ready ] && [ -x "$factory" ] && [ -x "$start" ]; then
             printf '%s\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini.new &&
             mv /opt/gizlet/boot.ini.new /opt/gizlet/boot.ini && sync &&
             echo 'Gizlet OS: installed the factory launcher as the boot entry'
-    # The Booter drops a line's trailing CR, so a boot.ini saved on Windows counts too.
-    elif sed 's/\r$//' /opt/gizlet/boot.ini | grep -qx 'entry=launcher/gizlet-launcher' &&
+    # Only a boot.ini the Booter would read: a regular file, not a link, at most
+    # 4 KiB (a FIFO would block here). The Booter drops a line's trailing CR, so
+    # a boot.ini saved on Windows counts too.
+    elif [ -f /opt/gizlet/boot.ini ] && [ ! -L /opt/gizlet/boot.ini ] &&
+        [ "$(wc -c < /opt/gizlet/boot.ini)" -le 4096 ] &&
+        sed 's/\r$//' /opt/gizlet/boot.ini | grep -qx 'entry=launcher/gizlet-launcher' &&
         ! { cmp -s "$factory" /opt/gizlet/launcher/bin/gizlet-launcher && cmp -s "$start" /opt/gizlet/launcher/gizlet-launcher; }; then
         install_launcher && sync && echo 'Gizlet OS: updated the factory launcher'
     fi
