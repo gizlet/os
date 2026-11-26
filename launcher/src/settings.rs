@@ -160,11 +160,13 @@ impl Settings {
     }
 }
 
-/// The system's power settings, which gizlet-power reads: `sleep_after`, the
-/// seconds without input before the device sleeps, 0 for never.
+/// The system's power settings, which gizlet-power reads: the seconds without
+/// input before the device sleeps, 0 for never, on battery (`sleep_after`) and
+/// on external power (`sleep_after_charging`).
 pub struct Power {
     path: PathBuf,
     pub sleep_after: u32,
+    pub sleep_after_charging: u32,
 }
 
 impl Power {
@@ -183,7 +185,9 @@ impl Power {
         }
     }
 
-    /// `screen_off`, the key before `sleep_after`, is read when that is absent.
+    /// `screen_off`, the key before `sleep_after`, is read when that is absent;
+    /// without `sleep_after_charging` the device never sleeps while charging,
+    /// as in gizlet-power.
     pub fn load(path: PathBuf) -> Power {
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         let value = |key: &str| {
@@ -193,14 +197,16 @@ impl Power {
             })
         };
         let sleep_after = value("sleep_after").or_else(|| value("screen_off")).unwrap_or(Power::DEFAULT);
-        Power { path, sleep_after }
+        let sleep_after_charging = value("sleep_after_charging").unwrap_or(0);
+        Power { path, sleep_after, sleep_after_charging }
     }
 
-    /// The next choice after the current one, `step` places on (±1).
-    pub fn cycle(&mut self, step: i32) {
+    /// Moves the battery or the charging value `step` choices on (±1).
+    pub fn cycle(&mut self, charging: bool, step: i32) {
+        let value = if charging { &mut self.sleep_after_charging } else { &mut self.sleep_after };
         let n = Power::SLEEP_AFTER.len() as i32;
-        let at = Power::SLEEP_AFTER.iter().position(|&s| s == self.sleep_after).unwrap_or(2) as i32;
-        self.sleep_after = Power::SLEEP_AFTER[(at + step).rem_euclid(n) as usize];
+        let at = Power::SLEEP_AFTER.iter().position(|s| s == value).unwrap_or(2) as i32;
+        *value = Power::SLEEP_AFTER[(at + step).rem_euclid(n) as usize];
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -208,7 +214,13 @@ impl Power {
             std::fs::create_dir_all(dir)?;
         }
         let tmp = self.path.with_extension("tmp");
-        std::fs::write(&tmp, format!("# Seconds without input before the device sleeps; 0 is never.\nsleep_after = {}\n", self.sleep_after))?;
+        std::fs::write(
+            &tmp,
+            format!(
+                "# Seconds without input before the device sleeps, on battery and on\n# external power; 0 is never.\nsleep_after = {}\nsleep_after_charging = {}\n",
+                self.sleep_after, self.sleep_after_charging
+            ),
+        )?;
         std::fs::rename(&tmp, &self.path)
     }
 }
@@ -245,22 +257,30 @@ mod tests {
         let path = dir.join("power.ini");
         let mut p = Power::load(path.clone());
         assert_eq!(p.sleep_after, 300);
-        p.cycle(1);
+        assert_eq!(p.sleep_after_charging, 0, "never while charging by default");
+        p.cycle(false, 1);
         assert_eq!(p.sleep_after, 600);
-        p.cycle(1);
+        p.cycle(false, 1);
         assert_eq!(p.sleep_after, 1800);
-        p.cycle(1);
+        p.cycle(false, 1);
         assert_eq!(p.sleep_after, 0);
-        p.cycle(1);
+        p.cycle(false, 1);
         assert_eq!(p.sleep_after, 60);
-        p.cycle(-1);
+        p.cycle(false, -1);
         assert_eq!(p.sleep_after, 0);
         p.save().unwrap();
         assert_eq!(Power::load(path.clone()).sleep_after, 0);
         std::fs::write(&path, "screen_off = 0\n").unwrap();
         assert_eq!(Power::load(path.clone()).sleep_after, 0, "the old key still counts");
         std::fs::write(&path, "screen_off = 0\nsleep_after = 600\n").unwrap();
-        assert_eq!(Power::load(path).sleep_after, 600, "the new key wins");
+        assert_eq!(Power::load(path.clone()).sleep_after, 600, "the new key wins");
+        assert_eq!(Power::load(path.clone()).sleep_after_charging, 0, "never while charging when unset");
+        let mut p = Power::load(path.clone());
+        p.cycle(true, 1);
+        assert_eq!((p.sleep_after, p.sleep_after_charging), (600, 60), "each is set on its own");
+        p.save().unwrap();
+        let p = Power::load(path);
+        assert_eq!((p.sleep_after, p.sleep_after_charging), (600, 60));
         let _ = std::fs::remove_dir_all(dir);
     }
 

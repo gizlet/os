@@ -62,13 +62,14 @@ impl BatterySource for SysfsBattery {
             .and_then(|c| c.parse::<u16>().ok())
             .ok_or_else(|| Missing::Error("capacity unreadable".into()))?
             .min(100) as u8;
-        let charge = match read_trim(&dir.join("status")).as_deref() {
-            Some("Charging") => Charge::Charging,
-            Some("Full") => Charge::Full,
-            _ => Charge::Discharging,
-        };
         let num = |name: &str| read_trim(&dir.join(name)).and_then(|v| v.parse::<i64>().ok());
         let first = |names: &[&str]| names.iter().find_map(|n| num(n));
+        // The kernel counts current into the battery as positive.
+        let inflow = first(&["current_avg", "current_now"]).is_some_and(|c| c > 0);
+        let supply_online = class_dirs("power_supply").iter().any(|d| {
+            read_trim(&d.join("type")).as_deref() != Some("Battery") && read_trim(&d.join("online")).as_deref() == Some("1")
+        });
+        let charge = charge_state(read_trim(&dir.join("status")).as_deref(), supply_online, inflow);
         // Gauges report µA and µV, some µW; the sign of the current differs
         // between drivers. The averages are steadier than the instant values.
         let current = first(&["current_avg", "current_now"]).map(i64::abs).filter(|c| *c > 0);
