@@ -1,0 +1,172 @@
+#!/bin/sh
+# The base system selects one Launcher release for the whole boot.
+set -eu
+export LC_ALL=C
+umask 077
+base=/opt/gizlet/launcher
+releases=$base/releases
+factory=/usr/lib/gizlet/launcher
+active=/run/gizlet-launcher-release
+ready=/run/gizlet-data.ready
+runtime=/opt/gizlet/runtime/1/bin/gizlet-run
+trusted=$base/allowed_signers
+namespace=gizlet-launcher
+max_bytes=67108864
+
+fail() { printf 'gizlet: %s\n' "$*" >&2; exit 1; }
+valid_version() {
+    case $1 in ''|*[!0-9.]*) return 1 ;; esac
+    printf '%s\n' "$1" | grep -Exq '(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8})){2}'
+}
+manifest() { printf 'gizlet-launcher-1 %s aarch64-unknown-linux-gnu runtime-1\n' "$1"; }
+regular() { [ -f "$1" ] && [ ! -L "$1" ]; }
+release_ready() {
+    [ -d "$1" ] && [ ! -L "$1" ] && [ -d "$1/bin" ] && [ ! -L "$1/bin" ] || return 1
+    regular "$1/manifest" && cmp -s "$1/manifest" - <<EOF || return 1
+$(manifest "$2")
+EOF
+    for file in start bin/gizlet-launcher bin/cli; do
+        regular "$1/$file" && [ -x "$1/$file" ] || return 1
+    done
+}
+installed_versions() {
+    for dir in "$releases"/*; do
+        version=${dir##*/}
+        if valid_version "$version" && release_ready "$dir" "$version"; then
+            printf '%s\n' "$version"
+        fi
+    done | sort -Vr
+}
+lock_releases() {
+    [ -f "$ready" ] || fail 'the data partition is not mounted'
+    exec 9>/run/gizlet-launcher.lock
+    flock -x 9
+}
+prune() {
+    count=0
+    for old_version in $(installed_versions); do
+        count=$((count + 1))
+        if [ "$count" -gt 3 ] && [ "$old_version" != "$1" ]; then
+            rm -rf -- "${releases:?}/${old_version:?}"
+        fi
+    done
+}
+select_release() {
+    lock_releases
+    [ ! -e "$active" ] || return 0
+    version=factory
+    if [ -x "$runtime" ]; then
+        newest=$(installed_versions | head -n 1)
+        version=${newest:-factory}
+    fi
+    printf '%s\n' "$version" > "$active.new"
+    mv -fT "$active.new" "$active"
+    # Interrupted installations leave only hidden staging directories.
+    for staging in "$releases"/.install.*; do
+        if [ -d "$staging" ] && [ ! -L "$staging" ]; then
+            rm -rf -- "$staging"
+        fi
+    done
+    prune "$version"
+}
+active_version() {
+    version=factory
+    if [ -f "$active" ]; then
+        IFS= read -r version < "$active" || fail 'cannot read the active Launcher release'
+    fi
+    printf '%s\n' "$version"
+}
+active_dir() {
+    version=$(active_version)
+    if [ "$version" = factory ]; then
+        printf '%s\n' "$factory"
+    elif valid_version "$version"; then
+        printf '%s/%s\n' "$releases" "$version"
+    else
+        fail 'invalid active Launcher release'
+    fi
+}
+
+install_release() {
+    lock_releases
+    regular "$trusted" || fail "configure a trusted signing key in $trusted"
+    mkdir -p "$releases"
+    staging=$(mktemp -d "$releases/.install.XXXXXX")
+    trap 'rm -rf -- "$staging"' EXIT
+    trap 'exit 1' HUP INT TERM
+    case $1 in
+        https://*)
+            curl -q -fsSL --proto '=https' --proto-redir '=https' --max-redirs 5 \
+                --connect-timeout 15 --max-time 300 --max-filesize "$max_bytes" \
+                --output "$staging/bundle" -- "$1" || fail 'download failed'
+            ;;
+        *://*) fail 'update URLs must use HTTPS' ;;
+        *)
+            [ -f "$1" ] || fail 'expected an update bundle file or HTTPS URL'
+            head -c "$((max_bytes + 1))" -- "$1" > "$staging/bundle"
+            ;;
+    esac
+    size=$(wc -c < "$staging/bundle")
+    [ "$size" -le "$max_bytes" ] || fail 'update bundle is too large'
+    # The nine-byte header gives the length of the SSH signature. Verify the
+    # exact payload bytes before passing them to tar.
+    header=$(head -c 9 "$staging/bundle")
+    printf '%s\n' "$header" | grep -Exq '[0-9]{8}' || fail 'invalid update bundle header'
+    sigsize=$(printf '%s' "$header" | sed 's/^0*//')
+    [ "${sigsize:-0}" -gt 0 ] && [ "$sigsize" -le 4096 ] && [ "$size" -gt "$((9 + sigsize))" ] || fail 'invalid signature size'
+    dd if="$staging/bundle" of="$staging/signature" bs=1 skip=9 count="$sigsize" status=none
+    tail -c "+$((10 + sigsize))" "$staging/bundle" > "$staging/payload.tar"
+    ssh-keygen -Y verify -f "$trusted" -I launcher -n "$namespace" -s "$staging/signature" \
+        < "$staging/payload.tar" >/dev/null || fail 'update bundle signature verification failed'
+
+    payload=$staging/payload.tar
+    from_tar() { tar -xOf "$payload" -- "$1"; }
+    members=$(tar -tf "$payload") || fail 'invalid release archive'
+    expected=$(printf '%s\n' manifest start bin/gizlet-launcher bin/cli)
+    [ "$members" = "$expected" ] || fail 'unexpected release archive contents'
+    release=$staging/release
+    mkdir -p "$release/bin"
+    from_tar manifest > "$release/manifest"
+    IFS=' ' read -r _ version _ < "$release/manifest" || fail 'invalid release manifest'
+    valid_version "$version" || fail 'invalid release version'
+    manifest "$version" | cmp -s "$release/manifest" - || fail 'unsupported Launcher bundle format, architecture, or runtime'
+    for file in start bin/gizlet-launcher bin/cli; do
+        from_tar "$file" > "$release/$file"
+        [ -s "$release/$file" ] || fail "missing release file $file"
+        chmod 0755 "$release/$file"
+    done
+    dest=$releases/$version
+    if [ -e "$dest" ] || [ -L "$dest" ]; then
+        release_ready "$dest" "$version" || fail "version $version already exists and is incomplete"
+        for file in manifest start bin/gizlet-launcher bin/cli; do
+            cmp -s "$release/$file" "$dest/$file" || fail "version $version already exists with different contents"
+        done
+    else
+        sync -f "$release"
+        mv -T "$release" "$dest"
+        sync -f "$releases"
+    fi
+    prune "$(active_version)"
+    printf 'Installed Launcher release %s. Restart to select the latest release.\n' "$version"
+}
+
+if [ "${0##*/}" = gizlet ]; then
+    case ${1-} in
+        update)
+            [ "$#" -eq 2 ] || fail 'usage: gizlet update FILE|HTTPS_URL'
+            install_release "$2"
+            ;;
+        *) dir=$(active_dir); exec "$dir/bin/cli" "$@" ;;
+    esac
+else
+    case ${1-} in
+        select) select_release ;;
+        start)
+            shift
+            dir=$(active_dir)
+            if [ "$#" -eq 0 ]; then printf 'Gizlet OS: using Launcher from %s\n' "$dir"; fi
+            exec "$dir/start" "$@"
+            ;;
+        *) fail 'invalid Launcher release operation' ;;
+    esac
+fi

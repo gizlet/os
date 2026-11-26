@@ -10,6 +10,7 @@ Conflicts=shutdown.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/lib/gizlet/gizlet-mount-data
+ExecStartPost=-/usr/lib/gizlet/launcher-release select
 # The time zone chosen in the launcher, before the session starts.
 ExecStartPost=-/usr/lib/gizlet/gizlet-switch apply-timezone
 StandardOutput=journal+console

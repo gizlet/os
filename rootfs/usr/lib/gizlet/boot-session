@@ -1,41 +1,7 @@
 #!/bin/sh
-# gizlet-session.service runs this on the console: the boot.ini entry, the
-# launcher by default, then a local recovery shell. Leaving the shell starts
-# the session again.
+# Run the configured entry on the console, then open a local recovery shell.
+# Leaving the shell retries the entry with the same Launcher release.
 export HOME=/home PATH=/usr/sbin:/usr/bin:/sbin:/bin
-factory=/usr/lib/gizlet/gizlet-launcher
-start=/usr/lib/gizlet/gizlet-launcher-start
-# Without boot.ini, as on a fresh card, the factory launcher becomes the entry:
-# its program in launcher/bin, and launcher/gizlet-launcher, which runs it
-# against Gizlet runtime 1. While it is the entry, a base updated by the card
-# writers brings its own launcher, which replaces the installed one.
-install_launcher() {
-    mkdir -p /opt/gizlet/launcher/bin &&
-        cp "$factory" /opt/gizlet/launcher/bin/gizlet-launcher.new &&
-        mv /opt/gizlet/launcher/bin/gizlet-launcher.new /opt/gizlet/launcher/bin/gizlet-launcher &&
-        cp "$start" /opt/gizlet/launcher/gizlet-launcher.new &&
-        mv /opt/gizlet/launcher/gizlet-launcher.new /opt/gizlet/launcher/gizlet-launcher
-}
-# same_file FILE INSTALLED: INSTALLED is a regular file, not a link, with
-# FILE's contents. Anything else, a FIFO among them, which cmp would block on,
-# counts as different, and install_launcher's mv replaces it.
-same_file() { [ -f "$2" ] && [ ! -L "$2" ] && cmp -s "$1" "$2"; }
-if [ -f /run/gizlet-data.ready ] && [ -x "$factory" ] && [ -x "$start" ]; then
-    if [ ! -e /opt/gizlet/boot.ini ]; then
-        install_launcher &&
-            printf '%s\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini.new &&
-            mv /opt/gizlet/boot.ini.new /opt/gizlet/boot.ini && sync &&
-            echo 'Gizlet OS: installed the factory launcher as the boot entry'
-    # Only a boot.ini the Booter would read: a regular file, not a link, at most
-    # 4 KiB (a FIFO would block here). The Booter drops a line's trailing CR, so
-    # a boot.ini saved on Windows counts too.
-    elif [ -f /opt/gizlet/boot.ini ] && [ ! -L /opt/gizlet/boot.ini ] &&
-        [ "$(wc -c < /opt/gizlet/boot.ini)" -le 4096 ] &&
-        sed 's/\r$//' /opt/gizlet/boot.ini | grep -qx 'entry=launcher/gizlet-launcher' &&
-        ! { same_file "$factory" /opt/gizlet/launcher/bin/gizlet-launcher && same_file "$start" /opt/gizlet/launcher/gizlet-launcher; }; then
-        install_launcher && sync && echo 'Gizlet OS: updated the factory launcher'
-    fi
-fi
 if [ -f /run/gizlet-data.ready ]; then
     # script keeps the entry on the console through a pty and copies what it
     # prints to /run/gizlet-session.log, which gizlet-late.log includes. Only

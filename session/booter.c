@@ -10,6 +10,8 @@
 
 #define INSTALL_DIR "/opt/gizlet"
 #define CONFIG_FILE "boot.ini"
+#define FACTORY_ENTRY "launcher/gizlet-launcher"
+#define RELEASE_MANAGER "/usr/lib/gizlet/launcher-release"
 #define MAX_CONFIG_SIZE 4096
 
 /* Paths are relative to the mounted installation directory. Open each component
@@ -90,6 +92,15 @@ static char *parse_entry(char *contents) {
     return entry;
 }
 
+static int start_launcher(void) {
+    char *const argv[] = {RELEASE_MANAGER, "start", NULL};
+    puts("Gizlet OS: starting the selected launcher");
+    fflush(stdout);
+    execv(RELEASE_MANAGER, argv);
+    perror("Gizlet OS: execute launcher release manager");
+    return 1;
+}
+
 int main(void) {
     int root = open(INSTALL_DIR, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0 || fchdir(root) < 0) {
@@ -98,6 +109,10 @@ int main(void) {
     }
     int config = openat(root, CONFIG_FILE, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
     if (config < 0) {
+        if (errno == ENOENT) {
+            close(root);
+            return start_launcher();
+        }
         perror("Gizlet OS: " INSTALL_DIR "/" CONFIG_FILE);
         return 1;
     }
@@ -108,6 +123,11 @@ int main(void) {
     if (!entry) {
         fputs("Gizlet OS: invalid boot.ini (expected [boot] and one entry)\n", stderr);
         return 1;
+    }
+    /* The entry written by earlier images still selects the managed Launcher. */
+    if (strcmp(entry, FACTORY_ENTRY) == 0) {
+        close(root);
+        return start_launcher();
     }
     char path[MAX_CONFIG_SIZE + 1];
     strcpy(path, entry);

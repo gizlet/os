@@ -5,6 +5,8 @@
  "packages": [
   "alsa-utils",
   "bluez",
+  "ca-certificates",
+  "curl",
   "dbus",
   "dosfstools",
   "e2fsprogs",

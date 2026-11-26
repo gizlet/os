@@ -58,11 +58,25 @@
    "version": "1:2.41.5-0+deb13u1"
   },
   {
+   "name": "ca-certificates",
+   "path": "pool/main/c/ca-certificates/ca-certificates_20250419_all.deb",
+   "sha256": "ef590f89563aa4b46c8260d49d1cea0fc1b181d19e8df3782694706adf05c184",
+   "size": 161704,
+   "version": "20250419"
+  },
+  {
    "name": "coreutils",
    "path": "pool/main/c/coreutils/coreutils_9.7-3_arm64.deb",
    "sha256": "99b2531e8d16e4f2d3f239ae3cb57913ec1f43764d2d6cd5c69154cbb1e57f3e",
    "size": 2948764,
    "version": "9.7-3"
+  },
+  {
+   "name": "curl",
+   "path": "pool/main/c/curl/curl_8.14.1-2+deb13u5_arm64.deb",
+   "sha256": "3ea9ea868ffaddb2aba840b52dcd1e59b74dbe625f0c4c4e2458c9d01bc03e6f",
+   "size": 262460,
+   "version": "8.14.1-2+deb13u5"
   },
   {
    "name": "dash",
@@ -324,6 +338,13 @@
    "version": "1:1.5.0-3"
   },
   {
+   "name": "libbrotli1",
+   "path": "pool/main/b/brotli/libbrotli1_1.1.0-2+b7_arm64.deb",
+   "sha256": "10270398c4842e71c72b4081fa1761728b3225d6c8dce7c58d5baafe58a5e18f",
+   "size": 307600,
+   "version": "1.1.0-2+b7"
+  },
+  {
    "name": "libbsd0",
    "path": "pool/main/libb/libbsd/libbsd0_0.12.2-2_arm64.deb",
    "sha256": "6827c1b3ad8dcbf3478803f9150359433e3376a3bde01c4503888a22eb3924e3",
@@ -392,6 +413,13 @@
    "sha256": "b9aaa808aa3812b3de3e54eb5dfb16762c1779db032604abef2354c02fdc29b8",
    "size": 91760,
    "version": "1:4.4.38-1"
+  },
+  {
+   "name": "libcurl4t64",
+   "path": "pool/main/c/curl/libcurl4t64_8.14.1-2+deb13u5_arm64.deb",
+   "sha256": "af72e1cd69240a42a76a578e6902b65f9fa641f5e7352e4bfa0ec5aa38d25204",
+   "size": 359892,
+   "version": "8.14.1-2+deb13u5"
   },
   {
    "name": "libdb5.3t64",
@@ -520,6 +548,13 @@
    "version": "2:6.3.0+dfsg-3"
   },
   {
+   "name": "libgnutls30t64",
+   "path": "pool/main/g/gnutls28/libgnutls30t64_3.8.9-3+deb13u4_arm64.deb",
+   "sha256": "337ef41ab360015d051d6a07f85f8aa6706b35712e3dea23157eba9c902196e2",
+   "size": 1378804,
+   "version": "3.8.9-3+deb13u4"
+  },
+  {
    "name": "libgomp1",
    "path": "pool/main/g/gcc-14/libgomp1_14.2.0-19_arm64.deb",
    "sha256": "43e84cb7971d8a4d8870cab6204e998ea4f23ee1339bb0ff556dd881bac82d25",
@@ -590,6 +625,13 @@
    "version": "2.41.5-0+deb13u1"
   },
   {
+   "name": "libldap2",
+   "path": "pool/main/o/openldap/libldap2_2.6.10+dfsg-1_arm64.deb",
+   "sha256": "38fae6af20d41e4b0a8ea1b96d0b81a7a5551a61595bc866c9af870eadfdf1bd",
+   "size": 179312,
+   "version": "2.6.10+dfsg-1"
+  },
+  {
    "name": "liblz4-1",
    "path": "pool/main/l/lz4/liblz4-1_1.10.0-4_arm64.deb",
    "sha256": "f86fa7f8112d56b74f99c4a8baade57a9962d187d7c8e319428e171b2a34d223",
@@ -639,6 +681,27 @@
    "version": "3.10.1-1"
   },
   {
+   "name": "libnghttp2-14",
+   "path": "pool/main/n/nghttp2/libnghttp2-14_1.64.0-1.1+deb13u1_arm64.deb",
+   "sha256": "ca222b98d5bef2193c05a1e736d0619798ba7a8f8e92526f3e1d06edcd0bf751",
+   "size": 71604,
+   "version": "1.64.0-1.1+deb13u1"
+  },
+  {
+   "name": "libnghttp3-9",
+   "path": "pool/main/n/nghttp3/libnghttp3-9_1.8.0-1_arm64.deb",
+   "sha256": "26bfb8d1bead043f57d95663bab02f7611e7078fb7cf71383fa480c4b4c24d81",
+   "size": 63232,
+   "version": "1.8.0-1"
+  },
+  {
+   "name": "libp11-kit0",
+   "path": "pool/main/p/p11-kit/libp11-kit0_0.25.5-3_arm64.deb",
+   "sha256": "78bfc746e68a5217e845f488f69100ed89d10c8886fbd3ffce937acb6a7d88fb",
+   "size": 409108,
+   "version": "0.25.5-3"
+  },
+  {
    "name": "libpam-modules",
    "path": "pool/main/p/pam/libpam-modules_1.7.0-5_arm64.deb",
    "sha256": "3c6c4b0be396f2a90d150effd480e06674d7d22739fe4c54ffbf95587fe2bcf4",
@@ -681,6 +744,13 @@
    "version": "2:4.0.4-9"
   },
   {
+   "name": "libpsl5t64",
+   "path": "pool/main/libp/libpsl/libpsl5t64_0.21.2-1.1+b1_arm64.deb",
+   "sha256": "7ea03d8a7d16edce7b1b1e94980c058c0f1fb3c595eb9154b0e8590d0e7f75af",
+   "size": 57076,
+   "version": "0.21.2-1.1+b1"
+  },
+  {
    "name": "libreadline8t64",
    "path": "pool/main/r/readline/libreadline8t64_8.2-6_arm64.deb",
    "sha256": "f78ff432b2a627bc04f7eef0e6e2696501c9e06feca748a5b741d5e594429033",
@@ -688,11 +758,32 @@
    "version": "8.2-6"
   },
   {
+   "name": "librtmp1",
+   "path": "pool/main/r/rtmpdump/librtmp1_2.4+20151223.gitfa8646d.1-2+b5_arm64.deb",
+   "sha256": "20d52d20c4834158e956ae8e1d42a61d22330062052116d5422daa2d3b1d433b",
+   "size": 56840,
+   "version": "2.4+20151223.gitfa8646d.1-2+b5"
+  },
+  {
    "name": "libsamplerate0",
    "path": "pool/main/libs/libsamplerate/libsamplerate0_0.2.2-4+b2_arm64.deb",
    "sha256": "5d9fad694b249d48d8457e1242ab60e04db6a30d7d56f80c6ae463ff122147ec",
    "size": 944716,
    "version": "0.2.2-4+b2"
+  },
+  {
+   "name": "libsasl2-2",
+   "path": "pool/main/c/cyrus-sasl2/libsasl2-2_2.1.28+dfsg1-9_arm64.deb",
+   "sha256": "6431628c62524c8397255c1c4a7c7ef63661b801f3be9a59ad41e7a2e46e6210",
+   "size": 55628,
+   "version": "2.1.28+dfsg1-9"
+  },
+  {
+   "name": "libsasl2-modules-db",
+   "path": "pool/main/c/cyrus-sasl2/libsasl2-modules-db_2.1.28+dfsg1-9_arm64.deb",
+   "sha256": "ed6eb05f8ded71ab16a0369845805b373fc8a71c0e7d33f73fa2fb11e83a1977",
+   "size": 20144,
+   "version": "2.1.28+dfsg1-9"
   },
   {
    "name": "libseccomp2",
@@ -751,6 +842,13 @@
    "version": "1.47.2-3+b12"
   },
   {
+   "name": "libssh2-1t64",
+   "path": "pool/main/libs/libssh2/libssh2-1t64_1.11.1-1+deb13u2_arm64.deb",
+   "sha256": "245565f4ce5493d67a3c54e26bc3d9cf28b1b70eeb912de7cda61af52268017d",
+   "size": 236268,
+   "version": "1.11.1-1+deb13u2"
+  },
+  {
    "name": "libssl3t64",
    "path": "pool/main/o/openssl/libssl3t64_3.5.7-1~deb13u2_arm64.deb",
    "sha256": "ec131326aa9fa9ec934eca386bc7991f328fe383eaefd3e43bd8901a9199c5ae",
@@ -777,6 +875,13 @@
    "sha256": "d2f63c408549c29eaefb6f4c948393edce99f45ee8e43c991391bef63fb7d54b",
    "size": 422500,
    "version": "257.13-1~deb13u1"
+  },
+  {
+   "name": "libtasn1-6",
+   "path": "pool/main/libt/libtasn1-6/libtasn1-6_4.20.0-2+deb13u1_arm64.deb",
+   "sha256": "e421da949cd26245f24c594265d6a01900b5e060e80793f68b977f7bfaa009ef",
+   "size": 47304,
+   "version": "4.20.0-2+deb13u1"
   },
   {
    "name": "libtext-charwidth-perl",
