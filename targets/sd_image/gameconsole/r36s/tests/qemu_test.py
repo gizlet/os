@@ -15,6 +15,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import selectors
 import shutil
 import socket
@@ -380,10 +381,19 @@ def test_service(version):
         b'exec sleep 4242\n'))
 
 
+ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
+
+
 def expect_lines(console, command, *lines):
+    """Runs COMMAND and expects LINES among its output lines, in order. Other
+    lines may come between them: the console is shared with the system."""
     console.enter(command)
-    console.expect(b"\r\n" + b"\r\n".join(lines) + b"\r\n")
-    console.expect(PROMPT)
+    output = [ANSI.sub(b"", line).strip(b"\r") for line in console.expect(PROMPT).split(b"\n")]
+    found = 0
+    for line in output:
+        if found < len(lines) and line == lines[found]:
+            found += 1
+    assert found == len(lines), f"{command}: expected {lines[found:]!r} in order in {output!r}"
 
 
 def wait_for_socket(console):
