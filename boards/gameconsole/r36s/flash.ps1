@@ -329,6 +329,13 @@ function Update-Card([string]$raw, $disk) {
         $target.Write($mbr, 0, 512)
         $target.Flush()
         Write-Host ''
+    } catch {
+        # $keep is outside the work directory, which is removed, so the copies stay.
+        if ($kept) {
+            Write-Host ''
+            Write-Host ((M 'The boot partition''s own files (authorized_keys, setup.ini) are kept in' '启动分区上原有的文件（authorized_keys、setup.ini）保存在') + " $keep" + (M '; copy them back after writing the card again.' '，重新写卡后请自行复制回去。'))
+        }
+        throw
     } finally {
         if ($target) { $target.Dispose() }
         if ($lock) { $lock.Dispose() }

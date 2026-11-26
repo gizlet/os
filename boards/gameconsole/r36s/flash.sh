@@ -63,7 +63,13 @@ main() {
 # m EN ZH: the message in the chosen language.
 m() { if [ "${lang}" = zh ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 say() { printf '%s\n' "$*" >&2; }
-die() { say "$(m error 错误): $*"; exit 1; }
+die() {
+    say "$(m error 错误): $*"
+    # An update stopped after it saved the boot partition's own files: they
+    # stay outside the work directory, which is removed on exit.
+    [ -z "${boot_backup:-}" ] || say "$(m "The boot partition's own files (authorized_keys, setup.ini) are kept in ${boot_backup}; copy them back after writing the card again." "启动分区上原有的文件（authorized_keys、setup.ini）保存在 ${boot_backup}，重新写卡后请自行复制回去。")"
+    exit 1
+}
 # Questions read the terminal, since stdin is this script when piped from curl.
 ask() {
     printf '%s' "$1" >&2
@@ -540,19 +546,29 @@ unmount_boot() {
     fi
 }
 
+# save_boot_files: copies the boot partition's own files to ${keep}, a
+# directory of its own outside ${work}, which is removed on exit: if a write
+# fails after the boot partition is overwritten, they stay there, and die and
+# restore_boot_files say where. ${boot_backup} names it once the copy is whole.
 save_boot_files() {
-    kept=''
-    keep=${work}/boot-files
-    mkdir -p "${keep}"
+    kept='' boot_backup=''
+    keep=$(mktemp -d "${TMPDIR:-/tmp}/gizlet-boot-files.XXXXXX") || die "$(m 'cannot create a temporary directory; nothing was written' '无法创建临时目录，没有写入任何内容')"
     # The update rewrites the boot partition, so its files must be kept first.
-    mount_boot ro || die "$(m "cannot read the boot partition ${part} to keep its authorized_keys and setup.ini; nothing was written" "无法读取启动分区 ${part}，不能保留上面的 authorized_keys 和 setup.ini；没有写入任何内容")"
+    if ! mount_boot ro; then
+        rm -rf "${keep}"
+        die "$(m "cannot read the boot partition ${part} to keep its authorized_keys and setup.ini; nothing was written" "无法读取启动分区 ${part}，不能保留上面的 authorized_keys 和 setup.ini；没有写入任何内容")"
+    fi
     for file in ${BOOT_FILES}; do
         if [ -f "${boot_dir}/${file}" ]; then
-            cp "${boot_dir}/${file}" "${keep}/${file}" || die "$(m "cannot read ${file} on the boot partition; nothing was written" "无法读取启动分区上的 ${file}，没有写入任何内容")"
+            if ! cp "${boot_dir}/${file}" "${keep}/${file}"; then
+                rm -rf "${keep}"
+                die "$(m "cannot read ${file} on the boot partition; nothing was written" "无法读取启动分区上的 ${file}，没有写入任何内容")"
+            fi
             kept="${kept} ${file}"
         fi
     done
-    unmount_boot || die "$(m "cannot unmount ${part}; nothing was written" "无法卸载 ${part}，没有写入任何内容")"
+    unmount_boot || { rm -rf "${keep}"; die "$(m "cannot unmount ${part}; nothing was written" "无法卸载 ${part}，没有写入任何内容")"; }
+    if [ -n "${kept}" ]; then boot_backup=${keep}; else rmdir "${keep}"; fi
 }
 
 restore_boot_files() {
@@ -567,11 +583,14 @@ restore_boot_files() {
         done
         sync
         unmount_boot || true
-        [ -z "${copied}" ] || return 0
+        if [ -n "${copied}" ]; then
+            rm -rf "${keep}"
+            boot_backup=''
+            return 0
+        fi
     fi
-    saved=$(mktemp -d "${TMPDIR:-/tmp}/gizlet-boot-files.XXXXXX")
-    cp "${keep}"/* "${saved}/"
-    say "$(m "Warning: cannot put the boot partition's own files back; copy them from ${saved}" "警告：无法把启动分区上原有的文件放回去，请自行从 ${saved} 复制回去")"
+    boot_backup=''
+    say "$(m "Warning: cannot put the boot partition's own files back; copy them from ${keep}" "警告：无法把启动分区上原有的文件放回去，请自行从 ${keep} 复制回去")"
 }
 
 # grown_data IMAGE MBR DIR: grows the image's ext4 data filesystem, offline, to
