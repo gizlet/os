@@ -65,7 +65,7 @@ param(
         $env:GIZLET_LANG = $Language
         $env:GIZLET_IMAGE_URL = $imageUrl
         $env:GIZLET_CHECKSUM_URL = $checksumUrl
-        & $scriptPath
+        & ([scriptblock]::Create([IO.File]::ReadAllText($scriptPath)))
     } finally {
         $env:GIZLET_LANG = $savedLanguage
         $env:GIZLET_IMAGE_URL = $savedImageUrl

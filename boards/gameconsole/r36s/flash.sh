@@ -51,7 +51,7 @@ main() {
         entry=$(curl -fsSL --proto '=https' --proto-redir '=https' https://dl.gizlet.io/releases/latest/flash.sh) ||
             { printf '%s\n' 'Cannot load the latest Gizlet OS release. / 无法加载最新的 Gizlet OS 版本。' >&2; exit 1; }
         if [ -n "${lang}" ]; then entry_args+=(--lang "${lang}"); fi
-        bash -s -- "${entry_args[@]}" -- "${original_args[@]}" <<< "${entry}"
+        bash -s -- "${entry_args[@]}" -- ${original_args[@]+"${original_args[@]}"} <<< "${entry}"
         return
     fi
     [ -r /dev/tty ] || { printf '%s\n' 'error: run this from a terminal / 请在终端里运行' >&2; exit 1; }

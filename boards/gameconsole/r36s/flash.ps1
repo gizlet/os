@@ -420,7 +420,7 @@ function Update-Card([string]$raw, $disk) {
         $entryPath = Join-Path ([IO.Path]::GetTempPath()) "gizlet-entry-$([guid]::NewGuid()).ps1"
         try {
             Invoke-WebRequest -UseBasicParsing -Uri 'https://dl.gizlet.io/releases/latest/flash.ps1' -OutFile $entryPath
-            & $entryPath -Board gameconsole.r36s
+            & ([scriptblock]::Create([IO.File]::ReadAllText($entryPath))) -Board gameconsole.r36s
         } finally {
             Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
         }
