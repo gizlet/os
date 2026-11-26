@@ -2,6 +2,8 @@
 
 Gizlet OS builds the Linux base system and TF1 system card for the RK3326 Game Console R36S. Its 640×480 panel is selected by a device tree overlay, as in ROCKNIX. The base is a read-only Debian trixie arm64 root with systemd, built from locked packages. It gives installed software `/opt/gizlet` and user files `/home`, and starts the executable named in `boot.ini`. A fresh card installs the Gizlet launcher as that entry. It shows the apps installed from `.gzl` packages with the `gizlet` command and starts them.
 
+The base includes Bun at `/usr/bin/bun`. Run `bun /home/hello.js` from SSH or the recovery shell. A JavaScript file with `#!/usr/bin/bun` and executable permissions can also serve as a `.gzl` app entry or the `boot.ini` entry.
+
 | Path | Contents |
 | --- | --- |
 | `boards/` | One package per device: its kernel config, device trees and panel overlays (`kernel/`), boot script and trust settings (`boot/`), card layout and test expectations |

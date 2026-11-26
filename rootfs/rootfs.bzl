@@ -38,6 +38,7 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/systemd/system/gizlet-switches.service": "usr/lib/systemd/system/gizlet-switches.service",
     "//rootfs:usr/lib/systemd/system/gizlet-var.service": "usr/lib/systemd/system/gizlet-var.service",
     "//rootfs:usr/lib/udev/rules.d/90-gizlet-hostname.rules": "usr/lib/udev/rules.d/90-gizlet-hostname.rules",
+    "@bun//:LICENSE.md": "usr/share/licenses/bun/LICENSE.md",
     "//third_party/glibc:LGPL-2.1": "usr/share/licenses/glibc-LGPL-2.1",
     # Fonts built into the launcher.
     "//launcher:fonts/DroidSansFallback-LICENSE.txt": "usr/share/licenses/gizlet-launcher/DroidSansFallback-LICENSE.txt",
@@ -57,6 +58,7 @@ ROOTFS_EXECUTABLES = {
     "//rootfs:usr/lib/gizlet/save-boot-log": "usr/lib/gizlet/save-boot-log",
     # Installs, lists, runs and removes apps with the installed launcher.
     "//rootfs:usr/bin/gizlet": "usr/bin/gizlet",
+    "@bun//:bun": "usr/bin/bun",
     # The launcher runs against Gizlet runtime 1 (its raylib, Mesa and glibc)
     # through its start script; the Booter is static.
     "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",
@@ -118,6 +120,7 @@ ROOTFS_MASK = [
 
 # Notices under /usr/share/licenses besides each Debian package's copyright file.
 ROOTFS_LICENSES = [
+    "bun/LICENSE.md",
     "glibc-LGPL-2.1",
     "gizlet-launcher/DroidSansFallback-LICENSE.txt",
     "gizlet-launcher/Inter-OFL.txt",
