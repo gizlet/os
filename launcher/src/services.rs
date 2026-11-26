@@ -554,17 +554,34 @@ impl Library {
         // If this update is cut short, recovery in this boot starts the previous version again.
         let _restart = if was_running { Some(Flag::write(self.restart_flag(id))?) } else { None };
         let running = self.stop_verified(id).map_err(|e| format!("cannot stop {id} to update it: {e}; the installed version is unchanged"))?;
-        if previous.is_some() {
-            fs::rename(&dest, &old).map_err(|e| format!("{}: {e}", dest.display()))?;
-        }
-        if let Err(e) = fs::rename(staging, &dest) {
+        let swapped = (|| {
             if previous.is_some() {
-                let _ = fs::rename(&old, &dest);
+                fs::rename(&dest, &old).map_err(|e| format!("{}: {e}", dest.display()))?;
             }
-            return Err(format!("{}: {e}", dest.display()));
+            if let Err(e) = fs::rename(staging, &dest) {
+                if previous.is_some() {
+                    let _ = fs::rename(&old, &dest);
+                }
+                return Err(format!("{}: {e}", dest.display()));
+            }
+            Ok(())
+        })();
+        drop(running);
+        if let Err(e) = swapped {
+            if !was_running {
+                return Err(e);
+            }
+            if !dest.is_dir() {
+                // Recovery puts the installed version back and, from this flag, starts it.
+                std::mem::forget(_restart);
+                return Err(format!("{e}; the next `gizlet` command puts the installed version back and starts it"));
+            }
+            return Err(match self.start_checked(id) {
+                Ok(()) => format!("{e}; the installed version is unchanged and running again"),
+                Err(again) => format!("{e}; the installed version is unchanged but did not start again: {again}"),
+            });
         }
         apps::sync();
-        drop(running);
         let started = self.register(id).and_then(|()| {
             if previous.is_none() {
                 fs::write(self.boot_flag(id), "").map_err(|e| format!("{}: {e}", self.boot_flag(id).display()))?;
@@ -709,11 +726,13 @@ impl Library {
     /// no longer installed.
     pub(crate) fn sweep_services(&self) {
         let root = self.services_dir();
+        // A backup that recovery could not yet put back still holds the service.
+        let installed = |id: &str| root.join(id).exists() || self.backup_in(&root, id).exists();
         for e in fs::read_dir(&root).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if let Some(id) = name.strip_prefix(".boot-").filter(|id| !root.join(id).exists()) {
+            if let Some(id) = name.strip_prefix(".boot-").filter(|id| !installed(id)) {
                 let _ = fs::remove_file(self.boot_flag(id));
-            } else if let Some(id) = name.strip_prefix(".running-").filter(|id| !root.join(id).exists()) {
+            } else if let Some(id) = name.strip_prefix(".running-").filter(|id| !installed(id)) {
                 if let Ok(lock) = self.not_running(&root, id) {
                     let _ = fs::remove_file(e.path());
                     drop(lock);
@@ -725,7 +744,7 @@ impl Library {
         // services may share the folder.
         for e in fs::read_dir(self.prefix().join("service-data")).into_iter().flatten().flatten() {
             let id = e.file_name().to_string_lossy().into_owned();
-            if apps::is_valid_id(&id) && !root.join(&id).exists() {
+            if apps::is_valid_id(&id) && !installed(&id) {
                 let _ = remove_tree(&e.path());
             }
         }
@@ -1427,6 +1446,14 @@ pub(crate) mod tests {
         lib.boot_services().unwrap();
         assert_nothing_left(&lib, &units, gone);
         assert!(lib.services_dir().join(A).is_dir());
+        // A backup that cannot be put back yet keeps the service's state and boot choice.
+        let held = "dev.example.held";
+        let backup = lib.backup_in(&lib.services_dir(), held);
+        fs::create_dir_all(&backup).unwrap();
+        fs::create_dir_all(lib.service_data(held)).unwrap();
+        fs::write(lib.boot_flag(held), "").unwrap();
+        lib.sweep_services();
+        assert!(lib.service_data(held).is_dir() && lib.boot_flag(held).exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
