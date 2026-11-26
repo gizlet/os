@@ -47,6 +47,7 @@ cat > serve.js <<'EOF'
 const server = Bun.serve({
   port: 8444,
   hostname: "127.0.0.1",
+  idleTimeout: 0,
   tls: { key: Bun.file("tls.key"), cert: Bun.file("tls.crt") },
   async fetch(request) {
     const path = new URL(request.url).pathname;
@@ -67,7 +68,8 @@ const server = Bun.serve({
     }
     if (fault === "checksum" && path.endsWith(".sqfs")) return new Response("corrupt");
     const file = Bun.file(`.${path}`);
-    return await file.exists() ? new Response(file) : new Response(null, { status: 404 });
+    if (!await file.exists()) return new Response(null, { status: 404 });
+    return new Response(file.stream(), { headers: { "content-length": String(file.size) } });
   },
 });
 console.log(server.url.href);
