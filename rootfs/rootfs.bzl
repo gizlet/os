@@ -16,6 +16,7 @@ ROOTFS_FILES = {
     "//rootfs:etc/iwd/main.conf": "etc/iwd/main.conf",
     "//rootfs:etc/ssh/sshd_config.d/gizlet.conf": "etc/ssh/sshd_config.d/gizlet.conf",
     "//rootfs:usr/lib/gizlet/inputrc": "usr/lib/gizlet/inputrc",
+    "//rootfs:usr/lib/systemd/system/iwd.service.d/gizlet.conf": "usr/lib/systemd/system/iwd.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/system/ssh.service.d/gizlet.conf": "usr/lib/systemd/system/ssh.service.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/journald.conf.d/gizlet.conf": "usr/lib/systemd/journald.conf.d/gizlet.conf",
     "//rootfs:usr/lib/systemd/logind.conf.d/gizlet.conf": "usr/lib/systemd/logind.conf.d/gizlet.conf",
@@ -82,18 +83,29 @@ ROOTFS_ENABLE = [
 ROOTFS_SYMLINKS = {"etc/localtime": "/run/gizlet-localtime"}
 
 # Started by gizlet-switches.service when turned on in the launcher, not by
-# default. Debian enables sshd.
-ROOTFS_DISABLE = ["ssh.service"]
+# default. Debian enables sshd. systemd-resolved, which would otherwise start
+# beside gizlet-data.service and read the card with it, starts with iwd.
+ROOTFS_DISABLE = [
+    "ssh.service",
+    "systemd-resolved.service",
+]
 
 # The session owns the console and the launcher the LCD, so no getty runs.
 # Each boot looks like a first boot to systemd (the machine ID is not kept), and
-# the read-only base never updates its packages.
+# the read-only base never updates its packages: its /var, in RAM, would
+# otherwise look updated on every boot and rebuild the journal catalog before
+# the session starts. e2scrub checks ext4 on LVM, which a card does not have,
+# yet its reaper takes seconds of every boot.
 ROOTFS_MASK = [
     "apt-daily-upgrade.timer",
     "apt-daily.timer",
+    "e2scrub_all.timer",
+    "e2scrub_reap.service",
     "getty@.service",
     "serial-getty@.service",
     "systemd-firstboot.service",
+    "systemd-journal-catalog-update.service",
+    "systemd-update-done.service",
 ]
 
 # Notices under /usr/share/licenses besides each Debian package's copyright file.
