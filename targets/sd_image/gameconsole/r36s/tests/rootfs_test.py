@@ -154,6 +154,7 @@ def main():
                   "multi-user.target.wants/gizlet-session.service", "multi-user.target.wants/gizlet-boot-log.service",
                   "multi-user.target.wants/gizlet-audio-jack.service", "multi-user.target.wants/gizlet-power.service",
                   "multi-user.target.wants/gizlet-switches.service",
+                  "multi-user.target.wants/gizlet-services.service",
                   "timers.target.wants/gizlet-late-log.timer"):
         assert (systemd / wants).is_symlink(), f"{wants} is enabled"
     # WiFi and ssh start at boot only when turned on in the launcher (gizlet-switch).

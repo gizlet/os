@@ -1,0 +1,1144 @@
+//! Installed services: `.gzl` packages whose manifest (schema 2) has kind
+//! `service`, background programs with no screen of their own.
+//!
+//! `gizlet install` places a service beside the apps and registers it with
+//! the system's service manager, systemd on Gizlet OS, as
+//! `gizlet-service-<id>.service`. The base system is read-only, so the unit
+//! lives in `/run/systemd/system` and is written again on every boot by
+//! `gizlet service boot` (`gizlet-services.service`), which then starts the
+//! services set to start at boot. The unit runs `gizlet service exec <id>`,
+//! which prepares the service's folders and environment and replaces itself
+//! with the package's entry. A service is a system unit, never a child of the
+//! launcher, so it keeps running while the launcher quits for an app or
+//! restarts.
+//!
+//! | Path | Holds |
+//! | --- | --- |
+//! | `<prefix>/services/<id>/` | The package |
+//! | `<prefix>/services/.boot-<id>` | Present while it starts at boot |
+//! | `<prefix>/service-data/<id>/` | Its state and configuration (`GIZLET_STATE_DIR`), kept across updates |
+//! | `/run/gizlet-services/<id>/` | Its sockets and other runtime files (`GIZLET_RUNTIME_DIR`), removed when it stops |
+//!
+//! Uninstalling stops it and every process it started, unregisters the unit
+//! and deletes all of these.
+
+use crate::apps::{self, App, Kind, Library, Manifest};
+use std::fs::{self, File};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// The units of Gizlet services are named `gizlet-service-<id>.service`.
+pub const UNIT_PREFIX: &str = "gizlet-service-";
+/// Where the units are written: systemd's runtime unit folder, emptied at every boot.
+const UNIT_DIR: &str = "/run/systemd/system";
+/// Where each service's runtime folder is created: systemd's `RuntimeDirectory=`, under `/run`.
+pub const RUN_DIR: &str = "/run/gizlet-services";
+/// After starting, how long a service must keep running to count as started.
+const PROBATION: Duration = Duration::from_secs(3);
+
+pub fn unit_name(id: &str) -> String {
+    format!("{UNIT_PREFIX}{id}.service")
+}
+
+/// What systemd reports about a unit.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UnitState {
+    /// `loaded`, or `not-found` for a unit that is not registered.
+    pub load: String,
+    /// `active`, `activating`, `deactivating`, `reloading`, `inactive` or `failed`.
+    pub active: String,
+    pub sub: String,
+    /// How it last ended: `success`, `exit-code`, `signal`, `timeout`, ...
+    pub result: String,
+    pub pid: u32,
+    /// Automatic restarts since it was last started.
+    pub restarts: u32,
+    /// Its control group while any of its processes remain.
+    pub cgroup: String,
+}
+
+impl UnitState {
+    /// Some process of it may be running.
+    pub fn running(&self) -> bool {
+        matches!(self.active.as_str(), "active" | "activating" | "deactivating" | "reloading") || !self.cgroup.is_empty()
+    }
+
+    /// Why a service that was just started is not running.
+    fn start_problem(&self) -> Option<String> {
+        let result = if self.result.is_empty() { "unknown" } else { &self.result };
+        if self.active == "failed" {
+            Some(format!("it failed ({result})"))
+        } else if self.sub == "auto-restart" || self.restarts > 0 {
+            Some(format!("it exited and is being restarted ({result})"))
+        } else if self.active == "inactive" && self.result != "success" {
+            Some(format!("it stopped ({result})"))
+        } else {
+            None
+        }
+    }
+}
+
+/// The service manager the units are registered with: [`Systemd`], or a
+/// stand-in in tests.
+pub trait Manager: Send + Sync {
+    /// Whether services can run here, or why not.
+    fn available(&self) -> Result<(), String>;
+    /// Writes the unit, or removes it when `text` is `None`. True if that changed anything.
+    fn write_unit(&self, unit: &str, text: Option<&str>) -> Result<bool, String>;
+    /// The Gizlet service units written.
+    fn units(&self) -> Vec<String>;
+    /// Makes the manager read the units again.
+    fn reload(&self) -> Result<(), String>;
+    /// Starts the unit; without `wait`, only queues the start.
+    fn start(&self, unit: &str, wait: bool) -> Result<(), String>;
+    /// Stops the unit and every process in it.
+    fn stop(&self, unit: &str) -> Result<(), String>;
+    /// Forgets that the unit failed.
+    fn reset_failed(&self, unit: &str);
+    fn states(&self, units: &[String]) -> Result<Vec<UnitState>, String>;
+    fn probation(&self) -> Duration {
+        PROBATION
+    }
+}
+
+/// systemd, through `systemctl`.
+pub struct Systemd {
+    units: PathBuf,
+}
+
+impl Systemd {
+    pub fn new() -> Systemd {
+        Systemd { units: PathBuf::from(UNIT_DIR) }
+    }
+
+    fn systemctl(&self, args: &[&str]) -> Result<String, String> {
+        let out = Command::new("systemctl")
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run systemctl: {e}"))?;
+        if out.status.success() {
+            return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = err.trim();
+        Err(if err.is_empty() { format!("systemctl {} failed ({})", args.join(" "), out.status) } else { err.to_string() })
+    }
+}
+
+impl Default for Systemd {
+    fn default() -> Self {
+        Systemd::new()
+    }
+}
+
+impl Manager for Systemd {
+    fn available(&self) -> Result<(), String> {
+        // sd_booted(3): systemd is the init system.
+        if cfg!(target_os = "linux") && Path::new("/run/systemd/system").is_dir() {
+            Ok(())
+        } else {
+            Err("services run under systemd, as on Gizlet OS, and this system does not run it".into())
+        }
+    }
+
+    fn write_unit(&self, unit: &str, text: Option<&str>) -> Result<bool, String> {
+        let path = self.units.join(unit);
+        let Some(text) = text else {
+            return match fs::remove_file(&path) {
+                Ok(()) => Ok(true),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+                Err(e) => Err(format!("{}: {e}", path.display())),
+            };
+        };
+        if fs::read_to_string(&path).is_ok_and(|old| old == text) {
+            return Ok(false);
+        }
+        let tmp = self.units.join(format!(".{unit}.new"));
+        fs::write(&tmp, text).and_then(|()| fs::rename(&tmp, &path)).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("{}: {e}", path.display())
+        })?;
+        Ok(true)
+    }
+
+    fn units(&self) -> Vec<String> {
+        let mut units: Vec<String> = fs::read_dir(&self.units)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(UNIT_PREFIX) && n.ends_with(".service"))
+            .collect();
+        units.sort();
+        units
+    }
+
+    fn reload(&self) -> Result<(), String> {
+        self.systemctl(&["daemon-reload"]).map(drop)
+    }
+
+    fn start(&self, unit: &str, wait: bool) -> Result<(), String> {
+        let args: &[&str] = if wait { &["start", unit] } else { &["start", "--no-block", unit] };
+        self.systemctl(args).map(drop)
+    }
+
+    fn stop(&self, unit: &str) -> Result<(), String> {
+        self.systemctl(&["stop", unit]).map(drop)
+    }
+
+    fn reset_failed(&self, unit: &str) {
+        let _ = self.systemctl(&["reset-failed", unit]);
+    }
+
+    fn states(&self, units: &[String]) -> Result<Vec<UnitState>, String> {
+        if units.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut args = vec!["show", "--property=Id,LoadState,ActiveState,SubState,Result,MainPID,NRestarts,ControlGroup", "--"];
+        args.extend(units.iter().map(String::as_str));
+        let out = self.systemctl(&args)?;
+        let mut found = std::collections::BTreeMap::new();
+        for block in out.split("\n\n") {
+            let mut id = String::new();
+            let mut state = UnitState::default();
+            for line in block.lines() {
+                let Some((key, value)) = line.split_once('=') else { continue };
+                let value = value.to_string();
+                match key {
+                    "Id" => id = value,
+                    "LoadState" => state.load = value,
+                    "ActiveState" => state.active = value,
+                    "SubState" => state.sub = value,
+                    "Result" => state.result = value,
+                    "MainPID" => state.pid = value.parse().unwrap_or(0),
+                    "NRestarts" => state.restarts = value.parse().unwrap_or(0),
+                    "ControlGroup" => state.cgroup = value,
+                    _ => {}
+                }
+            }
+            if !id.is_empty() {
+                found.insert(id, state);
+            }
+        }
+        Ok(units
+            .iter()
+            .map(|u| found.remove(u).unwrap_or_else(|| UnitState { load: "not-found".into(), active: "inactive".into(), ..UnitState::default() }))
+            .collect())
+    }
+}
+
+/// Whether a service runs, as the launcher and `gizlet service` show it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum State {
+    Running,
+    Starting,
+    Stopping,
+    Stopped,
+    /// It failed, or exited and is being restarted; with systemd's reason.
+    Failed(String),
+}
+
+impl State {
+    fn of(unit: &UnitState) -> State {
+        match (unit.active.as_str(), unit.sub.as_str()) {
+            ("active" | "reloading", _) => State::Running,
+            ("activating", "auto-restart") => State::Failed(unit.result.clone()),
+            ("activating", _) => State::Starting,
+            ("deactivating", _) => State::Stopping,
+            ("failed", _) => State::Failed(unit.result.clone()),
+            _ => State::Stopped,
+        }
+    }
+
+    /// Started or about to be: what a Running switch shows.
+    pub fn on(&self) -> bool {
+        matches!(self, State::Running | State::Starting)
+    }
+
+    pub fn word(&self) -> String {
+        match self {
+            State::Running => "running".into(),
+            State::Starting => "starting".into(),
+            State::Stopping => "stopping".into(),
+            State::Stopped => "stopped".into(),
+            State::Failed(why) => format!("failed ({why})"),
+        }
+    }
+}
+
+/// An installed service and how it runs.
+#[derive(Clone, Debug)]
+pub struct Service {
+    pub package: App,
+    /// It starts at boot.
+    pub boot: bool,
+    pub state: State,
+    pub pid: Option<u32>,
+}
+
+impl Service {
+    pub fn id(&self) -> &str {
+        self.package.id()
+    }
+}
+
+/// The service manager of this system.
+pub fn system_manager() -> Box<dyn Manager> {
+    Box::new(Systemd::new())
+}
+
+/// Characters a path may have to be written into a unit file as it is.
+fn unit_safe(path: &Path) -> Option<&str> {
+    let text = path.to_str()?;
+    (text.starts_with('/') && text.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-+".contains(&b))).then_some(text)
+}
+
+/// The command a unit runs: `/usr/bin/gizlet` on Gizlet OS, which runs the
+/// CLI of the Launcher release selected at boot; this CLI elsewhere.
+fn cli_path() -> Result<PathBuf, String> {
+    if cfg!(feature = "gizlet-os") {
+        return Ok(PathBuf::from("/usr/bin/gizlet"));
+    }
+    std::env::current_exe().map_err(|e| format!("cannot find the gizlet command: {e}"))
+}
+
+impl Library {
+    pub fn services_dir(&self) -> PathBuf {
+        self.prefix().join("services")
+    }
+
+    /// The service's state and configuration, kept across updates and deleted on uninstall.
+    pub fn service_data(&self, id: &str) -> PathBuf {
+        self.prefix().join("service-data").join(id)
+    }
+
+    /// The service's runtime folder, which systemd creates as it starts and removes once it stops.
+    pub fn service_runtime(&self, id: &str) -> PathBuf {
+        self.run_dir().join(id)
+    }
+
+    fn boot_flag(&self, id: &str) -> PathBuf {
+        self.services_dir().join(format!(".boot-{id}"))
+    }
+
+    /// The unit that runs the service.
+    pub fn unit_text(&self, id: &str) -> Result<String, String> {
+        let cli = cli_path()?;
+        let cli = unit_safe(&cli).ok_or_else(|| format!("{} cannot be written into a unit", cli.display()))?;
+        let prefix = self.prefix();
+        let prefix = unit_safe(prefix).ok_or_else(|| format!("{} cannot be written into a unit", prefix.display()))?;
+        let runtime = RUN_DIR.trim_start_matches("/run/");
+        // On Gizlet OS a service needs the data partition, and stops before it at shutdown.
+        let data = if cfg!(feature = "gizlet-os") {
+            "Requires=gizlet-data.service\nConditionPathExists=/run/gizlet-data.ready\n"
+        } else {
+            ""
+        };
+        Ok(format!(
+            "# Written by gizlet for the service {id}; `gizlet uninstall {id}` removes it.\n\
+             [Unit]\n\
+             Description=Gizlet service {id}\n\
+             After=gizlet-data.service network.target\n\
+             {data}\
+             StartLimitIntervalSec=60\n\
+             StartLimitBurst=5\n\
+             \n\
+             [Service]\n\
+             Type=exec\n\
+             ExecStart={cli} service exec {id}\n\
+             Environment=GIZLET_PREFIX={prefix}\n\
+             Restart=on-failure\n\
+             RestartSec=2\n\
+             TimeoutStopSec=15\n\
+             KillMode=control-group\n\
+             RuntimeDirectory={runtime}/{id}\n\
+             RuntimeDirectoryMode=0700\n\
+             PrivateTmp=yes\n\
+             StandardInput=null\n\
+             StandardOutput=journal\n\
+             StandardError=journal\n\
+             SyslogIdentifier={id}\n"
+        ))
+    }
+
+    /// The service `id` as installed, without the lock.
+    pub(crate) fn find_service(&self, id: &str) -> Result<App, String> {
+        if !apps::is_valid_id(id) {
+            return Err(format!("{id:?} is not a service ID"));
+        }
+        let dir = self.services_dir().join(id);
+        if !dir.is_dir() {
+            return Err(if self.apps_dir().join(id).is_dir() {
+                format!("{id} is an app, not a service")
+            } else {
+                format!("{id} is not installed")
+            });
+        }
+        let package = self.load(&dir)?;
+        if package.manifest.kind() != Kind::Service {
+            return Err(format!("{} holds {id}, which is not a service", dir.display()));
+        }
+        Ok(package)
+    }
+
+    /// Installed service packages, by ID.
+    fn service_packages(&self) -> Vec<App> {
+        let mut found: Vec<App> = fs::read_dir(self.services_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+            .filter_map(|e| self.find_service(&e.file_name().to_string_lossy()).ok())
+            .collect();
+        found.sort_by(|a, b| a.id().cmp(b.id()));
+        found
+    }
+
+    fn unit_state(&self, id: &str) -> Result<UnitState, String> {
+        let mut states = self.manager().states(&[unit_name(id)])?;
+        Ok(states.pop().unwrap_or_default())
+    }
+
+    fn status(&self, package: App, unit: &UnitState) -> Service {
+        let boot = self.boot_flag(package.id()).exists();
+        Service { boot, state: State::of(unit), pid: (unit.pid != 0).then_some(unit.pid), package }
+    }
+
+    /// The installed services and how each runs.
+    pub fn services(&self) -> Result<Vec<Service>, String> {
+        let packages = self.service_packages();
+        if packages.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.manager().available()?;
+        let units: Vec<String> = packages.iter().map(|p| unit_name(p.id())).collect();
+        let states = self.manager().states(&units)?;
+        Ok(packages.into_iter().zip(states.iter()).map(|(p, s)| self.status(p, s)).collect())
+    }
+
+    pub fn service(&self, id: &str) -> Result<Service, String> {
+        let package = self.find_service(id)?;
+        self.manager().available()?;
+        let unit = self.unit_state(id)?;
+        Ok(self.status(package, &unit))
+    }
+
+    /// Writes the service's unit and has the manager read it if it changed.
+    fn register(&self, id: &str) -> Result<(), String> {
+        let text = self.unit_text(id)?;
+        if self.manager().write_unit(&unit_name(id), Some(&text)).map_err(|e| format!("cannot register {id}: {e}"))? {
+            self.manager().reload().map_err(|e| format!("cannot register {id}: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Starts the service and waits until it has kept running for a moment.
+    /// A start asked for is never refused for earlier failures: their count
+    /// limits automatic restarts only.
+    fn start_checked(&self, id: &str) -> Result<(), String> {
+        let unit = unit_name(id);
+        self.manager().reset_failed(&unit);
+        self.manager().start(&unit, true)?;
+        let deadline = Instant::now() + self.manager().probation();
+        loop {
+            if let Some(problem) = self.unit_state(id)?.start_problem() {
+                return Err(problem);
+            }
+            if Instant::now() >= deadline {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    /// Stops the service and every process it started, then holds its
+    /// running lock: nothing of it runs until the lock is dropped.
+    fn stop_verified(&self, id: &str) -> Result<File, String> {
+        let unit = unit_name(id);
+        let root = self.services_dir();
+        if let Err(e) = self.manager().available() {
+            // Without a manager nothing was started for it, except perhaps by hand.
+            return self.not_running(&root, id).map_err(|_| format!("{id} is running ({e})"));
+        }
+        let before = self.unit_state(id)?;
+        if before.load != "not-found" || before.running() {
+            self.manager().stop(&unit)?;
+        }
+        let after = self.unit_state(id)?;
+        if after.running() {
+            let left = if after.cgroup.is_empty() { String::new() } else { format!(", processes remain in {}", after.cgroup) };
+            return Err(format!("{unit} is still {} ({}){left}", after.active, after.sub));
+        }
+        self.not_running(&root, id).map_err(|_| format!("{id} is still running outside {unit}, as `gizlet service exec {id}`"))
+    }
+
+    /// Installs or updates the service unpacked in `staging`, with the
+    /// library locked. A new service starts and starts at boot. An update
+    /// stops the running version first, keeps the state and the boot choice,
+    /// and starts the new version if the old one was running; if it fails to
+    /// start, the previous version comes back.
+    pub(crate) fn install_service(&self, manifest: &Manifest, staging: &Path) -> Result<App, String> {
+        let id = manifest.id.as_str();
+        if self.apps_dir().join(id).exists() {
+            return Err(format!("{id} is installed as an app; uninstall it first"));
+        }
+        self.manager().available().map_err(|e| format!("cannot install the service {id}: {e}"))?;
+        let root = self.services_dir();
+        fs::create_dir_all(&root).map_err(|e| format!("{}: {e}", root.display()))?;
+        let dest = root.join(id);
+        let old = self.backup_in(&root, id);
+        let previous = match dest.exists() {
+            true => Some(self.find_service(id).map_err(|e| format!("the installed {id} is damaged ({e}); run `gizlet uninstall {id}` first"))?),
+            false => None,
+        };
+        let was_running = previous.is_some() && self.unit_state(id)?.running();
+        let running = self.stop_verified(id).map_err(|e| format!("cannot stop {id} to update it: {e}; the installed version is unchanged"))?;
+        if previous.is_some() {
+            fs::rename(&dest, &old).map_err(|e| format!("{}: {e}", dest.display()))?;
+        }
+        if let Err(e) = fs::rename(staging, &dest) {
+            if previous.is_some() {
+                let _ = fs::rename(&old, &dest);
+            }
+            return Err(format!("{}: {e}", dest.display()));
+        }
+        apps::sync();
+        drop(running);
+        let started = self.register(id).and_then(|()| {
+            if previous.is_none() {
+                fs::write(self.boot_flag(id), "").map_err(|e| format!("{}: {e}", self.boot_flag(id).display()))?;
+                apps::sync();
+            }
+            if previous.is_none() || was_running {
+                self.start_checked(id)?;
+            }
+            Ok(())
+        });
+        let Err(problem) = started else {
+            if previous.is_some() {
+                let _ = fs::remove_dir_all(&old);
+            }
+            return self.load(&dest);
+        };
+        let logs = format!("see `journalctl -u {}`", unit_name(id));
+        let Some(previous) = previous else {
+            return Err(match self.remove_service(id) {
+                Ok(()) => format!("{id} did not start: {problem}; it was not installed ({logs})"),
+                Err(e) => format!("{id} did not start: {problem} ({logs}); removing it again failed: {e}"),
+            });
+        };
+        // Put the previous version back as it was.
+        let version = &previous.manifest.version;
+        let restored = self.stop_verified(id).and_then(|running| {
+            let trash = root.join(format!(".remove-{id}-{}", std::process::id()));
+            fs::rename(&dest, &trash).map_err(|e| format!("{}: {e}", dest.display()))?;
+            fs::rename(&old, &dest).map_err(|e| format!("{}: {e}", old.display()))?;
+            apps::sync();
+            let _ = fs::remove_dir_all(&trash);
+            drop(running);
+            self.register(id)?;
+            if was_running {
+                self.start_checked(id)?;
+            }
+            Ok(())
+        });
+        Err(match restored {
+            Ok(()) if was_running => format!("{id} {} did not start: {problem} ({logs}); {version} is back and running", manifest.version),
+            Ok(()) => format!("{id} {} did not start: {problem} ({logs}); {version} is back", manifest.version),
+            Err(e) => format!("{id} {} did not start: {problem} ({logs}); restoring {version} failed: {e}", manifest.version),
+        })
+    }
+
+    /// Uninstalls the service with the library locked: it no longer starts
+    /// at boot, it and every process it started stop, its unit is
+    /// unregistered, and its package, state and runtime folder are deleted.
+    /// Each failure says what is left and what to do.
+    pub(crate) fn remove_service(&self, id: &str) -> Result<(), String> {
+        let root = self.services_dir();
+        let unit = unit_name(id);
+        let again = format!("then run `gizlet uninstall {id}` again");
+        let flag = self.boot_flag(id);
+        match fs::remove_file(&flag) {
+            Ok(()) => apps::sync(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("cannot turn off {id} at boot: {}: {e}; nothing was removed", flag.display())),
+        }
+        let running = self.stop_verified(id).map_err(|e| {
+            format!("cannot stop {id}: {e}. Nothing was removed, and it no longer starts at boot: restart the device, {again}")
+        })?;
+        if self.manager().available().is_ok() {
+            let removed = self.manager().write_unit(&unit, None).map_err(|e| format!("cannot unregister {unit}: {e}; {again}"))?;
+            if removed {
+                self.manager().reload().map_err(|e| format!("cannot unregister {unit}: {e}; {again}"))?;
+            }
+            self.manager().reset_failed(&unit);
+        }
+        for dir in [self.service_data(id), self.service_runtime(id)] {
+            remove_tree(&dir).map_err(|e| format!("{id} is stopped and unregistered, but {} cannot be deleted: {e}; {again}", dir.display()))?;
+        }
+        let trash = root.join(format!(".remove-{id}-{}", std::process::id()));
+        let dir = root.join(id);
+        fs::rename(&dir, &trash).map_err(|e| format!("{id} is stopped and unregistered, but {}: {e}; {again}", dir.display()))?;
+        // Once renamed it is no longer installed; recovery deletes what remains.
+        let deleted = fs::remove_dir_all(&trash);
+        drop(running);
+        let _ = fs::remove_file(self.running_in(&root, id));
+        apps::sync();
+        deleted.map_err(|e| format!("{id} is uninstalled, but {} cannot be deleted yet: {e}", trash.display()))
+    }
+
+    /// After a crash in the middle of an uninstall, with the library locked:
+    /// deletes the boot flags, running locks and state of services that are
+    /// no longer installed.
+    pub(crate) fn sweep_services(&self) {
+        let root = self.services_dir();
+        for e in fs::read_dir(&root).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(id) = name.strip_prefix(".boot-").filter(|id| !root.join(id).exists()) {
+                let _ = fs::remove_file(self.boot_flag(id));
+            } else if let Some(id) = name.strip_prefix(".running-").filter(|id| !root.join(id).exists()) {
+                if let Ok(lock) = self.not_running(&root, id) {
+                    let _ = fs::remove_file(e.path());
+                    drop(lock);
+                }
+            }
+        }
+        for e in fs::read_dir(self.prefix().join("service-data")).into_iter().flatten().flatten() {
+            let id = e.file_name().to_string_lossy().into_owned();
+            if apps::is_valid_id(&id) && !root.join(&id).exists() {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
+    }
+
+    /// Starts the service, registering its unit first if needed.
+    pub fn start_service(&self, id: &str) -> Result<Service, String> {
+        let _lock = self.lock_waiting()?;
+        self.recover();
+        self.find_service(id)?;
+        self.manager().available()?;
+        self.register(id)?;
+        self.start_checked(id).map_err(|e| format!("{id} did not start: {e} (see `journalctl -u {}`)", unit_name(id)))?;
+        self.service(id)
+    }
+
+    /// Stops the service and every process it started.
+    pub fn stop_service(&self, id: &str) -> Result<Service, String> {
+        let _lock = self.lock_waiting()?;
+        self.recover();
+        self.find_service(id)?;
+        self.manager().available()?;
+        self.stop_verified(id).map_err(|e| format!("cannot stop {id}: {e}"))?;
+        self.service(id)
+    }
+
+    pub fn restart_service(&self, id: &str) -> Result<Service, String> {
+        self.stop_service(id)?;
+        self.start_service(id)
+    }
+
+    /// Chooses whether the service starts at boot; it does not start or stop it now.
+    pub fn set_service_boot(&self, id: &str, on: bool) -> Result<Service, String> {
+        let _lock = self.lock_waiting()?;
+        self.recover();
+        self.find_service(id)?;
+        let flag = self.boot_flag(id);
+        let changed = if on { fs::write(&flag, "") } else { fs::remove_file(&flag).or_else(|e| if e.kind() == io::ErrorKind::NotFound { Ok(()) } else { Err(e) }) };
+        changed.map_err(|e| format!("{}: {e}", flag.display()))?;
+        apps::sync();
+        self.service(id)
+    }
+
+    /// At boot: registers every installed service, unregisters units of
+    /// services no longer installed, and starts those set to start at boot
+    /// without waiting for them. Returns the services started.
+    pub fn boot_services(&self) -> Result<Vec<String>, String> {
+        let _lock = self.lock_waiting()?;
+        self.recover();
+        let packages = self.service_packages();
+        let stale: Vec<String> = self.manager().units().into_iter().filter(|u| !packages.iter().any(|p| unit_name(p.id()) == *u)).collect();
+        if packages.is_empty() && stale.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.manager().available()?;
+        let mut changed = false;
+        let mut errors = Vec::new();
+        for package in &packages {
+            match self.unit_text(package.id()).and_then(|text| self.manager().write_unit(&unit_name(package.id()), Some(&text))) {
+                Ok(wrote) => changed |= wrote,
+                Err(e) => errors.push(format!("cannot register {}: {e}", package.id())),
+            }
+        }
+        for unit in &stale {
+            match self.manager().write_unit(unit, None) {
+                Ok(removed) => changed |= removed,
+                Err(e) => errors.push(format!("cannot unregister {unit}: {e}")),
+            }
+        }
+        if changed {
+            self.manager().reload()?;
+        }
+        let mut started = Vec::new();
+        for package in packages.iter().filter(|p| self.boot_flag(p.id()).exists()) {
+            match self.manager().start(&unit_name(package.id()), false) {
+                Ok(()) => started.push(package.id().to_string()),
+                Err(e) => errors.push(format!("cannot start {}: {e}", package.id())),
+            }
+        }
+        if errors.is_empty() {
+            Ok(started)
+        } else {
+            Err(errors.join("\n"))
+        }
+    }
+
+    /// Runs the service in this process, as its unit does: prepares its
+    /// state and runtime folders and replaces this process with its entry,
+    /// which keeps the service's running lock. Returns only on failure.
+    pub fn exec_service(&self, id: &str) -> String {
+        let root = self.services_dir();
+        if let Err(e) = self.find_service(id) {
+            return e;
+        }
+        // Held by the service and everything it starts: an update or
+        // uninstall waits for all of them to stop.
+        let running = match self.hold_running(&root, id) {
+            Ok(file) => file,
+            Err(e) => return format!("cannot mark {id} running: {e}"),
+        };
+        let package = match self.find_service(id) {
+            Ok(package) => package,
+            Err(e) => return e,
+        };
+        let state = self.service_data(id);
+        let runtime = std::env::var_os("RUNTIME_DIRECTORY").map(PathBuf::from).unwrap_or_else(|| self.service_runtime(id));
+        for dir in [&state, &runtime] {
+            if let Err(e) = private_dir(dir) {
+                return format!("{}: {e}", dir.display());
+            }
+        }
+        let entry = package.entry();
+        let mut cmd = match apps::entry_command(self, &entry) {
+            Ok(cmd) => cmd,
+            Err(e) => return format!("cannot prepare {id}: {e}"),
+        };
+        cmd.current_dir(&package.dir)
+            .env("GIZLET_SERVICE_ID", id)
+            .env("GIZLET_SERVICE_DIR", &package.dir)
+            .env("GIZLET_STATE_DIR", &state)
+            .env("GIZLET_RUNTIME_DIR", &runtime)
+            .env("HOME", &state);
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            use std::os::unix::process::CommandExt;
+            unsafe { libc::fcntl(running.as_raw_fd(), libc::F_SETFD, 0) };
+            let err = cmd.exec();
+            format!("cannot start {}: {err}", entry.display())
+        }
+        #[cfg(not(unix))]
+        {
+            drop(running);
+            format!("cannot start {}: services need Unix", entry.display())
+        }
+    }
+}
+
+/// Deletes a folder and everything in it, if it exists.
+fn remove_tree(dir: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(dir) {
+        Ok(m) if m.is_dir() => fs::remove_dir_all(dir),
+        Ok(_) => fs::remove_file(dir),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Creates a folder only its owner can enter, if it does not exist.
+fn private_dir(dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::apps::tests::{leftovers, manifest_v, package, temp};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::{Arc, Mutex};
+
+    /// What the stand-in for systemd knows and was asked.
+    #[derive(Default)]
+    pub(crate) struct Units {
+        pub text: BTreeMap<String, String>,
+        pub active: BTreeSet<String>,
+        pub failed: BTreeSet<String>,
+        /// Each running unit's process holds its running lock.
+        held: BTreeMap<String, File>,
+        /// Units whose next start fails as soon as their process starts.
+        pub crash_on_start: BTreeSet<String>,
+        /// Units that cannot be stopped.
+        pub stuck: BTreeSet<String>,
+        pub unavailable: bool,
+        pub log: Vec<String>,
+    }
+
+    /// systemd's stand-in: units kept in memory, started units hold the running lock.
+    pub(crate) struct Fake {
+        services: PathBuf,
+        pub units: Arc<Mutex<Units>>,
+    }
+
+    impl Manager for Fake {
+        fn available(&self) -> Result<(), String> {
+            if self.units.lock().unwrap().unavailable { Err("no service manager here".into()) } else { Ok(()) }
+        }
+        fn write_unit(&self, unit: &str, text: Option<&str>) -> Result<bool, String> {
+            let mut u = self.units.lock().unwrap();
+            u.log.push(format!("write {unit} {}", text.is_some()));
+            Ok(match text {
+                Some(t) => u.text.insert(unit.into(), t.into()).as_deref() != Some(t),
+                None => u.text.remove(unit).is_some(),
+            })
+        }
+        fn units(&self) -> Vec<String> {
+            self.units.lock().unwrap().text.keys().cloned().collect()
+        }
+        fn reload(&self) -> Result<(), String> {
+            self.units.lock().unwrap().log.push("reload".into());
+            Ok(())
+        }
+        fn start(&self, unit: &str, wait: bool) -> Result<(), String> {
+            let mut u = self.units.lock().unwrap();
+            u.log.push(format!("start {unit}{}", if wait { "" } else { " --no-block" }));
+            if !u.text.contains_key(unit) {
+                return Err(format!("Unit {unit} not found."));
+            }
+            u.failed.remove(unit);
+            if u.crash_on_start.remove(unit) {
+                u.failed.insert(unit.into());
+                return Ok(());
+            }
+            if u.active.insert(unit.into()) {
+                let id = unit.strip_prefix(UNIT_PREFIX).unwrap().strip_suffix(".service").unwrap();
+                let file = File::options().create(true).truncate(false).write(true).open(self.services.join(format!(".running-{id}"))).unwrap();
+                file.lock_shared().unwrap();
+                u.held.insert(unit.into(), file);
+            }
+            Ok(())
+        }
+        fn stop(&self, unit: &str) -> Result<(), String> {
+            let mut u = self.units.lock().unwrap();
+            u.log.push(format!("stop {unit}"));
+            if u.stuck.contains(unit) {
+                return Err(format!("Job for {unit} failed."));
+            }
+            u.active.remove(unit);
+            u.held.remove(unit);
+            Ok(())
+        }
+        fn reset_failed(&self, unit: &str) {
+            self.units.lock().unwrap().failed.remove(unit);
+        }
+        fn states(&self, units: &[String]) -> Result<Vec<UnitState>, String> {
+            let u = self.units.lock().unwrap();
+            Ok(units
+                .iter()
+                .map(|unit| {
+                    let load = if u.text.contains_key(unit) { "loaded" } else { "not-found" };
+                    let (active, sub, result) = if u.active.contains(unit) {
+                        ("active", "running", "success")
+                    } else if u.failed.contains(unit) {
+                        ("failed", "failed", "exit-code")
+                    } else {
+                        ("inactive", "dead", "success")
+                    };
+                    UnitState { load: load.into(), active: active.into(), sub: sub.into(), result: result.into(), ..UnitState::default() }
+                })
+                .collect())
+        }
+        fn probation(&self) -> Duration {
+            Duration::ZERO
+        }
+    }
+
+    /// A library in `dir/prefix` whose services run under a fresh [`Fake`]:
+    /// a new one is what a reboot leaves, with the same files.
+    pub(crate) fn library(dir: &Path) -> (Library, Arc<Mutex<Units>>) {
+        let prefix = dir.join("prefix");
+        let units = Arc::new(Mutex::new(Units::default()));
+        let fake = Fake { services: std::path::absolute(prefix.join("services")).unwrap(), units: units.clone() };
+        (Library::with_manager(prefix, Box::new(fake), dir.join("run")), units)
+    }
+
+    fn service(dir: &Path, id: &str, version: &str) -> PathBuf {
+        let m = manifest_v(id, Some(2), Some("service")).replace("\"0.1.0\"", &format!("{version:?}"));
+        package(dir, &m, &[])
+    }
+
+    fn app(dir: &Path, id: &str) -> PathBuf {
+        package(dir, &manifest_v(id, Some(2), Some("app")), &[])
+    }
+
+    const A: &str = "dev.example.clock";
+    const B: &str = "dev.example.sync";
+
+    fn unit(id: &str) -> String {
+        unit_name(id)
+    }
+
+    #[test]
+    fn installs_and_controls_a_service() {
+        let dir = temp("svc-cycle");
+        let (lib, units) = library(&dir);
+        let installed = lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        assert_eq!(installed.dir, lib.services_dir().join(A));
+        assert!(lib.scan().is_empty(), "a service is not on the shelf");
+        assert!(lib.open_for_run(A).unwrap_err().contains("is a service, not an app"));
+        assert!(!lib.apps_dir().join(format!(".running-{A}")).exists(), "refusing to run it leaves nothing behind");
+        let text = units.lock().unwrap().text[&unit(A)].clone();
+        for line in [
+            "Type=exec",
+            &format!(" service exec {A}\n"),
+            &format!("RuntimeDirectory=gizlet-services/{A}\n"),
+            "KillMode=control-group",
+            "Restart=on-failure",
+            "PrivateTmp=yes",
+            &format!("SyslogIdentifier={A}\n"),
+        ] {
+            assert!(text.contains(line), "{line:?} in\n{text}");
+        }
+        // A new service runs and starts at boot.
+        let s = lib.service(A).unwrap();
+        assert_eq!((s.state.clone(), s.boot), (State::Running, true));
+        assert_eq!(lib.services().unwrap().len(), 1);
+        assert_eq!(lib.stop_service(A).unwrap().state, State::Stopped);
+        assert_eq!(lib.start_service(A).unwrap().state, State::Running);
+        assert!(!lib.set_service_boot(A, false).unwrap().boot);
+        assert_eq!(lib.restart_service(A).unwrap().state, State::Running);
+        // After a reboot nothing is registered: boot registers it and starts only what starts at boot.
+        drop((lib, units));
+        let (lib, units) = library(&dir);
+        assert_eq!(lib.boot_services().unwrap(), Vec::<String>::new());
+        assert!(units.lock().unwrap().text.contains_key(&unit(A)));
+        assert_eq!(lib.service(A).unwrap().state, State::Stopped);
+        lib.set_service_boot(A, true).unwrap();
+        drop((lib, units));
+        let (lib, units) = library(&dir);
+        assert_eq!(lib.boot_services().unwrap(), [A]);
+        assert!(units.lock().unwrap().log.contains(&format!("start {} --no-block", unit(A))));
+        assert_eq!(leftovers(&lib), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_keeps_state_and_running() {
+        let dir = temp("svc-update");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        fs::create_dir_all(lib.service_data(A)).unwrap();
+        fs::write(lib.service_data(A).join("state"), "kept").unwrap();
+        lib.set_service_boot(A, false).unwrap();
+        units.lock().unwrap().log.clear();
+        let updated = lib.install(&service(&dir, A, "0.2.0")).unwrap();
+        assert_eq!(updated.manifest.version, "0.2.0");
+        let log = units.lock().unwrap().log.clone();
+        let (stop, start) = (format!("stop {}", unit(A)), format!("start {}", unit(A)));
+        assert!(log.iter().position(|l| *l == stop) < log.iter().position(|l| *l == start), "{log:?}");
+        let s = lib.service(A).unwrap();
+        assert_eq!((s.state, s.boot), (State::Running, false), "it runs again and keeps its boot choice");
+        assert_eq!(fs::read_to_string(lib.service_data(A).join("state")).unwrap(), "kept");
+        // A stopped service stays stopped through an update.
+        lib.stop_service(A).unwrap();
+        lib.install(&service(&dir, A, "0.3.0")).unwrap();
+        assert_eq!(lib.service(A).unwrap().state, State::Stopped);
+        assert_eq!(leftovers(&lib), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_update_brings_back_the_previous_version() {
+        let dir = temp("svc-rollback");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        units.lock().unwrap().crash_on_start.insert(unit(A));
+        let err = lib.install(&service(&dir, A, "0.2.0")).unwrap_err();
+        assert!(err.contains("0.2.0 did not start") && err.contains("0.1.0 is back and running"), "{err}");
+        let s = lib.service(A).unwrap();
+        assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
+        assert_eq!(leftovers(&lib), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_service_that_does_not_start_is_not_installed() {
+        let dir = temp("svc-crash");
+        let (lib, units) = library(&dir);
+        units.lock().unwrap().crash_on_start.insert(unit(A));
+        let err = lib.install(&service(&dir, A, "0.1.0")).unwrap_err();
+        assert!(err.contains("did not start") && err.contains("it was not installed"), "{err}");
+        assert_nothing_left(&lib, &units, A);
+        // Once it starts, it installs.
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        assert_eq!(lib.service(A).unwrap().state, State::Running);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn assert_nothing_left(lib: &Library, units: &Arc<Mutex<Units>>, id: &str) {
+        let u = units.lock().unwrap();
+        assert!(!u.text.contains_key(&unit(id)) && !u.active.contains(&unit(id)), "{id} is unregistered and stopped");
+        assert!(!u.held.contains_key(&unit(id)), "no process of {id} remains");
+        for path in [
+            lib.services_dir().join(id),
+            lib.boot_flag(id),
+            lib.running_in(&lib.services_dir(), id),
+            lib.service_data(id),
+            lib.service_runtime(id),
+        ] {
+            assert!(!path.exists(), "{} remains", path.display());
+        }
+        assert_eq!(leftovers(lib), 0);
+    }
+
+    #[test]
+    fn uninstall_removes_a_running_service_completely() {
+        let dir = temp("svc-uninstall");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        lib.install(&service(&dir, B, "0.1.0")).unwrap();
+        lib.install(&app(&dir, "dev.example.game")).unwrap();
+        for dir in [lib.service_data(A), lib.service_runtime(A)] {
+            fs::create_dir_all(dir.join("sub")).unwrap();
+            fs::write(dir.join("sub/file"), "x").unwrap();
+        }
+        fs::create_dir_all(lib.service_data(B)).unwrap();
+        assert_eq!(lib.remove(A, false).unwrap(), Kind::Service);
+        assert_nothing_left(&lib, &units, A);
+        // Unrelated services and apps stay.
+        assert_eq!(lib.service(B).unwrap().state, State::Running);
+        assert!(lib.service_data(B).is_dir());
+        assert_eq!(lib.scan().len(), 1);
+        // It stays gone after a reboot, and installs again.
+        drop((lib, units));
+        let (lib, units) = library(&dir);
+        assert_eq!(lib.boot_services().unwrap(), [B]);
+        assert!(!units.lock().unwrap().text.contains_key(&unit(A)));
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        assert_eq!(lib.service(A).unwrap().state, State::Running);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn uninstall_says_what_to_do_when_it_cannot_finish() {
+        let dir = temp("svc-stuck");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        units.lock().unwrap().stuck.insert(unit(A));
+        let err = lib.remove(A, false).unwrap_err();
+        assert!(err.contains("cannot stop") && err.contains("restart the device") && err.contains(&format!("gizlet uninstall {A}")), "{err}");
+        assert!(lib.services_dir().join(A).is_dir(), "nothing was removed");
+        assert!(!lib.service(A).unwrap().boot, "it no longer starts at boot");
+        // After the restart it does not start, and uninstalls.
+        drop((lib, units));
+        let (lib, units) = library(&dir);
+        assert!(lib.boot_services().unwrap().is_empty());
+        lib.remove(A, false).unwrap();
+        assert_nothing_left(&lib, &units, A);
+
+        // A copy started by hand, outside its unit, is reported too.
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        lib.stop_service(A).unwrap();
+        let by_hand = lib.hold_running(&lib.services_dir(), A).unwrap();
+        let err = lib.remove(A, false).unwrap_err();
+        assert!(err.contains("outside") && err.contains(&format!("gizlet service exec {A}")), "{err}");
+        drop(by_hand);
+        lib.remove(A, false).unwrap();
+
+        // A state folder that cannot be deleted keeps the package, so uninstalling again finishes.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            lib.install(&service(&dir, A, "0.1.0")).unwrap();
+            let locked = lib.service_data(A).join("locked");
+            fs::create_dir_all(locked.join("inner")).unwrap();
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+            let err = lib.remove(A, false).unwrap_err();
+            assert!(err.contains("stopped and unregistered") && err.contains("cannot be deleted"), "{err}");
+            assert!(lib.services_dir().join(A).is_dir());
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+            lib.remove(A, false).unwrap();
+            assert_nothing_left(&lib, &units, A);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apps_and_services_do_not_share_ids() {
+        let dir = temp("svc-kinds");
+        let (lib, _) = library(&dir);
+        lib.install(&app(&dir, A)).unwrap();
+        assert!(lib.install(&service(&dir, A, "0.1.0")).unwrap_err().contains("installed as an app"));
+        assert!(lib.start_service(A).unwrap_err().contains("is an app, not a service"));
+        lib.remove(A, false).unwrap();
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        assert!(lib.install(&app(&dir, A)).unwrap_err().contains("installed as a service"));
+        assert_eq!(leftovers(&lib), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recovers_interrupted_updates_and_uninstalls() {
+        let dir = temp("svc-recover");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        lib.stop_service(A).unwrap();
+        // Cut short after the installed copy became the backup.
+        fs::rename(lib.services_dir().join(A), lib.backup_in(&lib.services_dir(), A)).unwrap();
+        assert_eq!(lib.services().unwrap().len(), 0);
+        assert_eq!(lib.boot_services().unwrap(), [A], "recovery puts it back first");
+        // What an uninstall cut short leaves of a service no longer installed.
+        let gone = "dev.example.gone";
+        fs::create_dir_all(lib.service_data(gone)).unwrap();
+        fs::write(lib.boot_flag(gone), "").unwrap();
+        fs::write(lib.running_in(&lib.services_dir(), gone), "").unwrap();
+        fs::create_dir_all(lib.services_dir().join(format!(".remove-{gone}-1"))).unwrap();
+        units.lock().unwrap().text.insert(unit(gone), String::new());
+        lib.boot_services().unwrap();
+        assert_nothing_left(&lib, &units, gone);
+        assert!(lib.services_dir().join(A).is_dir());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn services_need_a_service_manager() {
+        let dir = temp("svc-none");
+        let (lib, units) = library(&dir);
+        units.lock().unwrap().unavailable = true;
+        let err = lib.install(&service(&dir, A, "0.1.0")).unwrap_err();
+        assert!(err.contains("cannot install the service") && err.contains("no service manager"), "{err}");
+        assert!(!lib.services_dir().join(A).exists());
+        assert_eq!(leftovers(&lib), 0);
+        // With nothing installed, boot needs no manager.
+        assert!(lib.boot_services().unwrap().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reads_systemctl_show() {
+        let state = UnitState { active: "activating".into(), sub: "auto-restart".into(), result: "exit-code".into(), restarts: 1, ..UnitState::default() };
+        assert_eq!(State::of(&state), State::Failed("exit-code".into()));
+        assert!(state.start_problem().unwrap().contains("restarted"));
+        let clean = UnitState { active: "inactive".into(), sub: "dead".into(), result: "success".into(), ..UnitState::default() };
+        assert_eq!((State::of(&clean), clean.start_problem(), clean.running()), (State::Stopped, None, false));
+        let left = UnitState { cgroup: "/system.slice/x.service".into(), ..clean };
+        assert!(left.running(), "processes left in its control group still run");
+    }
+}

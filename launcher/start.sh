@@ -7,7 +7,8 @@
 # script then runs the app with `bin/cli run ID` and starts the
 # launcher again when it exits. Without a request, the launcher's exit ends
 # the entry, as Power → Quit the Launcher does. While an app runs, holding
-# Home (FN) for a second or Select+Start for two ends it.
+# Home (FN) for a second or Select+Start for two ends it. Services are system
+# units, not children of this script, and keep running throughout.
 #
 # Between the two, the LCD shows the kernel's text console. It is cleared
 # once here, with its cursor hidden, so a switch shows black rather than old
@@ -29,6 +30,12 @@ runtime_runner() {
 }
 # Options such as --probe pass straight through.
 [ $# -eq 0 ] || exec "$(runtime_runner)" "$launcher" "$@"
+# Bases with gizlet-services.service start the installed services at boot.
+# On older ones, which update the Launcher over the air, it does so once a boot.
+if [ ! -e /usr/lib/systemd/system/gizlet-services.service ] && [ ! -e /run/gizlet-services.booted ]; then
+    : > /run/gizlet-services.booted
+    "$cli" service boot || :
+fi
 printf '\033[2J\033[H\033[?25l' 2>/dev/null > /dev/tty1 || :
 while :; do
     rm -f "$request"

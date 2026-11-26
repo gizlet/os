@@ -67,3 +67,50 @@ fn shelf_worker_runs_app() {
     assert!(child.stdout.is_empty());
     assert!(String::from_utf8_lossy(&child.stderr).contains("is a service, not an app"), "{child:?}");
 }
+
+/// What a service's unit runs: `gizlet service exec ID` prepares the
+/// service's folders and replaces itself with its entry.
+#[test]
+fn service_exec_runs_the_entry_with_its_folders() {
+    let root = std::env::temp_dir().join(format!("gizlet-desktop-service-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let root = TestDir(root);
+    let id = "dev.gizlet.desktop-service";
+    let dir = root.0.join("services").join(id);
+    fs::create_dir_all(&dir).unwrap();
+    let manifest = serde_json::json!({
+        "schema": 2,
+        "kind": "service",
+        "id": id,
+        "name": "Desktop Service",
+        "version": "1.0.0",
+        "tier": "lite",
+        "target": gizlet_launcher::apps::device_target(),
+        "entry": "serve",
+    });
+    fs::write(dir.join(gizlet_launcher::apps::MANIFEST), manifest.to_string()).unwrap();
+    let entry = dir.join("serve");
+    fs::write(&entry, "#!/bin/sh\nprintf '%s\\n' \"$GIZLET_SERVICE_ID\" \"$GIZLET_SERVICE_DIR\" \"$GIZLET_STATE_DIR\" \"$GIZLET_RUNTIME_DIR\" \"$HOME\" \"$PWD\"\n").unwrap();
+    fs::set_permissions(&entry, fs::Permissions::from_mode(0o755)).unwrap();
+    let runtime = root.0.join("run").join(id);
+    let child = Command::new(env!("CARGO_BIN_EXE_gizlet-cli"))
+        .args(["service", "exec", id])
+        .env("GIZLET_PREFIX", &root.0)
+        .env("RUNTIME_DIRECTORY", &runtime)
+        .output()
+        .unwrap();
+    assert!(child.status.success(), "{child:?}");
+    let dir = fs::canonicalize(&dir).unwrap();
+    let state = fs::canonicalize(root.0.join("service-data").join(id)).unwrap();
+    let runtime = fs::canonicalize(&runtime).unwrap();
+    let lines: Vec<PathBuf> = String::from_utf8(child.stdout).unwrap().lines().map(|l| fs::canonicalize(l).unwrap_or_else(|_| PathBuf::from(l))).collect();
+    assert_eq!(lines, [PathBuf::from(id), dir.clone(), state.clone(), runtime.clone(), state.clone(), dir]);
+    for folder in [&state, &runtime] {
+        assert_eq!(fs::metadata(folder).unwrap().permissions().mode() & 0o777, 0o700, "{}", folder.display());
+    }
+    // Neither a service nor an app runs the other way.
+    let child = run(&root.0, id);
+    assert!(String::from_utf8_lossy(&child.stderr).contains("is a service, not an app"), "{child:?}");
+    let child = Command::new(env!("CARGO_BIN_EXE_gizlet-cli")).args(["service", "exec", "dev.gizlet.none"]).env("GIZLET_PREFIX", &root.0).output().unwrap();
+    assert!(!child.status.success() && String::from_utf8_lossy(&child.stderr).contains("not installed"), "{child:?}");
+}

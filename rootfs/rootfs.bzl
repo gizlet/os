@@ -29,6 +29,7 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/systemd/system/gizlet-late-log.service": "usr/lib/systemd/system/gizlet-late-log.service",
     "//rootfs:usr/lib/systemd/system/gizlet-late-log.timer": "usr/lib/systemd/system/gizlet-late-log.timer",
     "//services/session:gizlet-session.service": "usr/lib/systemd/system/gizlet-session.service",
+    "//rootfs:usr/lib/systemd/system/gizlet-services.service": "usr/lib/systemd/system/gizlet-services.service",
     "//rootfs:usr/lib/systemd/system/gizlet-ssh.service": "usr/lib/systemd/system/gizlet-ssh.service",
     "//rootfs:usr/lib/systemd/system/gizlet-switches.service": "usr/lib/systemd/system/gizlet-switches.service",
     "//rootfs:usr/lib/systemd/system/gizlet-var.service": "usr/lib/systemd/system/gizlet-var.service",
@@ -72,6 +73,8 @@ ROOTFS_ENABLE = [
     "gizlet-data.service",
     "gizlet-hostname.service",
     "gizlet-late-log.timer",
+    # The services installed with `gizlet install` that start at boot.
+    "gizlet-services.service",
     "gizlet-session.service",
     "gizlet-switches.service",
     "gizlet-var.service",

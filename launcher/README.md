@@ -1,13 +1,13 @@
 # Gizlet launcher
 
-The launcher on a Gizlet OS card: a home screen with the installed apps, settings and a button test, written in Rust with raylib. Its program also carries the `gizlet` command that installs and runs apps. Its design follows [gizlet/gizlet](https://github.com/gizlet/gizlet)'s frontend; the Store is not connected yet.
+The launcher on a Gizlet OS card: a home screen with the installed apps, settings and a button test, written in Rust with raylib. Its program also carries the `gizlet` command that installs and runs apps and installs and controls background services. Its design follows [gizlet/gizlet](https://github.com/gizlet/gizlet)'s frontend; the Store is not connected yet.
 
 Pages are laid out in logical units: the screen is 720 units tall and at least 960 wide, so one layout fits the R36S's 640×480 panel, a 1280×720 window and a 4K monitor; wider screens get more width. [Painter](src/painter.rs)
 
 | Page | What it does |
 | --- | --- |
 | Home | The shelf of installed apps (A starts one), Library, Store, Button Test, Settings and Power |
-| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; SSH on/off with the login address (`NAME.local` and the IP address) and key count; brightness and theme; volume and interface sounds; battery: charge, whether it is charging, power draw and the time left at that draw (hidden below 50 mA, where the gauge reads noise), separate sleep times on battery and while charging, and the CPU and GPU clocks and CPU use behind it; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information and the hostname, which can be changed |
+| Settings | Wi-Fi on/off, scan, join with an on-screen keyboard, forget; installed services: running or stopped, whether each starts at boot, and its state; SSH on/off with the login address (`NAME.local` and the IP address) and key count; brightness and theme; volume and interface sounds; battery: charge, whether it is charging, power draw and the time left at that draw (hidden below 50 mA, where the gauge reads noise), separate sleep times on battery and while charging, and the CPU and GPU clocks and CPU use behind it; A/B swap; language (中文/English); date and time: the time zone, whether network time has set the clock, and the 24-hour clock; device information and the hostname, which can be changed |
 | Button test | A handheld drawn from primitives that lights up with every button, stick and trigger; hold Back to leave |
 
 On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A, BTN_SOUTH is B), and the volume keys change the volume. Wi-Fi and ssh are switched and the time zone and hostname are set with `gizlet-switch`, which keeps the choice across reboots; the clock redraws in a new zone at once. Missing hardware or drivers are shown as such, as for the R36S's battery and sound today. [System](src/system/linux.rs) · [Controls](src/evdev.rs)
@@ -46,7 +46,7 @@ Developers write `gizlet.toml` at the repository root. The store reads that file
 | --- | --- | --- |
 | `1`, or left out | Left out, or `app` | An app: every package built before schema 2 |
 | `2` | `app` | An app, exactly like schema 1 |
-| `2` | `service` | A service: a background program. This release recognizes it and refuses to install it (`gizlet install` reports that it installs apps only); one placed by hand is neither shown on the shelf nor started by `gizlet run` or `gizlet start`. Installing and supervising services comes later |
+| `2` | `service` | A service: a background program that systemd runs. It is never shown on the shelf or started by `gizlet run` or `gizlet start`. See [Services](#services) |
 
 Any other schema, a schema 2 manifest without `kind`, and a schema 1 manifest whose `kind` is not `app` are refused. [Manifest contract](https://github.com/gizlet/gizlet/blob/main/docs/gizlet-toml.md#manifestjson)
 
@@ -70,15 +70,55 @@ On Gizlet OS, `/usr/bin/gizlet` runs the CLI from the Launcher release selected 
 
 | Command | Does |
 | --- | --- |
-| `gizlet install FILE.gzl` | Installs or updates an app; refused while that app runs, and for a service |
-| `gizlet uninstall ID [--saves]` | Removes it, and its saves with `--saves`; refused while it runs |
+| `gizlet install FILE.gzl` | Installs or updates an app, refused while that app runs; or a service (see [Services](#services)) |
+| `gizlet uninstall ID [--saves]` | Removes an app, and its saves with `--saves`; refused while it runs. Stops and removes a service with everything it keeps |
 | `gizlet list` | Lists installed apps: ID, version and name |
 | `gizlet run ID [ARGS]` | Runs it here and waits; the screen must be free, as in the recovery shell |
 | `gizlet start ID` | Asks the launcher on the screen to quit and run it, then come back |
 | `gizlet target` | Prints the target triple and tier packages must match |
+| `gizlet service list` | Lists installed services: ID, version, state, `enabled` or `disabled` at boot, and name |
+| `gizlet service status ID` | Shows a service's state and process, whether it starts at boot, its unit and its folders |
+| `gizlet service start\|stop\|restart ID` | Starts or stops a service now; stopping ends every process it started |
+| `gizlet service enable\|disable ID` | Chooses whether a service starts at boot, without starting or stopping it |
+| `gizlet service logs ID [-f]` | Shows a service's output from the journal, or follows it |
 | `gizlet system reload-runtime FILE.sqfs` | Activates a local runtime 1 image for new launches on Gizlet OS as root |
 
 See [Activating a new build](../runtime/README.md#activating-a-new-build) for runtime updates.
+
+## Services
+
+A service is a background program with no screen: a schema 2 package with `"kind": "service"`. It is built, published and installed like an app, with `gizlet install FILE.gzl`, but it runs under systemd rather than from the shelf, so it keeps running while the launcher hands the screen to an app, comes back or restarts. Settings → Services and `gizlet service` show and control it. [Services](src/services.rs) · [Commands](src/cli.rs)
+
+| Path | Holds |
+| --- | --- |
+| `/opt/gizlet/services/<id>/` | The installed package |
+| `/opt/gizlet/services/.boot-<id>` | Present while it starts at boot |
+| `/opt/gizlet/service-data/<id>/` | Its state and configuration, kept across updates, deleted on uninstall |
+| `/run/gizlet-services/<id>/` | Its sockets and other runtime files: created as it starts, removed when it stops |
+| `/run/systemd/system/gizlet-service-<id>.service` | Its systemd unit, written by `gizlet` |
+
+The read-only base cannot keep units in `/etc`, so `gizlet` writes each service's unit to `/run/systemd/system`, and `gizlet-services.service` (`gizlet service boot`) writes them again on every boot, after the data partition is mounted. It then starts the services set to start at boot, whatever `boot.ini` starts. On a base from before services, which gets this Launcher over the air, the Launcher's start script does the same once per boot; a custom `boot.ini` entry needs the card writer's base update first.
+
+### For service authors
+
+The unit runs `gizlet service exec <id>`, which replaces itself with the package's `entry`, as root, with no terminal or display. A dynamically linked entry runs through Gizlet runtime 1's `gizlet-run`, as an app's does. It gets:
+
+| Environment | Value |
+| --- | --- |
+| `GIZLET_SERVICE_ID` | Its ID |
+| `GIZLET_SERVICE_DIR` | The package folder, also the working directory; treat it as read-only, since an update replaces it |
+| `GIZLET_STATE_DIR` | `/opt/gizlet/service-data/<id>`, mode 0700: state and configuration that must survive updates and reboots. `HOME` points here too |
+| `GIZLET_RUNTIME_DIR` | `/run/gizlet-services/<id>`, mode 0700: sockets, PID and lock files. Empty at every start |
+
+- Keep everything the service writes in those two folders. `/tmp` is private to the service and emptied when it stops. Other paths are outside the package, and uninstalling does not remove them.
+- Write logs to standard output or error; they go to the journal (`gizlet service logs ID`).
+- Stay in the foreground. A crash restarts the service two seconds later, up to five times a minute. Exiting with status 0 stops it without a restart.
+- Stopping, updating and uninstalling send SIGTERM to the service and every process it started, then SIGKILL after 15 seconds. Shut down within that time and release what the service holds.
+- Installing a service starts it and sets it to start at boot. An update stops the running version, replaces the package, and starts the new version if the old one ran, keeping the state and the boot choice. A new version that exits or fails within three seconds is replaced by the previous one, which starts again; a new service that does not start is not installed. The journal keeps the failure.
+
+### Uninstalling
+
+`gizlet uninstall ID` first turns off start at boot, then stops the service and every process in its control group and checks that none remain. It then removes the unit and deletes the package, the state folder and the runtime folder. Apps, their saves, other services and system services are untouched. If a step fails, it stops there and says what is left and what to do. If the service cannot be stopped, nothing is deleted, and it no longer starts at boot: restart the device, then uninstall again. If a file cannot be deleted, the service is already stopped and unregistered: fix the file and uninstall again. A boot or install after a power loss in the middle of an update or uninstall completes or reverses it.
 
 ## Updating the Launcher and CLI
 

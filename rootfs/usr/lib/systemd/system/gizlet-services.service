@@ -1,0 +1,15 @@
+[Unit]
+Description=Register the installed Gizlet services and start those set to start at boot
+# The base is read-only, so `gizlet` writes each service's unit to
+# /run/systemd/system on every boot; see launcher/src/services.rs.
+After=gizlet-data.service
+Requires=gizlet-data.service
+ConditionPathExists=/run/gizlet-data.ready
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/gizlet service boot
+
+[Install]
+WantedBy=multi-user.target

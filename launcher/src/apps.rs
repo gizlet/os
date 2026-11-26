@@ -5,6 +5,8 @@
 //! (`<64 hex>  <path>` per line). Installing extracts it into
 //! `<prefix>/apps/<id>/`, where the prefix is `/opt/gizlet` on Gizlet OS. Each
 //! app keeps its own files in `<prefix>/saves/<id>/`, which outlive updates.
+//! A service package installs into `<prefix>/services/<id>/` instead and runs
+//! in the background (see [`crate::services`]).
 //!
 //! The reader accepts only what the store accepts: stored or deflated entries
 //! with canonical relative names, no symlinks, devices, encryption or ZIP64,
@@ -93,8 +95,8 @@ fn runs_here(target: &str, device: &str) -> bool {
 pub enum Kind {
     /// A foreground program, games included: it is shown on the shelf and takes the screen.
     App,
-    /// A background program. This version recognizes services but does not
-    /// install, start or supervise them.
+    /// A background program with no screen: installed under `services/` and
+    /// run by the system's service manager, never from the shelf.
     Service,
 }
 
@@ -192,7 +194,7 @@ impl Manifest {
 
 /// Why a manifest's package cannot run as an app.
 pub fn not_an_app(manifest: &Manifest) -> String {
-    format!("{} is a service, not an app; services do not run from the launcher", manifest.id)
+    format!("{0} is a service, not an app; start it with `gizlet service start {0}`", manifest.id)
 }
 
 fn localized<'a>(map: &'a BTreeMap<String, String>, lang: &str) -> Option<&'a str> {
@@ -231,7 +233,7 @@ fn name_problem(name: &str) -> Option<&'static str> {
     None
 }
 
-/// An installed app.
+/// An installed package: an app, or a service under `services/`.
 #[derive(Clone, Debug)]
 pub struct App {
     pub dir: PathBuf,
@@ -254,20 +256,39 @@ impl App {
     }
 }
 
-/// The apps under `<prefix>/apps`.
+/// The apps under `<prefix>/apps` and the services under `<prefix>/services`.
 pub struct Library {
     prefix: PathBuf,
+    manager: Box<dyn crate::services::Manager>,
+    run_dir: PathBuf,
 }
 
 impl Library {
     /// The prefix is made absolute, since apps run in their own folder.
     pub fn new(prefix: PathBuf) -> Library {
+        Library::with_manager(prefix, crate::services::system_manager(), PathBuf::from(crate::services::RUN_DIR))
+    }
+
+    /// A library whose services run under `manager`, with their runtime folders in `run_dir`.
+    pub fn with_manager(prefix: PathBuf, manager: Box<dyn crate::services::Manager>, run_dir: PathBuf) -> Library {
         let prefix = std::path::absolute(&prefix).unwrap_or(prefix);
-        Library { prefix }
+        Library { prefix, manager, run_dir }
     }
 
     pub fn open() -> Library {
         Library::new(prefix())
+    }
+
+    pub(crate) fn prefix(&self) -> &Path {
+        &self.prefix
+    }
+
+    pub(crate) fn manager(&self) -> &dyn crate::services::Manager {
+        self.manager.as_ref()
+    }
+
+    pub(crate) fn run_dir(&self) -> &Path {
+        &self.run_dir
     }
 
     pub fn apps_dir(&self) -> PathBuf {
@@ -312,7 +333,7 @@ impl Library {
         apps
     }
 
-    fn load(&self, dir: &Path) -> Result<App, String> {
+    pub(crate) fn load(&self, dir: &Path) -> Result<App, String> {
         let path = dir.join(MANIFEST);
         let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let manifest = Manifest::parse(&text)?;
@@ -330,26 +351,27 @@ impl Library {
         self.find(id)
     }
 
-    /// The installed app `id`, without recovery or the lock.
+    /// The installed app or service `id`, without recovery or the lock.
     fn find(&self, id: &str) -> Result<App, String> {
         if !is_valid_id(id) {
             return Err(format!("{id:?} is not an app ID"));
         }
         let dir = self.apps_dir().join(id);
-        if !dir.is_dir() {
-            return Err(format!("{id} is not installed"));
+        if dir.is_dir() {
+            return self.load(&dir);
         }
-        self.load(&dir)
+        if self.services_dir().join(id).is_dir() {
+            return self.find_service(id);
+        }
+        Err(format!("{id} is not installed"))
     }
 
-    /// Installs or updates the app in `package`, a `.gzl`. The previous
-    /// version stays in place until the new one is complete and checked.
+    /// Installs or updates the app or service in `package`, a `.gzl`. The
+    /// previous version stays in place until the new one is complete and checked.
     pub fn install(&self, package: &Path) -> Result<App, String> {
-        let apps = self.apps_dir();
-        fs::create_dir_all(&apps).map_err(|e| format!("{}: {e}", apps.display()))?;
-        let _lock = self.lock(true).ok_or_else(|| format!("cannot lock {}", apps.display()))?;
+        let _lock = self.lock_waiting()?;
         self.recover();
-        let staging = apps.join(format!(".install-{}", std::process::id()));
+        let staging = self.apps_dir().join(format!(".install-{}", std::process::id()));
         let _ = fs::remove_dir_all(&staging);
         let result = self.install_staged(package, &staging);
         if result.is_err() {
@@ -358,15 +380,27 @@ impl Library {
         result
     }
 
-    /// The previous version of `id` while an update replaces it.
+    /// The previous version of `id` in `root`, `apps/` or `services/`, while an update replaces it.
+    pub(crate) fn backup_in(&self, root: &Path, id: &str) -> PathBuf {
+        root.join(format!(".old-{id}"))
+    }
+
+    #[cfg(test)]
     fn backup(&self, id: &str) -> PathBuf {
-        self.apps_dir().join(format!(".old-{id}"))
+        self.backup_in(&self.apps_dir(), id)
+    }
+
+    /// The library lock, waiting for it.
+    pub(crate) fn lock_waiting(&self) -> Result<Lock, String> {
+        let apps = self.apps_dir();
+        fs::create_dir_all(&apps).map_err(|e| format!("{}: {e}", apps.display()))?;
+        self.lock(true).ok_or_else(|| format!("cannot lock {}", apps.display()))
     }
 
     /// Holds an exclusive lock on `<prefix>/apps/.lock` until dropped
     /// (`flock` on Unix, `LockFileEx` on Windows): installs, removals and
-    /// recovery each take it, so none sees another half done. Without
-    /// `wait`, `None` when another process holds it.
+    /// recovery each take it, for services too, so none sees another half
+    /// done. Without `wait`, `None` when another process holds it.
     fn lock(&self, wait: bool) -> Option<Lock> {
         let file = File::options().create(true).truncate(false).write(true).open(self.apps_dir().join(".lock")).ok()?;
         let locked = if wait { file.lock().is_ok() } else { file.try_lock().is_ok() };
@@ -376,23 +410,27 @@ impl Library {
     /// Finishes what a crash or power loss cut short, with the lock held: a
     /// backup whose app folder is missing goes back in place, one beside a
     /// complete update is deleted, and staging and removal folders, which
-    /// only a lock holder uses, are deleted.
-    fn recover(&self) {
-        let Ok(entries) = fs::read_dir(self.apps_dir()) else { return };
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with(".install-") || name.starts_with(".remove-") {
-                let _ = fs::remove_dir_all(e.path());
-                continue;
-            }
-            let Some(id) = name.strip_prefix(".old-").filter(|id| is_valid_id(id)) else { continue };
-            let dest = self.apps_dir().join(id);
-            if dest.exists() {
-                let _ = fs::remove_dir_all(e.path());
-            } else if fs::rename(e.path(), &dest).is_ok() {
-                sync();
+    /// only a lock holder uses, are deleted; the same for services, whose
+    /// leftovers of an interrupted uninstall are then deleted.
+    pub(crate) fn recover(&self) {
+        for root in [self.apps_dir(), self.services_dir()] {
+            let Ok(entries) = fs::read_dir(&root) else { continue };
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if name.starts_with(".install-") || name.starts_with(".remove-") {
+                    let _ = fs::remove_dir_all(e.path());
+                    continue;
+                }
+                let Some(id) = name.strip_prefix(".old-").filter(|id| is_valid_id(id)) else { continue };
+                let dest = root.join(id);
+                if dest.exists() {
+                    let _ = fs::remove_dir_all(e.path());
+                } else if fs::rename(e.path(), &dest).is_ok() {
+                    sync();
+                }
             }
         }
+        self.sweep_services();
     }
 
     /// The app `id` for running, with its running lock held shared. The lock
@@ -403,7 +441,12 @@ impl Library {
         if !is_valid_id(id) {
             return Err(format!("{id:?} is not an app ID"));
         }
-        let running = self.hold_running(id).map_err(|e| format!("cannot mark {id} running: {e}"))?;
+        if !self.apps_dir().join(id).is_dir() {
+            if let Ok(service) = self.find_service(id) {
+                return Err(not_an_app(&service.manifest));
+            }
+        }
+        let running = self.hold_running(&self.apps_dir(), id).map_err(|e| format!("cannot mark {id} running: {e}"))?;
         let app = self.get(id)?;
         if app.manifest.kind() != Kind::App {
             return Err(not_an_app(&app.manifest));
@@ -411,22 +454,23 @@ impl Library {
         Ok((app, running))
     }
 
-    /// The lock file stays when an app is removed: a run waiting on it must
-    /// lock the same file an install will try.
-    fn hold_running(&self, id: &str) -> io::Result<File> {
-        let file = File::options().create(true).truncate(false).write(true).open(self.running_path(id))?;
+    /// Holds `id`'s running lock in `root` shared, waiting while an update
+    /// holds it. An app's lock file stays when it is removed: a run waiting
+    /// on it must lock the same file an install will try.
+    pub(crate) fn hold_running(&self, root: &Path, id: &str) -> io::Result<File> {
+        let file = File::options().create(true).truncate(false).write(true).open(self.running_in(root, id))?;
         file.lock_shared()?;
         Ok(file)
     }
 
-    fn running_path(&self, id: &str) -> PathBuf {
-        self.apps_dir().join(format!(".running-{id}"))
+    pub(crate) fn running_in(&self, root: &Path, id: &str) -> PathBuf {
+        root.join(format!(".running-{id}"))
     }
 
-    /// Excludes runs of `id` until dropped, or says it is running: an update
-    /// or removal must not change files a running app still reads.
-    fn not_running(&self, id: &str) -> Result<File, String> {
-        let path = self.running_path(id);
+    /// Excludes runs of `id` in `root` until dropped, or says it is running:
+    /// an update or removal must not change files a running program still reads.
+    pub(crate) fn not_running(&self, root: &Path, id: &str) -> Result<File, String> {
+        let path = self.running_in(root, id);
         let file = File::options().create(true).truncate(false).write(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         match file.try_lock() {
             Ok(()) => Ok(file),
@@ -437,9 +481,6 @@ impl Library {
 
     fn install_staged(&self, package: &Path, staging: &Path) -> Result<App, String> {
         let manifest = unpack(package, staging)?;
-        if manifest.kind() != Kind::App {
-            return Err(format!("{} is a service; this version of Gizlet OS installs apps only", manifest.id));
-        }
         let (device, tier) = (device_target(), device_tier());
         if !runs_here(&manifest.target, &device) {
             return Err(format!("{} is built for {}; this device runs {device}", manifest.id, manifest.target));
@@ -450,10 +491,16 @@ impl Library {
         if let Some(problem) = loader_problem(&manifest, staging) {
             return Err(problem);
         }
-        let _not_running = self.not_running(&manifest.id)?;
+        if manifest.kind() == Kind::Service {
+            return self.install_service(&manifest, staging);
+        }
+        if self.services_dir().join(&manifest.id).exists() {
+            return Err(format!("{} is installed as a service; uninstall it first", manifest.id));
+        }
+        let _not_running = self.not_running(&self.apps_dir(), &manifest.id)?;
         let dest = self.apps_dir().join(&manifest.id);
         // A fixed name, so the next scan or install restores it if this one is cut short.
-        let old = self.backup(&manifest.id);
+        let old = self.backup_in(&self.apps_dir(), &manifest.id);
         let had_old = dest.exists();
         if had_old {
             fs::rename(&dest, &old).map_err(|e| format!("{}: {e}", dest.display()))?;
@@ -471,12 +518,16 @@ impl Library {
         self.load(&dest)
     }
 
-    /// Removes the app; its saves only with `saves`.
-    pub fn remove(&self, id: &str, saves: bool) -> Result<(), String> {
+    /// Removes the app, and its saves only with `saves`; or uninstalls the
+    /// service, with everything it keeps. Returns what was removed.
+    pub fn remove(&self, id: &str, saves: bool) -> Result<Kind, String> {
         let _lock = self.lock(true);
         self.recover();
+        if is_valid_id(id) && !self.apps_dir().join(id).is_dir() && self.services_dir().join(id).is_dir() {
+            return self.remove_service(id).map(|()| Kind::Service);
+        }
         let app = self.find(id)?;
-        let not_running = self.not_running(id)?;
+        let not_running = self.not_running(&self.apps_dir(), id)?;
         let trash = self.apps_dir().join(format!(".remove-{}-{}", id, std::process::id()));
         fs::rename(&app.dir, &trash).map_err(|e| format!("{}: {e}", app.dir.display()))?;
         fs::remove_dir_all(&trash).map_err(|e| format!("{}: {e}", trash.display()))?;
@@ -492,7 +543,7 @@ impl Library {
             let _ = self.write_played(&played);
         }
         sync();
-        Ok(())
+        Ok(Kind::App)
     }
 
     pub fn record_played(&self, id: &str) {
@@ -525,7 +576,7 @@ impl Library {
     }
 }
 
-fn sync() {
+pub(crate) fn sync() {
     #[cfg(unix)]
     unsafe {
         libc::sync();
@@ -533,7 +584,7 @@ fn sync() {
 }
 
 /// The apps lock; released when dropped.
-struct Lock(#[allow(dead_code)] File);
+pub(crate) struct Lock(#[allow(dead_code)] File);
 
 struct Entry {
     name: String,
@@ -830,24 +881,7 @@ pub fn needs_loader(path: &Path) -> bool {
 pub fn command(library: &Library, app: &App, lang: &str, swap_ab: bool, args: &[String]) -> io::Result<std::process::Command> {
     let saves = library.saves(app.id());
     fs::create_dir_all(&saves)?;
-    let entry = app.entry();
-    let mut cmd = std::process::Command::new(&entry);
-    if cfg!(target_os = "linux") && needs_loader(&entry) {
-        let loader = if cfg!(feature = "gizlet-os") {
-            let runtime = Path::new("/opt/gizlet/runtime");
-            fs::canonicalize("/run/gizlet-ota-runtime/bin/gizlet-run")
-                .or_else(|_| fs::canonicalize(runtime.join("1-current/bin/gizlet-run")))
-                .unwrap_or_else(|_| runtime.join("1/bin/gizlet-run"))
-        } else {
-            library.prefix.join("runtime/1/bin/gizlet-run")
-        };
-        if loader.is_file() {
-            cmd = std::process::Command::new(loader);
-            cmd.arg(&entry);
-        } else if cfg!(feature = "gizlet-os") {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "Gizlet runtime 1 is not mounted"));
-        }
-    }
+    let mut cmd = entry_command(library, &app.entry())?;
     cmd.args(args)
         .current_dir(&app.dir)
         .env("GIZLET_APP_ID", app.id())
@@ -858,12 +892,35 @@ pub fn command(library: &Library, app: &App, lang: &str, swap_ab: bool, args: &[
     Ok(cmd)
 }
 
+/// The command that runs a package's entry: through Gizlet runtime 1's
+/// `gizlet-run` when it is dynamically linked, as it is otherwise.
+pub(crate) fn entry_command(library: &Library, entry: &Path) -> io::Result<std::process::Command> {
+    let mut cmd = std::process::Command::new(entry);
+    if cfg!(target_os = "linux") && needs_loader(entry) {
+        let loader = if cfg!(feature = "gizlet-os") {
+            let runtime = Path::new("/opt/gizlet/runtime");
+            fs::canonicalize("/run/gizlet-ota-runtime/bin/gizlet-run")
+                .or_else(|_| fs::canonicalize(runtime.join("1-current/bin/gizlet-run")))
+                .unwrap_or_else(|_| runtime.join("1/bin/gizlet-run"))
+        } else {
+            library.prefix.join("runtime/1/bin/gizlet-run")
+        };
+        if loader.is_file() {
+            cmd = std::process::Command::new(loader);
+            cmd.arg(entry);
+        } else if cfg!(feature = "gizlet-os") {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Gizlet runtime 1 is not mounted"));
+        }
+    }
+    Ok(cmd)
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A minimal zip writer for the tests: stored entries with Unix modes.
-    fn zip(files: &[(&str, &[u8], u32)]) -> Vec<u8> {
+    pub(crate) fn zip(files: &[(&str, &[u8], u32)]) -> Vec<u8> {
         let (mut out, mut cd) = (Vec::new(), Vec::new());
         for (name, data, mode) in files {
             let offset = out.len() as u32;
@@ -904,11 +961,11 @@ mod tests {
         out
     }
 
-    fn sum(data: &[u8]) -> String {
+    pub(crate) fn sum(data: &[u8]) -> String {
         hex(&Sha256::digest(data))
     }
 
-    fn manifest(id: &str, target: &str) -> String {
+    pub(crate) fn manifest(id: &str, target: &str) -> String {
         serde_json::json!({
             "schema": 1,
             "id": id,
@@ -926,7 +983,7 @@ mod tests {
         }).to_string()
     }
 
-    fn package(dir: &Path, manifest: &str, extra: &[(&str, &[u8], u32)]) -> PathBuf {
+    pub(crate) fn package(dir: &Path, manifest: &str, extra: &[(&str, &[u8], u32)]) -> PathBuf {
         let exe: &[u8] = b"#!/bin/sh\necho hello\n";
         let mut files: Vec<(&str, &[u8], u32)> =
             vec![(MANIFEST, manifest.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755)];
@@ -938,7 +995,7 @@ mod tests {
         path
     }
 
-    fn temp(name: &str) -> PathBuf {
+    pub(crate) fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("gizlet-apps-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -1030,7 +1087,7 @@ mod tests {
     }
 
     /// The test manifest with `schema` (left out when `None`) and `kind` (left out when `None`).
-    fn manifest_v(id: &str, schema: Option<u32>, kind: Option<&str>) -> String {
+    pub(crate) fn manifest_v(id: &str, schema: Option<u32>, kind: Option<&str>) -> String {
         let mut m: serde_json::Value = serde_json::from_str(&manifest(id, &device_target())).unwrap();
         let o = m.as_object_mut().unwrap();
         o.remove("schema");
@@ -1082,14 +1139,17 @@ mod tests {
     #[test]
     fn services_are_not_apps() {
         let dir = temp("service");
-        let lib = Library::new(dir.join("prefix"));
+        let (lib, _units) = crate::services::tests::library(&dir);
         let id = "dev.example.clock";
         let service = manifest_v(id, Some(2), Some("service"));
-        let err = lib.install(&package(&dir, &service, &[])).unwrap_err();
-        assert!(err.contains("is a service"), "{err}");
+        // A service installs beside the apps, never among them.
+        let installed = lib.install(&package(&dir, &service, &[])).unwrap();
+        assert_eq!(installed.manifest.kind(), Kind::Service);
         assert!(!lib.apps_dir().join(id).exists());
-        assert_eq!(leftovers(&lib), 0, "a refused service leaves nothing behind");
-        // One placed by hand is neither shown on the shelf nor started, but can be removed.
+        assert!(lib.scan().is_empty());
+        assert_eq!(lib.remove(id, false).unwrap(), Kind::Service);
+        assert_eq!(leftovers(&lib), 0);
+        // One placed among the apps by hand is neither shown on the shelf nor started, but can be removed.
         let placed = lib.apps_dir().join(id);
         fs::create_dir_all(placed.join("bin")).unwrap();
         fs::write(placed.join(MANIFEST), &service).unwrap();
@@ -1103,7 +1163,7 @@ mod tests {
     }
 
     /// Hidden folders under apps/: staging, removals and backups.
-    fn leftovers(lib: &Library) -> usize {
+    pub(crate) fn leftovers(lib: &Library) -> usize {
         fs::read_dir(lib.apps_dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with('.') && e.path().is_dir()).count()
     }
 
@@ -1203,7 +1263,7 @@ mod tests {
         assert!(lib.open_for_run("dev.example.hello").unwrap_err().contains("not installed"));
         // The lock file outlives removal, so a run already waiting on it locks
         // the file the next install checks.
-        let waiting = lib.hold_running("dev.example.hello").unwrap();
+        let waiting = lib.hold_running(&lib.apps_dir(), "dev.example.hello").unwrap();
         lib.install(&pkg).unwrap_err();
         drop(waiting);
         lib.install(&pkg).unwrap();
