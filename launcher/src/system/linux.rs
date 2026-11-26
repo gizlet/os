@@ -72,23 +72,51 @@ impl BatterySource for SysfsBattery {
             own(d) && read_trim(&d.join("type")).as_deref() != Some("Battery") && read_trim(&d.join("online")).as_deref() == Some("1")
         });
         let charge = charge_state(read_trim(&dir.join("status")).as_deref(), supply_online, inflow);
-        // Gauges report µA and µV, some µW; the sign of the current differs
-        // between drivers. The averages are steadier than the instant values.
-        let current = first(&["current_avg", "current_now"]).map(i64::abs).filter(|c| *c > 0);
-        let power_uw = first(&["power_avg", "power_now"]).map(i64::abs).filter(|p| *p > 0).or_else(|| {
-            let volts = first(&["voltage_avg", "voltage_now"])?;
-            Some(current? * volts / 1_000_000)
-        });
-        let minutes_left = match charge {
-            Charge::Discharging => num("time_to_empty_avg")
-                .or_else(|| num("time_to_empty_now"))
-                .filter(|s| *s > 0)
-                .map(|s| s / 60)
-                .or_else(|| Some(first(&["charge_now"])? * 60 / current?))
-                .map(|m| m.clamp(0, u32::MAX as i64) as u32),
-            _ => None,
+        // The averages are steadier than the instant values.
+        let gauge = Gauge {
+            current: first(&["current_avg", "current_now"]),
+            volts: first(&["voltage_avg", "voltage_now"]),
+            power: first(&["power_avg", "power_now"]),
+            charge: num("charge_now"),
+            time_to_empty: first(&["time_to_empty_avg", "time_to_empty_now"]),
         };
-        Ok(Battery { percent, charge, power_mw: power_uw.map(|p| (p / 1000) as u32), minutes_left })
+        let minutes_left = if charge == Charge::Discharging { gauge.minutes_left() } else { None };
+        Ok(Battery { percent, charge, power_mw: gauge.power_mw(), minutes_left })
+    }
+}
+
+/// A battery gauge's readings in sysfs units: µA, µV, µW, µAh and seconds.
+/// The sign of the current and power differs between drivers.
+#[derive(Default)]
+struct Gauge {
+    current: Option<i64>,
+    volts: Option<i64>,
+    power: Option<i64>,
+    charge: Option<i64>,
+    time_to_empty: Option<i64>,
+}
+
+impl Gauge {
+    /// Less current is the gauge's noise, or the charger carrying the load:
+    /// the R36S's RK817 reads 0–40 mA then, and 70–100 mA on battery
+    /// running the launcher.
+    const MIN_CURRENT_UA: i64 = 50_000;
+    /// That current at a cell's 3 V, for gauges that report power.
+    const MIN_POWER_UW: i64 = 150_000;
+
+    fn current(&self) -> Option<i64> {
+        self.current.map(i64::abs).filter(|c| *c >= Gauge::MIN_CURRENT_UA)
+    }
+
+    fn power_mw(&self) -> Option<u32> {
+        let uw = self.power.map(i64::abs).filter(|p| *p >= Gauge::MIN_POWER_UW).or_else(|| Some(self.current()? * self.volts? / 1_000_000))?;
+        Some((uw / 1000).clamp(0, u32::MAX as i64) as u32)
+    }
+
+    /// The driver's own estimate, or the charge left at the present current.
+    fn minutes_left(&self) -> Option<u32> {
+        let minutes = self.time_to_empty.filter(|s| *s > 0).map(|s| s / 60).or_else(|| Some(self.charge? * 60 / self.current()?))?;
+        Some(minutes.clamp(0, u32::MAX as i64) as u32)
     }
 }
 
@@ -625,6 +653,27 @@ impl Power for LinuxPower {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn estimates_the_time_left_only_from_a_real_draw() {
+        // The R36S's RK817 on battery, running the launcher.
+        let r36s = Gauge { current: Some(-80_000), volts: Some(3_900_000), charge: Some(2_644_328), ..Gauge::default() };
+        assert_eq!(r36s.power_mw(), Some(312));
+        assert_eq!(r36s.minutes_left(), Some(1983), "33 hours");
+        // Right after a boot, a few hundred µA: no 160-day estimate and no 0.00 W.
+        let settling = Gauge { current: Some(688), ..r36s };
+        assert_eq!((settling.power_mw(), settling.minutes_left()), (None, None));
+        let noise = Gauge { current: Some(37_668), ..r36s };
+        assert_eq!((noise.power_mw(), noise.minutes_left()), (None, None));
+
+        // The driver's own estimate and power stand, at any current.
+        let reported = Gauge { power: Some(-1_600_000), time_to_empty: Some(9000), ..settling };
+        assert_eq!((reported.power_mw(), reported.minutes_left()), (Some(1600), Some(150)));
+        let tiny = Gauge { power: Some(2_000), ..settling };
+        assert_eq!(tiny.power_mw(), None);
+        assert_eq!(Gauge { time_to_empty: Some(0), ..r36s }.minutes_left(), Some(1983), "0 is no estimate");
+        assert_eq!(Gauge::default().minutes_left(), None);
+    }
 
     #[test]
     fn sets_the_volume_along_decibels() {
