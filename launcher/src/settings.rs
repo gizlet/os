@@ -186,8 +186,8 @@ impl Power {
     }
 
     /// `screen_off`, the key before `sleep_after`, is read when that is absent;
-    /// without `sleep_after_charging`, the battery value applies on external
-    /// power too, as gizlet-power does.
+    /// without `sleep_after_charging` the device never sleeps while charging,
+    /// as in gizlet-power.
     pub fn load(path: PathBuf) -> Power {
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         let value = |key: &str| {
@@ -197,7 +197,7 @@ impl Power {
             })
         };
         let sleep_after = value("sleep_after").or_else(|| value("screen_off")).unwrap_or(Power::DEFAULT);
-        let sleep_after_charging = value("sleep_after_charging").unwrap_or(sleep_after);
+        let sleep_after_charging = value("sleep_after_charging").unwrap_or(0);
         Power { path, sleep_after, sleep_after_charging }
     }
 
@@ -257,6 +257,7 @@ mod tests {
         let path = dir.join("power.ini");
         let mut p = Power::load(path.clone());
         assert_eq!(p.sleep_after, 300);
+        assert_eq!(p.sleep_after_charging, 0, "never while charging by default");
         p.cycle(false, 1);
         assert_eq!(p.sleep_after, 600);
         p.cycle(false, 1);
@@ -273,13 +274,13 @@ mod tests {
         assert_eq!(Power::load(path.clone()).sleep_after, 0, "the old key still counts");
         std::fs::write(&path, "screen_off = 0\nsleep_after = 600\n").unwrap();
         assert_eq!(Power::load(path.clone()).sleep_after, 600, "the new key wins");
-        assert_eq!(Power::load(path.clone()).sleep_after_charging, 600, "charging follows the battery when unset");
+        assert_eq!(Power::load(path.clone()).sleep_after_charging, 0, "never while charging when unset");
         let mut p = Power::load(path.clone());
         p.cycle(true, 1);
-        assert_eq!((p.sleep_after, p.sleep_after_charging), (600, 1800), "each is set on its own");
+        assert_eq!((p.sleep_after, p.sleep_after_charging), (600, 60), "each is set on its own");
         p.save().unwrap();
         let p = Power::load(path);
-        assert_eq!((p.sleep_after, p.sleep_after_charging), (600, 1800));
+        assert_eq!((p.sleep_after, p.sleep_after_charging), (600, 60));
         let _ = std::fs::remove_dir_all(dir);
     }
 

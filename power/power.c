@@ -6,7 +6,7 @@
  * readers. After `sleep_after` seconds without input on battery, or
  * `sleep_after_charging` seconds on external power (CONFIG, by default
  * /run/gizlet-data/system/power.ini, which the launcher writes; 0 is never,
- * 300 when unset, and the charging value is the battery one when unset) the
+ * 300 on battery and never on external power when unset) the
  * device sleeps; 15 s before that the screen dims, and any input brings the
  * brightness back. Plugging in or unplugging the charger counts as use.
  *
@@ -164,16 +164,17 @@ static int external_power(void) {
 }
 
 /* sleep_after (on battery; screen_off, its earlier name, without it) or
- * sleep_after_charging (on EXTERNAL power; sleep_after without it) from
- * CONFIG, reread only when the file changes. */
+ * sleep_after_charging (on EXTERNAL power; never without it) from CONFIG,
+ * reread only when the file changes. */
 static int sleep_after_seconds(const char *config, int external) {
     static struct timespec seen = {-1, 0};
-    static int battery = DEFAULT_SLEEP_AFTER, charging = DEFAULT_SLEEP_AFTER;
+    static int battery = DEFAULT_SLEEP_AFTER, charging = 0;
     struct stat st;
     if (stat(config, &st) != 0) {
-        battery = charging = DEFAULT_SLEEP_AFTER;
+        battery = DEFAULT_SLEEP_AFTER;
+        charging = 0;
         seen.tv_sec = -1;
-        return battery;
+        return external ? charging : battery;
     }
     if (st.st_mtim.tv_sec != seen.tv_sec || st.st_mtim.tv_nsec != seen.tv_nsec) {
         seen = st.st_mtim;
@@ -191,7 +192,7 @@ static int sleep_after_seconds(const char *config, int external) {
             fclose(f);
         }
         battery = found >= 0 ? found : old >= 0 ? old : DEFAULT_SLEEP_AFTER;
-        charging = ac >= 0 ? ac : battery;
+        charging = ac >= 0 ? ac : 0;
         printf("gizlet-power: sleep after %d s on battery, %d s on external power (0 is never)\n", battery, charging);
         fflush(stdout);
     }
