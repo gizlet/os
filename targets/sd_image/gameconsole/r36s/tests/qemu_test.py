@@ -110,6 +110,55 @@ def free_port():
         return probe.getsockname()[1]
 
 
+def check_tf2(private, kernel, root, work):
+    """Mounts a FAT TF2 card at /media/tf2, never a partition of the system card, and leaves its files alone.
+
+    QEMU's disks are virtio, not MMC, so the test starts the units udev starts on the R36S."""
+    offset = 1 << 20
+    tf2 = work / "tf2.img"
+    with tf2.open("wb") as f:
+        f.truncate(64 << 20)
+    # One FAT partition from 1 MiB, as a computer formats a card.
+    subprocess.run(["sfdisk", "--quiet", tf2], input="1MiB,,c\n", text=True, check=True)
+    part = work / "tf2-part.img"
+    with part.open("wb") as f:
+        f.truncate((64 << 20) - offset)
+    subprocess.run(["mkfs.vfat", "-n", "GAMES", part], check=True, capture_output=True)
+    game = work / "homebrew-test.nes"
+    game.write_bytes(b"NES\x1asynthetic test file\n")
+    subprocess.run(["mmd", "-i", part, "::/nes"], check=True)
+    subprocess.run(["mcopy", "-i", part, game, "::/nes/homebrew-test.nes"], check=True)
+    with part.open("rb") as source, tf2.open("r+b") as output:
+        output.seek(offset)
+        shutil.copyfileobj(source, output)
+    part.unlink()
+    listing = ["mdir", "-i", f"{tf2}@@{offset}", "-/", "-b", "::"]
+    before = subprocess.run(listing, check=True, capture_output=True).stdout
+    with boot(private, kernel, root, tf2) as console:
+        console.expect(PROMPT)
+        console.enter("grep -qw exfat /proc/filesystems && echo exfat-supported; "
+                      "systemctl start gizlet-tf2@vda1 gizlet-tf2@vda3 gizlet-tf2@vdb1; "
+                      "findmnt -n -o SOURCE,FSTYPE /media/tf2; cat /media/tf2/nes/homebrew-test.nes")
+        console.expect(b"\r\nexfat-supported\r\n")
+        console.expect(b"\r\n/dev/vdb1 vfat\r\n")
+        console.expect(b"synthetic test file")
+        console.expect(PROMPT)
+        console.enter("journalctl -b -o cat -u 'gizlet-tf2@vda*' | grep -c 'is on the system card'")
+        console.expect(b"\r\n2\r\n")
+        console.expect(PROMPT)
+        console.enter("systemctl stop gizlet-tf2@vdb1; mountpoint -q /media/tf2 || echo tf2-unmounted")
+        console.expect(b"\r\ntf2-unmounted\r\n")
+        console.expect(PROMPT)
+        console.stop()
+    after = subprocess.run(listing, check=True, capture_output=True).stdout
+    assert after == before, f"the TF2 card's files changed: {before!r} -> {after!r}"
+    content = subprocess.run(["mtype", "-i", f"{tf2}@@{offset}", "::/nes/homebrew-test.nes"],
+                             check=True, capture_output=True).stdout
+    assert content == game.read_bytes(), "the TF2 card's file changed"
+    tf2.unlink()
+    print("a TF2 card is mounted at /media/tf2, the system card is not, and the card's files are left alone")
+
+
 def check_ssh(private, boot_offset, kernel, root, work):
     """Starts sshd as the launcher will, logs in with a key from authorized_keys on the boot partition and copies a file both ways."""
     key = work / "client_key"
@@ -753,6 +802,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         console.command("rm /opt/gizlet/boot.ini")
         console.stop()
     print("signed updates select a matching Launcher and CLI and keep custom entries and user data")
+    check_tf2(private, kernel, root, work)
     # A card missing its data partition must not pick a valid data volume on another disk.
     # The second disk is the real, populated data partition as a standalone virtual disk.
     index, offset, size = parts["data"]

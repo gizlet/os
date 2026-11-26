@@ -1,0 +1,84 @@
+#!/bin/sh
+# Mounts the TF2 card at /media/tf2, or unmounts it:
+#
+#   gizlet-tf2 mount|unmount NAME    (NAME is a block device, such as mmcblk1p1)
+#
+# gizlet-tf2@NAME.service runs it when udev finds a filesystem on an MMC disk
+# (90-gizlet-tf2.rules), and again when that device goes away. The TF2 card
+# is an MMC disk other than the one holding the root filesystem (TF1). Of its
+# partitions, or the whole card when it has none, the largest with a FAT,
+# exFAT or ext2/3/4 filesystem is mounted. The card stays the user's: it is
+# never formatted, checked or repaired, and the system keeps nothing on it.
+set -eu
+
+target=/media/tf2
+say() { echo "gizlet-tf2: $*"; }
+
+# disk_of SYSFS_PATH: the sysfs path of the disk holding that block device.
+disk_of() {
+    if [ -f "$1/partition" ]; then
+        printf '%s\n' "${1%/*}"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+mount_card() {
+    name=$1
+    sys=$(readlink -f "/sys/class/block/$name") || return 0
+    root_device=
+    while read -r _ _ device _ mountpoint _; do
+        if [ "$mountpoint" = / ]; then
+            root_device=$device
+            break
+        fi
+    done < /proc/self/mountinfo
+    root_disk=$(disk_of "$(readlink -f "/sys/dev/block/$root_device")")
+    disk=$(disk_of "$sys")
+    if [ "$disk" = "$root_disk" ]; then
+        say "/dev/$name is on the system card"
+        return 0
+    fi
+    best= best_size=0
+    for candidate in "$disk" "$disk/${disk##*/}"*; do
+        [ -f "$candidate/size" ] || continue
+        [ "$candidate" = "$disk" ] || [ -f "$candidate/partition" ] || continue
+        type=$(blkid -o value -s TYPE "/dev/${candidate##*/}" 2>/dev/null) || continue
+        case $type in vfat | exfat | ext2 | ext3 | ext4) ;; *) continue ;; esac
+        read -r size < "$candidate/size"
+        if [ "$size" -gt "$best_size" ]; then
+            best=${candidate##*/}
+            best_size=$size
+        fi
+    done
+    [ "$best" = "$name" ] || return 0
+    if mountpoint -q "$target"; then
+        say "$target is already in use"
+        return 0
+    fi
+    type=$(blkid -o value -s TYPE "/dev/$name")
+    case $type in
+        vfat) options=nosuid,nodev,noexec,noatime,fmask=0022,dmask=0022,utf8,errors=remount-ro ;;
+        exfat) options=nosuid,nodev,noexec,noatime,fmask=0022,dmask=0022,iocharset=utf8,errors=remount-ro ;;
+        *) options=nosuid,nodev,noexec,noatime ;;
+    esac
+    mount -t "$type" -o "$options" "/dev/$name" "$target"
+    say "mounted /dev/$name ($type) at $target"
+}
+
+unmount_card() {
+    # Only the card this unit mounted.
+    if [ "$(findmnt -n -o SOURCE --mountpoint "$target" 2>/dev/null || :)" = "/dev/$1" ]; then
+        umount --lazy "$target"
+        say "unmounted /dev/$1"
+    fi
+}
+
+case ${1:-} in
+    mount) mount_card "$2" ;;
+    unmount) unmount_card "$2" ;;
+    *)
+        echo 'usage: gizlet-tf2 mount|unmount NAME' >&2
+        exit 2
+        ;;
+esac

@@ -1,0 +1,4 @@
+# A filesystem on an MMC disk may be the TF2 card: gizlet-tf2@.service mounts
+# it at /media/tf2 unless it is on the system card (TF1).
+# udev runs programs in a namespace of its own, so a unit mounts it.
+ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="mmcblk[0-9]*", ENV{ID_FS_TYPE}=="vfat|exfat|ext2|ext3|ext4", TAG+="systemd", ENV{SYSTEMD_WANTS}+="gizlet-tf2@%k.service"
