@@ -124,10 +124,17 @@ fn start(library: &Library, id: &str) -> Result<(), String> {
 }
 
 /// Writes the request the launcher's start script reads.
+/// Each request is written to its own file, then renamed over the request,
+/// so two at once never publish a partial or each other's ID.
 pub fn request_launch(id: &str) -> std::io::Result<()> {
-    let tmp = format!("{}.new", apps::LAUNCH_REQUEST);
-    std::fs::write(&tmp, format!("{id}\n"))?;
-    std::fs::rename(&tmp, apps::LAUNCH_REQUEST)
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+    let tmp = format!("{}.{}-{}.new", apps::LAUNCH_REQUEST, std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+    let result = std::fs::write(&tmp, format!("{id}\n")).and_then(|()| std::fs::rename(&tmp, apps::LAUNCH_REQUEST));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 fn launcher_running() -> bool {

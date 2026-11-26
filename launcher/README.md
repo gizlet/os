@@ -30,7 +30,7 @@ color = "#c8553d"
 zh-CN = "吃吃吃"
 ```
 
-`id`, `name`, `version`, `tier`, `target` and `entry` are required; `icon`, `color`, `description`, `[names]` and `[descriptions]` are optional. Installing checks what the store checks: stored or deflated entries with canonical relative names, no links, devices, setuid files, encryption or ZIP64, every file matching `CHECKSUMS`, a reverse-DNS `id`, and a `target` and `tier` this device runs (`aarch64-unknown-linux-gnu` or `-musl`, `lite`). The package is unpacked beside the installed version and replaces it only when complete.
+`id`, `name`, `version`, `tier`, `target` and `entry` are required; `icon`, `color`, `description`, `[names]` and `[descriptions]` are optional. Installing checks what the store checks: stored or deflated entries with canonical relative names, no links, devices, setuid files, encryption or ZIP64, every file matching `CHECKSUMS`, a reverse-DNS `id`, and a `target` and `tier` this device runs (`aarch64-unknown-linux-gnu`, or a static `-musl` program, and `lite`). The package is unpacked beside the installed version and replaces it only when complete.
 
 | Path under `/opt/gizlet` | Holds |
 | --- | --- |

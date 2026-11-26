@@ -409,6 +409,9 @@ impl Library {
         if manifest.tier == "full" && tier != "full" {
             return Err(format!("{} needs a full-tier device; this one is {tier}", manifest.id));
         }
+        if let Some(problem) = loader_problem(&manifest, staging) {
+            return Err(problem);
+        }
         let _not_running = self.not_running(&manifest.id)?;
         let dest = self.apps_dir().join(&manifest.id);
         // A fixed name, so the next scan or install restores it if this one is cut short.
@@ -753,6 +756,13 @@ pub fn unpack(package: &Path, dest: &Path) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
+/// Gizlet runtime 1 brings glibc's loader only, so a musl package's entry
+/// in `dir` must be static.
+fn loader_problem(m: &Manifest, dir: &Path) -> Option<String> {
+    (m.target.ends_with("-musl") && needs_loader(&dir.join(&m.entry)))
+        .then(|| format!("{} is a dynamically linked musl program; musl packages must be static", m.id))
+}
+
 /// Whether `path` is an ELF executable that names a program interpreter, so
 /// it needs a C library's loader: Gizlet runtime 1's on Gizlet OS. Scripts and
 /// static executables run as they are.
@@ -1031,6 +1041,28 @@ mod tests {
         lib.install(&pkg).unwrap_err();
         drop(waiting);
         lib.install(&pkg).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_dynamic_musl() {
+        let dir = temp("musl");
+        // A minimal 64-bit little-endian ELF header with one PT_INTERP program header.
+        let mut elf = vec![0u8; 64 + 56];
+        elf[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+        elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+        elf[56..58].copy_from_slice(&1u16.to_le_bytes());
+        elf[64..68].copy_from_slice(&3u32.to_le_bytes());
+        fs::create_dir_all(dir.join("bin")).unwrap();
+        fs::write(dir.join("bin/hello"), &elf).unwrap();
+        let musl = Manifest::parse(&manifest("dev.example.hello", "aarch64-unknown-linux-musl")).unwrap();
+        let gnu = Manifest::parse(&manifest("dev.example.hello", "aarch64-unknown-linux-gnu")).unwrap();
+        assert!(loader_problem(&musl, &dir).unwrap().contains("must be static"));
+        assert!(loader_problem(&gnu, &dir).is_none(), "glibc programs run through gizlet-run");
+        // A script, like a static program, needs no loader.
+        fs::write(dir.join("bin/hello"), b"#!/bin/sh\n").unwrap();
+        assert!(loader_problem(&musl, &dir).is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 
