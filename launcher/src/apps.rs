@@ -962,6 +962,12 @@ mod tests {
         drop(held);
         // Once it is gone, what it left is recovered or reclaimed.
         fs::create_dir_all(lib.apps_dir().join(".remove-dev.example.hello-1")).unwrap();
+        // Another test starting a process can hold a copy of the lock's descriptor
+        // until that process execs, so give it a moment.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while lib.lock(false).is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert_eq!(lib.scan().len(), 1);
         assert_eq!(leftovers(&lib), 0);
         let _ = fs::remove_dir_all(&dir);

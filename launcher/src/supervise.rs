@@ -2,8 +2,8 @@
 //! whether or not the app has a way out of its own: holding Home (the R36S's
 //! FN key) for a second, or Select and Start together for two seconds.
 //!
-//! The controls are read from evdev without grabbing them, so the app sees
-//! them too. The app gets SIGTERM, then SIGKILL if it is still there three
+//! Each input device is asked which buttons it holds down, so an app that
+//! grabs its controls still cannot hide these. The app gets SIGTERM, then SIGKILL if it is still there three
 //! seconds later. Apps that save progress should do so on SIGTERM.
 
 use std::io;
@@ -168,29 +168,34 @@ fn take_terminal() {
     }
 }
 
+/// The exit buttons held in an `EVIOCGKEY` bitmap: one bit per key code.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn held_from_keys(bits: &[u8]) -> Held {
+    let down = |code: usize| bits.get(code / 8).is_some_and(|b| b & (1 << (code % 8)) != 0);
+    let (home, select, start) = (0x13c, 0x13a, 0x13b);
+    Held { home: down(home), select: down(select), start: down(start) }
+}
+
 #[cfg(target_os = "linux")]
 mod pad {
-    //! Every `/dev/input/event*` device that has gamepad buttons, read
-    //! without grabbing and rescanned every two seconds for hotplug.
+    //! Every `/dev/input/event*` device, asked for the buttons it holds down
+    //! (`EVIOCGKEY`) rather than read for events: an app that grabs a device
+    //! takes its events, but not this, so it cannot hide the exit buttons.
+    //! Devices are rescanned every two seconds for hotplug.
     use super::Held;
     use std::collections::HashMap;
     use std::fs::File;
-    use std::io::Read;
     use std::os::fd::AsRawFd;
-    use std::os::unix::fs::OpenOptionsExt;
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
-    const EV_KEY: u16 = 0x01;
-    const BTN_SELECT: u16 = 0x13a;
-    const BTN_START: u16 = 0x13b;
-    const BTN_MODE: u16 = 0x13c;
-    /// `struct input_event` on 64-bit Linux: a timeval, then type, code and value.
-    const EVENT: usize = 24;
+    const KEY_BYTES: usize = 0x300 / 8;
+    /// `EVIOCGKEY(len)`: `_IOC(_IOC_READ, 'E', 0x18, len)`.
+    const EVIOCGKEY: libc::c_ulong = (2 << 30) | ((KEY_BYTES as libc::c_ulong) << 16) | (0x45 << 8) | 0x18;
 
     #[derive(Default)]
     pub struct Pad {
-        devices: HashMap<PathBuf, (File, Held)>,
+        devices: HashMap<PathBuf, File>,
         scanned: Option<Instant>,
     }
 
@@ -207,73 +212,37 @@ mod pad {
             let Ok(dir) = std::fs::read_dir("/dev/input") else { return };
             for e in dir.flatten() {
                 let path = e.path();
-                let is_event = e.file_name().to_string_lossy().starts_with("event");
-                if !is_event || self.devices.contains_key(&path) {
-                    continue;
-                }
-                let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(&path);
-                if let Ok(file) = file {
-                    self.devices.insert(path, (file, Held::default()));
+                if e.file_name().to_string_lossy().starts_with("event") && !self.devices.contains_key(&path) {
+                    if let Ok(file) = File::open(&path) {
+                        self.devices.insert(path, file);
+                    }
                 }
             }
         }
 
-        /// Waits up to `timeout` for input, then returns what is held.
+        /// Sleeps for `timeout`, then returns what is held on any device.
         pub fn wait(&mut self, timeout: Duration) -> Held {
+            std::thread::sleep(timeout);
             if self.scanned.is_none_or(|t| t.elapsed() >= Duration::from_secs(2)) {
                 self.scan();
             }
-            let mut fds: Vec<libc::pollfd> = self
-                .devices
-                .values()
-                .map(|(f, _)| libc::pollfd { fd: f.as_raw_fd(), events: libc::POLLIN, revents: 0 })
-                .collect();
-            if fds.is_empty() {
-                std::thread::sleep(timeout);
-            } else {
-                unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout.as_millis() as i32) };
-            }
+            let mut held = Held::default();
             let mut gone = Vec::new();
-            for (path, (file, held)) in &mut self.devices {
-                let mut buf = [0u8; EVENT * 64];
-                loop {
-                    match file.read(&mut buf) {
-                        Ok(n) if n >= EVENT => {
-                            for ev in buf[..n - n % EVENT].chunks(EVENT) {
-                                apply(held, ev);
-                            }
-                        }
-                        Ok(0) | Err(_) if !path.exists() => {
-                            gone.push(path.clone());
-                            break;
-                        }
-                        _ => break,
-                    }
+            for (path, file) in &self.devices {
+                let mut bits = [0u8; KEY_BYTES];
+                if unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGKEY as _, bits.as_mut_ptr()) } < 0 {
+                    gone.push(path.clone());
+                    continue;
                 }
+                let h = super::held_from_keys(&bits);
+                held.home |= h.home;
+                held.select |= h.select;
+                held.start |= h.start;
             }
             for path in gone {
                 self.devices.remove(&path);
             }
-            self.devices.values().fold(Held::default(), |a, (_, h)| Held {
-                home: a.home || h.home,
-                select: a.select || h.select,
-                start: a.start || h.start,
-            })
-        }
-    }
-
-    fn apply(held: &mut Held, ev: &[u8]) {
-        let kind = u16::from_ne_bytes([ev[16], ev[17]]);
-        let code = u16::from_ne_bytes([ev[18], ev[19]]);
-        let down = i32::from_ne_bytes([ev[20], ev[21], ev[22], ev[23]]) != 0;
-        if kind != EV_KEY {
-            return;
-        }
-        match code {
-            BTN_MODE => held.home = down,
-            BTN_SELECT => held.select = down,
-            BTN_START => held.start = down,
-            _ => {}
+            held
         }
     }
 }
@@ -320,6 +289,19 @@ mod tests {
         assert!(!exit.update(both, at(1600)));
         assert!(!exit.update(both, at(3500)));
         assert!(exit.update(both, at(3600)));
+    }
+
+    #[test]
+    fn reads_the_key_bitmap() {
+        let mut bits = [0u8; 0x300 / 8];
+        assert_eq!(held_from_keys(&bits), Held::default());
+        bits[0x13c / 8] |= 1 << (0x13c % 8);
+        assert_eq!(held_from_keys(&bits), Held { home: true, ..Held::default() });
+        bits[0x13a / 8] |= 1 << (0x13a % 8);
+        bits[0x13b / 8] |= 1 << (0x13b % 8);
+        assert_eq!(held_from_keys(&bits), Held { home: true, select: true, start: true });
+        // A short bitmap, as from a device without these buttons, holds none.
+        assert_eq!(held_from_keys(&bits[..8]), Held::default());
     }
 
     #[cfg(unix)]
