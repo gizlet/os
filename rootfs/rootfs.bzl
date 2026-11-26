@@ -7,8 +7,8 @@ ROOTFS_DEBS = "@debian_trixie_arm64_base//:debs"
 
 ROOTFS_SUITE = "trixie"
 
-# Mount points of the data partition on the read-only root.
-ROOTFS_DIRECTORIES = ["opt/gizlet"]
+# Mount points on the read-only root: the data partition, and the TF2 card.
+ROOTFS_DIRECTORIES = ["opt/gizlet", "media/tf2"]
 
 ROOTFS_FILES = {
     "//rootfs:etc/hostname": "etc/hostname",
@@ -32,8 +32,10 @@ ROOTFS_FILES = {
     "//rootfs:usr/lib/systemd/system/gizlet-services.service": "usr/lib/systemd/system/gizlet-services.service",
     "//rootfs:usr/lib/systemd/system/gizlet-ssh.service": "usr/lib/systemd/system/gizlet-ssh.service",
     "//rootfs:usr/lib/systemd/system/gizlet-switches.service": "usr/lib/systemd/system/gizlet-switches.service",
+    "//rootfs:usr/lib/systemd/system/gizlet-tf2@.service": "usr/lib/systemd/system/gizlet-tf2@.service",
     "//rootfs:usr/lib/systemd/system/gizlet-var.service": "usr/lib/systemd/system/gizlet-var.service",
     "//rootfs:usr/lib/udev/rules.d/90-gizlet-hostname.rules": "usr/lib/udev/rules.d/90-gizlet-hostname.rules",
+    "//rootfs:usr/lib/udev/rules.d/90-gizlet-tf2.rules": "usr/lib/udev/rules.d/90-gizlet-tf2.rules",
     "//rootfs:usr/lib/gizlet/launcher/allowed_signers": "usr/lib/gizlet/launcher/allowed_signers",
     "@bun//:LICENSE.md": "usr/share/licenses/bun/LICENSE.md",
     "//third_party/glibc:LGPL-2.1": "usr/share/licenses/glibc-LGPL-2.1",
@@ -53,6 +55,7 @@ ROOTFS_EXECUTABLES = {
     "//rootfs:usr/lib/gizlet/gizlet-setup": "usr/lib/gizlet/gizlet-setup",
     "//rootfs:usr/lib/gizlet/gizlet-ssh": "usr/lib/gizlet/gizlet-ssh",
     "//rootfs:usr/lib/gizlet/gizlet-switch": "usr/lib/gizlet/gizlet-switch",
+    "//rootfs:usr/lib/gizlet/gizlet-tf2": "usr/lib/gizlet/gizlet-tf2",
     "//rootfs:usr/lib/gizlet/gizlet-var": "usr/lib/gizlet/gizlet-var",
     "//rootfs:usr/lib/gizlet/save-boot-log": "usr/lib/gizlet/save-boot-log",
     "@bun//:bun": "usr/bin/bun",

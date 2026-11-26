@@ -202,7 +202,7 @@ def main():
     assert not list((root / "etc/ssh").glob("ssh_host_*")), "the image carries ssh host keys"
     assert (root / "etc/machine-id").read_text() == "", "the image carries a machine ID"
     for script in ("boot-session", "gizlet-boot-device", "gizlet-mount-data", "gizlet-runtime", "gizlet-ssh", "gizlet-setup", "gizlet-switch",
-                   "gizlet-var", "save-boot-log", "gizlet-booter", "launcher-release", "launcher/start",
+                   "gizlet-tf2", "gizlet-var", "save-boot-log", "gizlet-booter", "launcher-release", "launcher/start",
                    "launcher/bin/gizlet-launcher", "launcher/bin/cli"):
         assert (root / "usr/lib/gizlet" / script).stat().st_mode & 0o111, f"/usr/lib/gizlet/{script} is executable"
     assert os.readlink(root / "usr/bin/gizlet") == "/usr/lib/gizlet/launcher-release"
@@ -213,8 +213,14 @@ def main():
     # First boot grows the data partition and its filesystem.
     for tool in ("usr/sbin/sfdisk", "usr/bin/partx", "usr/sbin/resize2fs"):
         assert (root / tool).exists(), f"/{tool}"
-    for directory in ("opt/gizlet", "home"):
+    for directory in ("opt/gizlet", "home", "media/tf2"):
         assert (root / directory).is_dir(), f"/{directory}"
+    # The TF2 card: udev starts gizlet-tf2@.service for filesystems on MMC disks,
+    # and the script finds and mounts the card with these tools.
+    assert "gizlet-tf2@%k.service" in (root / "usr/lib/udev/rules.d/90-gizlet-tf2.rules").read_text()
+    assert "BindsTo=dev-%i.device" in (root / "usr/lib/systemd/system/gizlet-tf2@.service").read_text()
+    for tool in ("usr/sbin/blkid", "usr/bin/findmnt", "usr/bin/mountpoint"):
+        assert (root / tool).exists(), f"/{tool}"
     for notice in config["licenses"]:
         assert (root / "usr/share/licenses" / notice).stat().st_size > 0, f"license notice {notice}"
     for package in ("libc6", "systemd", "openssh-server", "iwd", "bluez"):

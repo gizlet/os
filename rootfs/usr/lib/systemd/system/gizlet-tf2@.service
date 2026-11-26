@@ -1,0 +1,12 @@
+[Unit]
+Description=TF2 card %I at /media/tf2
+Documentation=file:/usr/lib/gizlet/gizlet-tf2
+# Stops, and unmounts the card, when the device goes away.
+BindsTo=dev-%i.device
+After=dev-%i.device gizlet-data.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/gizlet/gizlet-tf2 mount %I
+ExecStop=/usr/lib/gizlet/gizlet-tf2 unmount %I
