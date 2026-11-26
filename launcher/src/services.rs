@@ -75,6 +75,8 @@ impl UnitState {
             Some(format!("it exited and is being restarted ({result})"))
         } else if self.active == "inactive" {
             Some(format!("it exited ({result})"))
+        } else if self.active == "deactivating" {
+            Some(format!("its main process exited and it is stopping ({})", self.sub))
         } else {
             None
         }
@@ -486,11 +488,16 @@ impl Library {
         self.manager().start(&unit, true)?;
         let deadline = Instant::now() + self.manager().probation();
         loop {
-            if let Some(problem) = self.unit_state(id)?.start_problem() {
+            let state = self.unit_state(id)?;
+            if let Some(problem) = state.start_problem() {
                 return Err(problem);
             }
             if Instant::now() >= deadline {
-                return Ok(());
+                // Started means running now, not still on its way.
+                return match state.active.as_str() {
+                    "active" | "reloading" => Ok(()),
+                    other => Err(format!("it is still {other} ({})", state.sub)),
+                };
             }
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -978,6 +985,9 @@ pub(crate) mod tests {
         pub crash_on_start: BTreeSet<String>,
         /// Units whose next start exits successfully at once.
         pub exit_on_start: BTreeSet<String>,
+        /// Units whose main process exits at once while a child takes long to end.
+        pub stopping_on_start: BTreeSet<String>,
+        stopping: BTreeSet<String>,
         /// Units that cannot be stopped.
         pub stuck: BTreeSet<String>,
         /// Units that stop this many more times, then cannot be stopped.
@@ -1028,6 +1038,10 @@ pub(crate) mod tests {
             if u.exit_on_start.remove(unit) {
                 return Ok(());
             }
+            if u.stopping_on_start.remove(unit) {
+                u.stopping.insert(unit.into());
+                return Ok(());
+            }
             if u.active.insert(unit.into()) {
                 let id = unit.strip_prefix(UNIT_PREFIX).unwrap().strip_suffix(".service").unwrap();
                 let file = File::options().create(true).truncate(false).write(true).open(self.services.join(format!(".running-{id}"))).unwrap();
@@ -1049,6 +1063,7 @@ pub(crate) mod tests {
                 return Err(format!("Job for {unit} failed."));
             }
             u.active.remove(unit);
+            u.stopping.remove(unit);
             u.held.remove(unit);
             Ok(())
         }
@@ -1063,6 +1078,8 @@ pub(crate) mod tests {
                     let load = if u.text.contains_key(unit) { "loaded" } else { "not-found" };
                     let (active, sub, result) = if u.active.contains(unit) {
                         ("active", "running", "success")
+                    } else if u.stopping.contains(unit) {
+                        ("deactivating", "stop-sigterm", "success")
                     } else if u.failed.contains(unit) {
                         ("failed", "failed", "exit-code")
                     } else {
@@ -1185,6 +1202,11 @@ pub(crate) mod tests {
         units.lock().unwrap().exit_on_start.insert(unit(A));
         let err = lib.install(&service(&dir, A, "0.2.0")).unwrap_err();
         assert!(err.contains("it exited (success)") && err.contains("0.1.0 is back and running"), "{err}");
+        assert_eq!(lib.service(A).unwrap().package.manifest.version, "0.1.0");
+        // Nor is a main process that exits while a child lingers.
+        units.lock().unwrap().stopping_on_start.insert(unit(A));
+        let err = lib.install(&service(&dir, A, "0.2.0")).unwrap_err();
+        assert!(err.contains("main process exited") && err.contains("0.1.0 is back and running"), "{err}");
         assert_eq!(lib.service(A).unwrap().package.manifest.version, "0.1.0");
         assert_eq!(leftovers(&lib), 0);
         let _ = fs::remove_dir_all(&dir);
