@@ -22,10 +22,16 @@ fn shelf_worker_runs_app() {
     let app = root.0.join("apps").join(id);
     fs::create_dir_all(&app).unwrap();
     let target = gizlet_launcher::apps::device_target();
-    let manifest = format!(
-        "id = \"{id}\"\nname = \"Desktop Test\"\nversion = \"1.0.0\"\ntier = \"lite\"\ntarget = \"{target}\"\nentry = \"hello\"\n",
-    );
-    fs::write(app.join("manifest.toml"), manifest).unwrap();
+    let manifest = serde_json::json!({
+        "schema": 1,
+        "id": id,
+        "name": "Desktop Test",
+        "version": "1.0.0",
+        "tier": "lite",
+        "target": target,
+        "entry": "hello",
+    });
+    fs::write(app.join(gizlet_launcher::apps::MANIFEST), manifest.to_string()).unwrap();
     let entry = app.join("hello");
     fs::write(&entry, "#!/bin/sh\nprintf '%s\\n' \"$GIZLET_APP_ID\"\n").unwrap();
     fs::set_permissions(&entry, fs::Permissions::from_mode(0o755)).unwrap();

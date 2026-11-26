@@ -14,23 +14,27 @@ On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A
 
 ## Apps
 
-An app is installed from a `.gzl` package, the format of the [Gizlet store contract](https://github.com/gizlet/store/blob/main/docs/contract.md): a zip with `manifest.toml` at its root and `CHECKSUMS`, the SHA-256 of every other file. The store's release index, `gizlet.json`, names the packages of a release; the device reads only the package. [Packages](src/apps.rs)
+Developers write `gizlet.toml` at the repository root. The store reads that file at the release tag, and the build generates `manifest.json` for each `.gzl`. The device reads the manifest from the package root, where `CHECKSUMS` lists the SHA-256 of every other file. The store also reads the manifest when it checks the package. [Gizlet format](https://github.com/gizlet/gizlet/blob/main/docs/gizlet-toml.md) · [Package reader](src/apps.rs)
 
-```toml
-id = "io.gizlet.overeaten"
-name = "Overeaten"
-version = "0.1.0"
-tier = "lite"
-target = "aarch64-unknown-linux-gnu"
-entry = "bin/overeaten"
-icon = "icon.png"
-color = "#c8553d"
-
-[names]
-zh-CN = "吃吃吃"
+```json
+{
+  "schema": 1,
+  "id": "io.gizlet.overeaten",
+  "name": "Overeaten",
+  "names": { "zh-CN": "吃吃吃" },
+  "version": "0.1.0",
+  "runtime": 1,
+  "target": "aarch64-unknown-linux-gnu",
+  "tier": "lite",
+  "entry": "bin/overeaten",
+  "icon": "icon.png",
+  "color": "#c8553d"
+}
 ```
 
-`id`, `name`, `version`, `tier`, `target` and `entry` are required; `icon`, `color`, `description`, `[names]` and `[descriptions]` are optional. Installing checks what the store checks: stored or deflated entries with canonical relative names, no links, devices, setuid files, encryption or ZIP64, every file matching `CHECKSUMS`, a reverse-DNS `id`, and a `target` and `tier` this device runs (`aarch64-unknown-linux-gnu`, or a static `-musl` program, and `lite`). The package is unpacked beside the installed version and replaces it only when complete.
+`id`, `name`, `version`, `tier`, `target` and `entry` are required. The app shelf uses the package's `icon`, `color` and localized `names` when provided. `description` and its `descriptions` translations are also optional. The OS supports schema and runtime `1` and assumes `1` when either is omitted. It reads the legacy `manifest.toml` in older packages and installed apps when `manifest.json` is absent.
+
+The installer accepts stored or deflated entries with canonical relative names. It rejects links, devices, setuid files, encryption and ZIP64, verifies every file against `CHECKSUMS`, and checks the reverse-DNS `id` and whether the device supports the package's `target` and `tier` (`aarch64-unknown-linux-gnu` or a static `-musl` program, and `lite` on the R36S). The package is unpacked beside the installed version and replaces it only when complete.
 
 | Path under `/opt/gizlet` | Holds |
 | --- | --- |
