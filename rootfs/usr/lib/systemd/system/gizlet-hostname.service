@@ -1,0 +1,13 @@
+[Unit]
+Description=Gizlet OS hostname (gizlet-switch hostname)
+# At boot, and again when udev adds a network adapter (90-gizlet-hostname.rules):
+# until a name is chosen, the first Wi-Fi adapter's MAC address names the
+# device, and the R36S's USB Wi-Fi may appear after boot.
+After=gizlet-data.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/gizlet/gizlet-switch apply-hostname
+
+[Install]
+WantedBy=multi-user.target
