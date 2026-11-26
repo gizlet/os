@@ -55,9 +55,10 @@ ROOTFS_EXECUTABLES = {
     "//rootfs:usr/lib/gizlet/save-boot-log": "usr/lib/gizlet/save-boot-log",
     # The launcher runs against Gizlet runtime 1 (its raylib, Mesa and glibc)
     # through its start script; the CLI uses the base system's loader.
-    "//launcher:gizlet-launcher": "usr/lib/gizlet/gizlet-launcher",
-    "//launcher:gizlet-cli": "usr/lib/gizlet/gizlet-cli",
-    "//launcher:start.sh": "usr/lib/gizlet/gizlet-launcher-start",
+    "//launcher:gizlet-launcher": "usr/lib/gizlet/launcher/bin/gizlet-launcher",
+    "//launcher:gizlet-cli": "usr/lib/gizlet/launcher/bin/cli",
+    "//launcher:start.sh": "usr/lib/gizlet/launcher/start",
+    "//rootfs:usr/lib/gizlet/launcher-release": "usr/lib/gizlet/launcher-release",
     "//session:booter": "usr/lib/gizlet/gizlet-booter",
     # Follows the headphone jack; static, like the Booter.
     "//audio:audio-jack": "usr/lib/gizlet/gizlet-audio-jack",
@@ -87,7 +88,7 @@ ROOTFS_ENABLE = [
 # (gizlet-data.service). Until then, or without a data partition, it is UTC.
 ROOTFS_SYMLINKS = {
     "etc/localtime": "/run/gizlet-localtime",
-    "usr/bin/gizlet": "/opt/gizlet/launcher/bin/cli",
+    "usr/bin/gizlet": "/usr/lib/gizlet/launcher-release",
 }
 
 # Started by gizlet-switches.service when turned on in the launcher, not by

@@ -46,7 +46,7 @@ Every app can be left the same way: holding Home (the R36S's FN key) for a secon
 
 While neither holds the display, the LCD shows the kernel's text console. start.sh clears it and hides its cursor, and after boot the kernel prints only critical messages there (`/usr/lib/sysctl.d/gizlet.conf`), so a switch shows black until the app draws its first frame.
 
-On Gizlet OS, `/usr/bin/gizlet` links to `/opt/gizlet/launcher/bin/cli`. The system installs or refreshes the CLI on boot, including on cards that select a custom boot entry. On a computer, run `cargo run --release --bin gizlet-cli -- COMMAND` from `launcher/`. Set `GIZLET_PREFIX` to choose where apps and saves live. [Commands](src/cli.rs)
+On Gizlet OS, `/usr/bin/gizlet` runs the CLI from the Launcher release selected at boot. On a computer, run `cargo run --release --bin gizlet-cli -- COMMAND` from `launcher/`. Set `GIZLET_PREFIX` to choose where apps and saves live. [Commands](src/cli.rs)
 
 | Command | Does |
 | --- | --- |
@@ -56,6 +56,27 @@ On Gizlet OS, `/usr/bin/gizlet` links to `/opt/gizlet/launcher/bin/cli`. The sys
 | `gizlet run ID [ARGS]` | Runs it here and waits; the screen must be free, as in the recovery shell |
 | `gizlet start ID` | Asks the launcher on the screen to quit and run it, then come back |
 | `gizlet target` | Prints the target triple and tier packages must match |
+
+## Updating the Launcher and CLI
+
+A Launcher release contains the UI, its start script, and `bin/cli`. On boot, Gizlet OS picks the highest complete, compatible `MAJOR.MINOR.PATCH` release under `/opt/gizlet/launcher/releases`, or the factory release from the read-only rootfs. The selection lasts for that boot. A custom `boot.ini` still controls the boot entry. `gizlet` uses the selected CLI in either case.
+
+Build both card binaries and use an OpenSSH release signing key to pack them:
+
+```sh
+bazel build --config=r36s //launcher:gizlet-launcher //launcher:gizlet-cli
+./launcher/pack_release.sh 0.2.0 /path/to/signing-key bazel-bin/launcher/gizlet-launcher bazel-bin/launcher/gizlet-cli gizlet-launcher-0.2.0.gizlet
+```
+
+Provision the corresponding **public** key on the device before the first update. Put a line of the form `launcher namespaces="gizlet-launcher" ssh-ed25519 KEY` in `/opt/gizlet/launcher/allowed_signers`, replacing `ssh-ed25519 KEY` with the release public key's type and value. Keep the private key on the signing host.
+
+Copy the signed `.gizlet` file to the device with `scp` and pass its path to `gizlet update`. For an over-the-air update, publish the same bundle at an HTTPS URL and pass that URL instead:
+
+```sh
+gizlet update /home/gizlet-launcher-0.2.0.gizlet
+```
+
+The installer verifies the signature and architecture and runtime requirements, then publishes the complete release with a rename. Restart to use the newest release. The system keeps the three most recent complete releases, plus the running release until the next boot if needed. Apps, saves, and settings live outside these releases.
 
 ## Running on a computer
 

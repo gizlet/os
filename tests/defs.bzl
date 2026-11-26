@@ -29,12 +29,13 @@ def gizlet_qemu_test(name, image, flash, kernel = "Image", **kwargs):
     vm_test(
         name = name,
         src = Label("//tests:qemu_test.py"),
-        data = [image, flash, Label("//tests:card.py"), Label("//tests:flash_card.sh")],
+        data = [image, flash, Label("//tests:card.py"), Label("//tests:flash_card.sh"), Label("//launcher:pack_release.sh")],
         guest_args = [
             "$(rootpath %s)" % image,
             kernel,
             "$(rootpath %s)" % flash,
             "$(rootpath %s)" % Label("//tests:flash_card.sh"),
+            "$(rootpath %s)" % Label("//launcher:pack_release.sh"),
         ],
         **kwargs
     )

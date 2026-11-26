@@ -189,9 +189,10 @@ def main():
     assert not list((root / "etc/ssh").glob("ssh_host_*")), "the image carries ssh host keys"
     assert (root / "etc/machine-id").read_text() == "", "the image carries a machine ID"
     for script in ("boot-session", "gizlet-boot-device", "gizlet-mount-data", "gizlet-ssh", "gizlet-setup", "gizlet-switch",
-                   "gizlet-var", "save-boot-log", "gizlet-booter", "gizlet-launcher", "gizlet-launcher-start", "gizlet-cli"):
+                   "gizlet-var", "save-boot-log", "gizlet-booter", "launcher-release", "launcher/start",
+                   "launcher/bin/gizlet-launcher", "launcher/bin/cli"):
         assert (root / "usr/lib/gizlet" / script).stat().st_mode & 0o111, f"/usr/lib/gizlet/{script} is executable"
-    assert os.readlink(root / "usr/bin/gizlet") == "/opt/gizlet/launcher/bin/cli", "/usr/bin/gizlet points to the installed CLI"
+    assert os.readlink(root / "usr/bin/gizlet") == "/usr/lib/gizlet/launcher-release"
     # After boot the kernel keeps its messages off the LCD's console, which shows between apps.
     assert "kernel.printk = 3 " in (root / "usr/lib/sysctl.d/gizlet.conf").read_text(), "quiet console sysctl"
     assert (root / "usr/lib/systemd/system/systemd-sysctl.service").exists(), "systemd-sysctl applies sysctl.d"
@@ -205,14 +206,14 @@ def main():
     for package in ("libc6", "systemd", "openssh-server", "iwd", "bluez"):
         assert (root / "usr/share/doc" / package / "copyright").stat().st_size > 0, f"{package} copyright notice"
     assert (root / "usr/lib/gizlet/gizlet-booter").read_bytes() == booter.read_bytes(), "installed Booter differs from the build"
-    for executable in ("usr/lib/gizlet/gizlet-booter", "usr/lib/gizlet/gizlet-launcher", "usr/lib/gizlet/gizlet-cli"):
+    for executable in ("usr/lib/gizlet/gizlet-booter", "usr/lib/gizlet/launcher/bin/gizlet-launcher", "usr/lib/gizlet/launcher/bin/cli"):
         assert "AArch64" in output("readelf", "-h", root / executable), f"/{executable} is AArch64"
-    cli_libraries = output("readelf", "-dW", root / "usr/lib/gizlet/gizlet-cli")
+    cli_libraries = output("readelf", "-dW", root / "usr/lib/gizlet/launcher/bin/cli")
     assert "libraylib" not in cli_libraries, "the CLI runs without the launcher runtime"
     booter_path = "usr/lib/gizlet/gizlet-booter"
     assert "INTERP" not in output("readelf", "-lW", root / booter_path), f"/{booter_path} requires a dynamic loader"
     # The launcher runs against runtime 1, which has every library it needs, raylib among them.
-    needed = re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", output("readelf", "-dW", root / "usr/lib/gizlet/gizlet-launcher"))
+    needed = re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", output("readelf", "-dW", root / "usr/lib/gizlet/launcher/bin/gizlet-launcher"))
     assert "libraylib.so.600" in needed, needed
     for library in needed:
         assert f"squashfs-root/lib/{library}\n" in listing, f"runtime 1 lacks {library} for the launcher"

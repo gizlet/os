@@ -12,12 +12,7 @@
 # Between the two, the LCD shows the kernel's text console. It is cleared
 # once here, with its cursor hidden, so a switch shows black rather than old
 # boot messages; the kernel prints only serious ones after boot (sysctl.d).
-case $0 in
-    # The Booter executes its entry through a file descriptor, so $0 names no
-    # directory; the boot session installs the launcher here.
-    /proc/self/fd/*) dir=/opt/gizlet/launcher ;;
-    *) dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) ;;
-esac
+dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) || exit 1
 run=/opt/gizlet/runtime/1/bin/gizlet-run
 launcher=$dir/bin/gizlet-launcher
 cli=$dir/bin/cli

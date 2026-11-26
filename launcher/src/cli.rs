@@ -26,6 +26,9 @@ pub fn main(args: &[String]) -> i32 {
     let status = match (command, rest) {
         ("help" | "--help" | "-h", _) => {
             println!("{USAGE}");
+            if cfg!(feature = "gizlet-os") {
+                println!("\nOn Gizlet OS:\n  update FILE|HTTPS_URL  install a signed Launcher and CLI update");
+            }
             Ok(())
         }
         ("install", [file]) => install(&library, Path::new(file)),

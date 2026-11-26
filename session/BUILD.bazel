@@ -2,7 +2,7 @@ load("//tools/bazel/debian:defs.bzl", "debian_cc_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-# The Booter starts the entry named in /opt/gizlet/boot.ini. It runs from
+# The Booter starts the managed Launcher or the entry in /opt/gizlet/boot.ini. It runs from
 # boot-session (rootfs/usr/lib/gizlet), which opens the recovery shell after it.
 # Built with the build VM's Debian GCC as a static AArch64 glibc executable.
 debian_cc_binary(
