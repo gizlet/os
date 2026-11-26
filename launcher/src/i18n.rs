@@ -146,6 +146,11 @@ strings! {
     Memory => "内存", "Memory";
     Cpus => "处理器核心", "CPU Cores";
     Hostname => "主机名", "Hostname";
+    HostnameTitle => "主机名（字母、数字和连字符，留空恢复默认）", "Hostname (letters, digits and hyphens; empty for the default)";
+    HostnameInvalid => "主机名最多 63 个字母、数字或连字符，不能以连字符开头或结尾", "Use up to 63 letters, digits and hyphens, not starting or ending with a hyphen";
+    HostnameSaved => "主机名已改为 {}", "Hostname changed to {}";
+    HostnameDefault => "已恢复默认主机名", "Hostname reset to the default";
+    LocalAddress => "局域网地址", "Local Address";
     IpAddress => "IP 地址", "IP Address";
     Storage => "存储空间", "Storage";
     StorageUsed => "已使用 {} / 共 {}", "{} of {} used";

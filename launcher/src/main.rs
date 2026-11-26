@@ -85,6 +85,7 @@ fn probe() {
     show("ssh", format!("{:?}", s.ssh));
     show("clock", format!("{:?}", s.clock));
     show("power", format!("{:?}", s.power));
+    show("hostname", format!("{:?}", s.hostname));
     show("ip", format!("{:?}", s.ip));
     show("model", format!("{:?}", s.info.model));
 }

@@ -10,7 +10,6 @@ pub struct Info {
     pub arch: String,
     pub cpus: usize,
     pub memory_bytes: Option<u64>,
-    pub hostname: String,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -24,6 +23,16 @@ fn read_trim(path: &str) -> Option<String> {
         .ok()
         .map(|s| s.trim_matches(|c: char| c.is_whitespace() || c == '\0').to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// The name the system has now.
+pub fn hostname() -> String {
+    #[cfg(unix)]
+    return uname().2;
+    #[cfg(windows)]
+    return std::env::var("COMPUTERNAME").unwrap_or_default();
+    #[cfg(not(any(unix, windows)))]
+    return String::new();
 }
 
 #[cfg(unix)]
@@ -50,9 +59,8 @@ impl Info {
         };
         #[cfg(unix)]
         {
-            let (sysname, release, node) = uname();
+            let (sysname, release, _) = uname();
             info.kernel = format!("{sysname} {release}");
-            info.hostname = node;
         }
         #[cfg(target_os = "linux")]
         {
@@ -82,7 +90,6 @@ impl Info {
         #[cfg(windows)]
         {
             info.os = "Windows".into();
-            info.hostname = std::env::var("COMPUTERNAME").unwrap_or_default();
         }
         let _ = read_trim;
         info

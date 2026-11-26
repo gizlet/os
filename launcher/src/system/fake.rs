@@ -12,6 +12,7 @@ pub fn devices() -> Devices {
         wifi: Ok(Box::new(FakeWifi { on: true, connected: Some("Gizlet Lab".into()), known: vec!["Gizlet Lab".into()] })),
         ssh: Ok(Box::new(FakeSsh { on: false, password: None })),
         clock: Ok(Box::new(FakeClock { zone: "Asia/Shanghai".into() })),
+        host: Some(Box::new(FakeHost { name: None })),
         power: Some(Box::new(FakePower)),
         simulated: true,
         load: LoadMeter::default(),
@@ -150,6 +151,24 @@ impl Clock for FakeClock {
     }
     fn set_zone(&mut self, zone: &str) -> Result<(), String> {
         self.zone = zone.into();
+        Ok(())
+    }
+}
+
+/// Remembers the name; the default is the one from a simulated MAC address.
+struct FakeHost {
+    name: Option<String>,
+}
+
+impl Host for FakeHost {
+    fn name(&mut self) -> String {
+        self.name.clone().unwrap_or_else(|| "gizlet-a1b2".into())
+    }
+    fn set_name(&mut self, name: &str) -> Result<(), String> {
+        if !name.is_empty() && !valid_hostname(name) {
+            return Err(format!("invalid name {name}"));
+        }
+        self.name = Some(name.to_string()).filter(|n| !n.is_empty());
         Ok(())
     }
 }

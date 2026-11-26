@@ -32,6 +32,8 @@ pub enum Purpose {
     WifiPassphrase(String),
     /// root's password for ssh logins.
     SshPassword,
+    /// The device's name.
+    Hostname,
 }
 
 pub enum Outcome {
@@ -74,6 +76,14 @@ impl Keyboard {
         kb.purpose = Purpose::SshPassword;
         kb.masked = false;
         kb.text = current.to_string();
+        kb
+    }
+
+    /// The device's name, starting from the current one: one DNS label.
+    pub fn hostname(title: String, current: &str) -> Keyboard {
+        let mut kb = Keyboard::ssh_password(title, current);
+        kb.purpose = Purpose::Hostname;
+        kb.max_len = 63;
         kb
     }
 

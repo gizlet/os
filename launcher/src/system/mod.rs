@@ -125,6 +125,8 @@ pub enum Request {
     Ssh(bool),
     SshPassword(String),
     TimeZone(String),
+    /// A name for the device, or an empty one to go back to the default.
+    Hostname(String),
     Power(PowerAction),
 }
 
@@ -148,6 +150,10 @@ pub struct Snapshot {
     pub power: Vec<PowerAction>,
     pub info: Info,
     pub load: Load,
+    /// The device's name now; `NAME.local` on the network where it can be renamed.
+    pub hostname: String,
+    /// The launcher can rename the device.
+    pub can_rename: bool,
     pub ip: Option<String>,
     pub storage: Option<Storage>,
     pub simulated: bool,
@@ -188,6 +194,22 @@ pub trait Clock: Send {
     fn set_zone(&mut self, zone: &str) -> Result<(), String>;
 }
 
+/// The device's name, kept across reboots.
+pub trait Host: Send {
+    fn name(&mut self) -> String;
+    /// Sets a name [`valid_hostname`] accepts, or the default for an empty one.
+    fn set_name(&mut self, name: &str) -> Result<(), String>;
+}
+
+/// One DNS label, as `gizlet-switch hostname` accepts it once lowercased: 1 to
+/// 63 letters, digits and hyphens, neither starting nor ending with a hyphen.
+pub fn valid_hostname(name: &str) -> bool {
+    (1..=63).contains(&name.len())
+        && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+}
+
 pub struct Devices {
     pub battery: Box<dyn BatterySource>,
     pub backlight: Result<Box<dyn Level>, Missing>,
@@ -195,6 +217,8 @@ pub struct Devices {
     pub wifi: Result<Box<dyn Wifi>, Missing>,
     pub ssh: Result<Box<dyn Ssh>, Missing>,
     pub clock: Result<Box<dyn Clock>, Missing>,
+    /// None where the system names itself.
+    pub host: Option<Box<dyn Host>>,
     pub power: Option<Box<dyn Power>>,
     pub simulated: bool,
     pub load: LoadMeter,
@@ -273,6 +297,9 @@ fn snapshot(dev: &mut Devices, info: &Info, storage_root: &std::path::Path) -> S
         power: dev.power.as_ref().map(|p| p.actions()).unwrap_or_default(),
         info: info.clone(),
         load: dev.load.read(dev.simulated),
+        // Read each time: it may be changed over ssh, or by a Wi-Fi adapter appearing.
+        hostname: dev.host.as_mut().map_or_else(info::hostname, |h| h.name()),
+        can_rename: dev.host.is_some(),
         ip: info::local_ip(),
         storage: info::storage(storage_root),
         simulated: dev.simulated,
@@ -368,6 +395,13 @@ fn worker(mut dev: Devices, storage_root: PathBuf, rx: Receiver<Request>, tx: Se
                         Err(m) => Some(Event::Failed(unavailable(m))),
                     }
                 }
+                Request::Hostname(name) => {
+                    refresh = true;
+                    match dev.host.as_mut() {
+                        Some(h) => failed(h.set_name(&name)),
+                        None => Some(Event::Failed("the system names this device itself".into())),
+                    }
+                }
                 Request::Power(action) => match dev.power.as_mut() {
                     Some(p) => failed(p.run(action)),
                     None => Some(Event::Failed("power control is unavailable".into())),
@@ -381,6 +415,21 @@ fn worker(mut dev: Devices, storage_root: PathBuf, rx: Receiver<Request>, tx: Se
         }
         if refresh && tx.send(Event::Snapshot(Box::new(snapshot(&mut dev, &info, &storage_root)))).is_err() {
             return;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_one_dns_label() {
+        for name in ["gizlet-a1b2", "r36s", "a", &"a".repeat(63)] {
+            assert!(valid_hostname(name), "{name}");
+        }
+        for name in ["", "-x", "x-", "a_b", "Ab", "a.b", "小米", &"a".repeat(64)] {
+            assert!(!valid_hostname(name), "{name}");
         }
     }
 }

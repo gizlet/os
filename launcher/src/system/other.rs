@@ -11,6 +11,7 @@ pub fn devices() -> Devices {
         wifi: Err(Missing::ManagedBySystem),
         ssh: Err(Missing::ManagedBySystem),
         clock: Err(Missing::ManagedBySystem),
+        host: None,
         power: None,
         simulated: false,
         load: LoadMeter::default(),
