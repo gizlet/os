@@ -21,6 +21,8 @@ trap 'rm -rf "${work}"' EXIT
 sudo=''
 if [ -n "${update}" ]; then
     raw=${image} target=${card} disk=${card} os=linux
+    save_boot_files() { kept=''; }
+    restore_boot_files() { :; }
     update_card
     exit 0
 fi

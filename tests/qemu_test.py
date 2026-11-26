@@ -366,8 +366,15 @@ def scenarios(image, kernel_name, flash, flash_card, work):
         console.expect(b"updated the factory launcher")
         console.expect(b"Gizlet launcher: no display")
         console.expect(PROMPT)
+        # So does a boot.ini with Windows line endings, which the Booter accepts.
+        console.command("echo old > /opt/gizlet/launcher/bin/gizlet-launcher")
+        console.command("printf '%s\\r\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
+        console.enter("exit")
+        console.expect(b"updated the factory launcher")
+        console.expect(b"Gizlet launcher: no display")
+        console.expect(PROMPT)
         console.stop()
-    print("an update keeps the data partition and brings the factory launcher up to date")
+    print("an update keeps the data partition and brings the factory launcher up to date, with LF or CRLF boot.ini")
     # A card missing its data partition must not pick a valid data volume on another disk.
     # The second disk is the real, populated data partition as a standalone virtual disk.
     index, offset, size = parts["data"]

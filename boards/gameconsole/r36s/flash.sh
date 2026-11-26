@@ -513,6 +513,10 @@ boot_partition() {
     fi
 }
 
+# as_root COMMAND...: runs COMMAND as root. Writing the disk may need no sudo
+# (a user with write access to it), but mounting on Linux always does.
+as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
+
 # mount_boot ro|rw: mounts the boot partition at ${boot_dir}; unmount_boot.
 mount_boot() {
     part=$(boot_partition)
@@ -524,15 +528,15 @@ mount_boot() {
         [ -d "${boot_dir}" ] || return 1
     else
         [ -b "${part}" ] || return 1
-        ${sudo} blockdev --flushbufs "${part}" 2>/dev/null || true
+        as_root blockdev --flushbufs "${part}" 2>/dev/null || true
         boot_dir=${work}/boot
         mkdir -p "${boot_dir}"
-        ${sudo} mount -t vfat -o "$1" "${part}" "${boot_dir}" 2>/dev/null || return 1
+        as_root mount -t vfat -o "$1" "${part}" "${boot_dir}" 2>/dev/null || return 1
     fi
 }
 unmount_boot() {
     if [ "${os}" = mac ]; then diskutil unmount "${part}" >/dev/null
-    else ${sudo} umount "${boot_dir}"
+    else as_root umount "${boot_dir}"
     fi
 }
 
@@ -540,10 +544,8 @@ save_boot_files() {
     kept=''
     keep=${work}/boot-files
     mkdir -p "${keep}"
-    if ! mount_boot ro; then
-        say "$(m 'Warning: cannot read the boot partition; any authorized_keys or setup.ini on it is not kept.' '警告：无法读取启动分区，上面的 authorized_keys 或 setup.ini 不会保留。')"
-        return 0
-    fi
+    # The update rewrites the boot partition, so its files must be kept first.
+    mount_boot ro || die "$(m "cannot read the boot partition ${part} to keep its authorized_keys and setup.ini; nothing was written" "无法读取启动分区 ${part}，不能保留上面的 authorized_keys 和 setup.ini；没有写入任何内容")"
     for file in ${BOOT_FILES}; do
         if [ -f "${boot_dir}/${file}" ]; then
             cp "${boot_dir}/${file}" "${keep}/${file}" || die "$(m "cannot read ${file} on the boot partition; nothing was written" "无法读取启动分区上的 ${file}，没有写入任何内容")"
@@ -560,7 +562,7 @@ restore_boot_files() {
         copied=yes
         for file in ${kept}; do
             if [ "${os}" = mac ]; then cp -X "${keep}/${file}" "${boot_dir}/${file}" || copied=''
-            else ${sudo} cp "${keep}/${file}" "${boot_dir}/${file}" || copied=''
+            else as_root cp "${keep}/${file}" "${boot_dir}/${file}" || copied=''
             fi
         done
         sync

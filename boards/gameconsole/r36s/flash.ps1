@@ -297,7 +297,8 @@ function Update-Card([string]$raw, $disk) {
                 }
             }
         } else {
-            Write-Host (M 'Warning: cannot read the boot partition; any authorized_keys or setup.ini on it is not kept.' '警告：无法读取启动分区，上面的 authorized_keys 或 setup.ini 不会保留。')
+            # The update rewrites the boot partition, so its files must be kept first.
+            throw (M "Cannot read the boot partition of $diskName to keep its authorized_keys and setup.ini; nothing was written." "无法读取 $diskName 的启动分区，不能保留上面的 authorized_keys 和 setup.ini；没有写入任何内容。")
         }
         # Windows blocks writes under a mounted volume: the disk goes offline
         # where it can, or the boot partition's volume is locked and dismounted.
