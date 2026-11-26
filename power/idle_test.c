@@ -13,6 +13,16 @@ static void check(int ok, const char *what) {
 }
 
 int main(void) {
+    /* External power: the R36S charging, a charger online, and peripherals. */
+    check(idle_supply_external("Battery", NULL, "Not charging", -1), "the RK817 while it charges");
+    check(idle_supply_external("Battery", "System", "Charging", -1), "the device's battery charging");
+    check(!idle_supply_external("Battery", NULL, "Discharging", -1), "on battery");
+    check(!idle_supply_external("USB", NULL, NULL, 0), "the RK817 charger reads offline");
+    check(idle_supply_external("USB", NULL, NULL, 1), "a USB charger online");
+    check(!idle_supply_external("Battery", "Device", "Charging", -1), "a gamepad charging from the OTG port");
+    check(!idle_supply_external("USB", "Device", NULL, 1), "a peripheral's own supply");
+    check(!idle_supply_external(NULL, NULL, "Charging", 1), "no type");
+
     unsigned char keys[96] = {0};
     check(!idle_any_key(keys, sizeof keys), "nothing held");
     keys[0x131 / 8] |= 1 << (0x131 % 8); /* BTN_EAST held, as while accelerating */
