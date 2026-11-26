@@ -19,6 +19,20 @@ A card carries it as `/opt/gizlet/runtime/1.sqfs` on the data partition, a read-
 
 Fresh cards include the runtime built with the image. The card writer's `--update` mode preserves the existing runtime on the data partition. Existing cards use the ES 3.0 raylib build once their `1.sqfs` has also been updated.
 
+## Activating a new build
+
+Copy a trusted runtime 1 image to the device and run this command as root:
+
+```sh
+gizlet system reload-runtime /home/gizlet-runtime-1.sqfs
+```
+
+The command copies the image into a new directory, mounts it read-only and checks that it can load the factory Launcher. New `gizlet run` invocations and Launcher starts resolve the active runtime directory when they start. Running programs keep their original runtime mount until reboot. The active image persists across reboots, and the next boot removes older generations after successfully restoring the active one. If the active image fails to mount or validate on boot, the OS falls back to the card's `1.sqfs`.
+
+This command accepts local images and requires a compatible runtime 1 build. Install a Launcher and CLI release that supports runtime reloading if you use a separate Launcher bundle. Keep each mounted image intact and use the reload command to activate another build.
+
+## Graphics probe
+
 ```sh
 /opt/gizlet/runtime/1/bin/gizlet-run /opt/gizlet/runtime/1/bin/gizlet-gl-info
 ```

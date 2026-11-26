@@ -8,7 +8,7 @@ releases=$base/releases
 factory=/usr/lib/gizlet/launcher
 active=/run/gizlet-launcher-release
 ready=/run/gizlet-data.ready
-runtime=/opt/gizlet/runtime/1/bin/gizlet-run
+runtime=/opt/gizlet/runtime
 trusted=$base/allowed_signers
 namespace=gizlet-launcher
 max_bytes=67108864
@@ -55,7 +55,7 @@ select_release() {
     lock_releases
     [ ! -e "$active" ] || return 0
     version=factory
-    if [ -x "$runtime" ]; then
+    if [ -x "$runtime/1-current/bin/gizlet-run" ] || [ -x "$runtime/1/bin/gizlet-run" ]; then
         newest=$(installed_versions | head -n 1)
         version=${newest:-factory}
     fi
@@ -155,6 +155,10 @@ if [ "${0##*/}" = gizlet ]; then
         update)
             [ "$#" -eq 2 ] || fail 'usage: gizlet update FILE|HTTPS_URL'
             install_release "$2"
+            ;;
+        system)
+            [ "$#" -eq 3 ] && [ "$2" = reload-runtime ] || fail 'usage: gizlet system reload-runtime FILE.sqfs'
+            exec /usr/lib/gizlet/gizlet-runtime reload "$3"
             ;;
         *) dir=$(active_dir); exec "$dir/bin/cli" "$@" ;;
     esac

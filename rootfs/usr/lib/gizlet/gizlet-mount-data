@@ -147,5 +147,6 @@ for image in /opt/gizlet/runtime/*.sqfs; do
     [ -d "${image%.sqfs}" ] || mkdir "${image%.sqfs}"
     mount -t squashfs -o ro,nodev,nosuid "$image" "${image%.sqfs}" || say "cannot mount ${image##*/}"
 done
+/usr/lib/gizlet/gizlet-runtime restore || say "cannot restore the selected runtime 1; using the card's runtime"
 : > /run/gizlet-data.ready
 step ready
