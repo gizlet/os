@@ -1,23 +1,36 @@
-//! `gizlet`: installs, lists, runs and removes apps from the shell. On Gizlet
-//! OS `/usr/bin/gizlet` points to the CLI installed alongside the launcher.
+//! `gizlet`: installs, lists, runs and removes apps, and installs and
+//! controls services, from the shell. On Gizlet OS `/usr/bin/gizlet` points
+//! to the CLI installed alongside the launcher.
 
-use crate::apps::{self, Library};
+use crate::apps::{self, Kind, Library};
+use crate::services::{self, Service};
 use crate::settings::{self, Settings};
 use std::path::Path;
 
 const USAGE: &str = "\
 usage: gizlet <command>
 
-  install FILE.gzl       install or update an app
-  uninstall ID [--saves] remove an app; its saves too with --saves
+  install FILE.gzl       install or update an app or a service
+  uninstall ID [--saves] remove an app, and its saves with --saves; or stop
+                         a service and remove it with all its files
   list                   list installed apps
   run ID [ARGS]          run an app here and wait for it; holding Home
                          for 1 s or Select+Start for 2 s ends it
   start ID               hand the screen from the launcher to an app
   target                 print this device's target triple and tier
 
-Apps live in <prefix>/apps/<ID>, their saves in <prefix>/saves/<ID>; the
-prefix is /opt/gizlet on Gizlet OS, or GIZLET_PREFIX.";
+  service list           list installed services: ID, version, state,
+                         whether it starts at boot, and name
+  service status ID      show a service's state, unit and folders
+  service start|stop|restart ID
+                         start or stop a service now
+  service enable|disable ID
+                         start a service at boot, or not
+  service logs ID [-f]   show a service's log
+
+Apps live in <prefix>/apps/<ID>, their saves in <prefix>/saves/<ID>;
+services in <prefix>/services/<ID>, their state in <prefix>/service-data/<ID>.
+The prefix is /opt/gizlet on Gizlet OS, or GIZLET_PREFIX.";
 
 /// Runs a subcommand and returns its exit status.
 pub fn main(args: &[String]) -> i32 {
@@ -55,6 +68,7 @@ pub fn main(args: &[String]) -> i32 {
             println!("{} {}", apps::device_target(), apps::device_tier());
             Ok(())
         }
+        ("service" | "services", rest) => service(&library, rest),
         ("install" | "uninstall" | "remove" | "list" | "run" | "start" | "target", _) => {
             Err(format!("wrong arguments for {command}\n{USAGE}"))
         }
@@ -78,13 +92,20 @@ fn install(library: &Library, file: &Path) -> Result<(), String> {
     }
     let app = library.install(file)?;
     let m = &app.manifest;
+    if m.kind() == Kind::Service {
+        let service = library.service(&m.id)?;
+        let boot = if service.boot { "starts at boot" } else { "does not start at boot" };
+        println!("installed the service {} {} ({}) in {}: {}, {boot}", m.id, m.version, m.name, app.dir.display(), service.state.word());
+        return Ok(());
+    }
     println!("installed {} {} ({}) in {}", m.id, m.version, m.name, app.dir.display());
     Ok(())
 }
 
 fn uninstall(library: &Library, id: &str, saves: bool) -> Result<(), String> {
-    library.remove(id, saves)?;
-    if saves {
+    if library.remove(id, saves)? == Kind::Service {
+        println!("removed the service {id}: stopped, unregistered, and deleted with its state");
+    } else if saves {
         println!("removed {id} and its saves");
     } else {
         println!("removed {id}; its saves stay in {}", library.saves(id).display());
@@ -97,6 +118,70 @@ fn list(library: &Library) {
         let m = &app.manifest;
         println!("{}\t{}\t{}", m.id, m.version, m.name);
     }
+}
+
+/// `gizlet service ...`: shows and controls services.
+fn service(library: &Library, args: &[String]) -> Result<(), String> {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    match args.as_slice() {
+        [] | ["list"] => {
+            for s in library.services()? {
+                let m = &s.package.manifest;
+                let boot = if s.boot { "enabled" } else { "disabled" };
+                println!("{}\t{}\t{}\t{boot}\t{}", m.id, m.version, s.state.word(), m.name);
+            }
+            Ok(())
+        }
+        ["status", id] => {
+            print_status(library, &library.service(id)?);
+            Ok(())
+        }
+        ["start", id] => report(library.start_service(id)?),
+        ["stop", id] => report(library.stop_service(id)?),
+        ["restart", id] => report(library.restart_service(id)?),
+        ["enable", id] => report(library.set_service_boot(id, true)?),
+        ["disable", id] => report(library.set_service_boot(id, false)?),
+        ["logs", id, follow @ ..] if follow.is_empty() || follow == ["-f"] => {
+            library.service(id)?;
+            let mut journal = std::process::Command::new("journalctl");
+            journal.args(["--no-pager", "-u", &services::unit_name(id)]).args(if follow.is_empty() { &["-n", "200"][..] } else { &["-f"][..] });
+            let status = journal.status().map_err(|e| format!("cannot run journalctl: {e}"))?;
+            if status.success() { Ok(()) } else { Err(format!("journalctl failed ({status})")) }
+        }
+        // Run by gizlet-services.service at boot.
+        ["boot"] => {
+            let started = library.boot_services()?;
+            if !started.is_empty() {
+                println!("started {}", started.join(" "));
+            }
+            Ok(())
+        }
+        // The ExecStart of each service's unit; returns only on failure.
+        ["exec", id] => Err(library.exec_service(id)),
+        _ => Err(format!("wrong arguments for service\n{USAGE}")),
+    }
+}
+
+fn report(service: Service) -> Result<(), String> {
+    let boot = if service.boot { "starts at boot" } else { "does not start at boot" };
+    println!("{}: {}, {boot}", service.id(), service.state.word());
+    Ok(())
+}
+
+fn print_status(library: &Library, service: &Service) {
+    let m = &service.package.manifest;
+    let id = m.id.as_str();
+    println!("{id} {} ({})", m.version, m.name);
+    match service.pid {
+        Some(pid) => println!("state: {} (pid {pid})", service.state.word()),
+        None => println!("state: {}", service.state.word()),
+    }
+    println!("starts at boot: {}", if service.boot { "yes" } else { "no" });
+    println!("unit: {}", services::unit_name(id));
+    println!("package: {}", service.package.dir.display());
+    println!("state folder: {}", library.service_data(id).display());
+    println!("runtime folder: {}", library.service_runtime(id).display());
+    println!("log: gizlet service logs {id}");
 }
 
 /// Runs the app in the foreground with the launcher's language and A/B choice.

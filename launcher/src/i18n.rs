@@ -55,6 +55,7 @@ strings! {
     CatLanguage => "语言", "Language";
     CatTime => "日期与时间", "Date & Time";
     CatSystem => "系统", "System";
+    CatServices => "服务", "Services";
 
     OtaTitle => "系统更新", "System updates";
     OtaRuntime => "运行时", "Runtime";
@@ -200,6 +201,18 @@ strings! {
     VolumeKeys => "音量键", "Volume Keys";
 
     Failed => "操作失败：{}", "Failed: {}";
+
+    ServicesReading => "正在读取服务", "Reading services";
+    ServicesUnavailable => "无法读取服务", "Can't read services";
+    NoServices => "还没有安装服务", "No services installed";
+    NoServicesBody => "用 gizlet install 安装的后台服务会出现在这里，可以启动、停止，或设为开机启动。", "Background services you install with gizlet install appear here. Start and stop them, or choose whether they start at boot.";
+    ServiceRunning => "运行", "Running";
+    ServiceAtBoot => "开机启动", "Start at boot";
+    ServiceStarting => "正在启动", "Starting";
+    ServiceStopping => "正在停止", "Stopping";
+    ServiceStopped => "已停止", "Stopped";
+    ServiceRestarting => "正在重启（{}）", "Restarting ({})";
+    ServiceFailed => "出错（{}）", "Failed ({})";
 }
 
 impl T {

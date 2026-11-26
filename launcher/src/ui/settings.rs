@@ -42,6 +42,7 @@ fn category_icon(p: &Painter, cat: Category, cx: f32, cy: f32, s: f32, c: Color,
         Category::Controls => icons::gamepad(p, cx, cy, s * 1.1, c, hole),
         Category::Language => icons::globe(p, cx, cy, s, c),
         Category::Time => icons::clock(p, cx, cy, s, c),
+        Category::Services => icons::gear(p, cx, cy, s, c, hole),
         Category::System => icons::chip(p, cx, cy, s, c, hole),
     }
 }

@@ -10,6 +10,7 @@ use crate::sound::Sfx;
 use crate::system::{valid_hostname, Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
 use crate::zones::{Zone, ZONES};
 use gizlet_launcher::ota;
+use gizlet_launcher::services::{self, Service};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 
@@ -64,11 +65,12 @@ pub enum Category {
     Controls,
     Language,
     Time,
+    Services,
     System,
 }
 
 impl Category {
-    pub const ALL: [Category; 9] = [
+    pub const ALL: [Category; 10] = [
         Category::Network,
         Category::Ssh,
         Category::Display,
@@ -77,6 +79,7 @@ impl Category {
         Category::Controls,
         Category::Language,
         Category::Time,
+        Category::Services,
         Category::System,
     ];
 
@@ -90,6 +93,7 @@ impl Category {
             Category::Controls => T::CatControls,
             Category::Language => T::CatLanguage,
             Category::Time => T::CatTime,
+            Category::Services => T::CatServices,
             Category::System => T::CatSystem,
         }
     }
@@ -120,6 +124,10 @@ pub enum ItemId {
     CheckUpdate,
     InstallUpdate,
     RestartUpdate,
+    /// Whether the service runs now.
+    ServiceRunning(String),
+    /// Whether the service starts at boot.
+    ServiceBoot(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -301,6 +309,112 @@ impl Updates {
     }
 }
 
+/// What Settings → Services changes.
+#[derive(Clone, Debug)]
+enum ServiceOp {
+    Refresh,
+    Run(String, bool),
+    Boot(String, bool),
+}
+
+struct ServicesDone {
+    failed: Option<String>,
+    list: Result<Vec<Service>, String>,
+}
+
+/// Settings → Services: the installed services, read and switched on a
+/// worker thread, since systemd can take seconds to start or stop one.
+pub struct ServicesUi {
+    pub list: Option<Result<Vec<Service>, String>>,
+    work: Option<Receiver<ServicesDone>>,
+    /// The switch turned, and to what, until the list after it arrives.
+    pub switching: Option<(ItemId, bool)>,
+    /// When the list was last asked for.
+    asked: f64,
+    /// `GIZLET_FAKE_DEVICES=1`: services simulated in memory.
+    simulated: bool,
+}
+
+/// How often the list is read again while Settings → Services is open.
+const SERVICES_REFRESH: f64 = 4.0;
+
+impl ServicesUi {
+    fn new() -> ServicesUi {
+        let simulated = std::env::var("GIZLET_FAKE_DEVICES").is_ok_and(|v| v == "1");
+        ServicesUi { list: None, work: None, switching: None, asked: f64::NEG_INFINITY, simulated }
+    }
+
+    fn busy(&self) -> bool {
+        self.work.is_some()
+    }
+
+    fn send(&mut self, op: ServiceOp, now: f64) {
+        if self.busy() {
+            return;
+        }
+        self.asked = now;
+        let (send, work) = mpsc::channel();
+        if self.simulated {
+            let mut list = match &self.list {
+                Some(Ok(list)) => list.clone(),
+                _ => simulated_services(),
+            };
+            for service in list.iter_mut() {
+                match &op {
+                    ServiceOp::Run(id, on) if id == service.id() => {
+                        service.state = if *on { services::State::Running } else { services::State::Stopped };
+                    }
+                    ServiceOp::Boot(id, on) if id == service.id() => service.boot = *on,
+                    _ => {}
+                }
+            }
+            let _ = send.send(ServicesDone { failed: None, list: Ok(list) });
+        } else {
+            std::thread::spawn(move || {
+                let library = Library::open();
+                let failed = match &op {
+                    ServiceOp::Refresh => None,
+                    ServiceOp::Run(id, true) => library.start_service(id).err(),
+                    ServiceOp::Run(id, false) => library.stop_service(id).err(),
+                    ServiceOp::Boot(id, on) => library.set_service_boot(id, *on).err(),
+                };
+                let _ = send.send(ServicesDone { failed, list: library.services() });
+            });
+        }
+        self.work = Some(work);
+    }
+
+    /// The finished work, if any.
+    fn poll(&mut self) -> Option<ServicesDone> {
+        let done = match self.work.as_ref()?.try_recv() {
+            Ok(done) => done,
+            Err(mpsc::TryRecvError::Empty) => return None,
+            Err(mpsc::TryRecvError::Disconnected) => ServicesDone { failed: None, list: Err("the services worker stopped".into()) },
+        };
+        self.work = None;
+        self.switching = None;
+        self.list = Some(done.list.clone());
+        Some(done)
+    }
+}
+
+/// Two services for working on the page with `GIZLET_FAKE_DEVICES=1`.
+fn simulated_services() -> Vec<Service> {
+    let service = |id: &str, name: &str, zh: &str, state, boot| {
+        let manifest = serde_json::json!({
+            "schema": 2, "kind": "service", "id": id, "name": name, "names": { "zh-CN": zh }, "version": "1.0.0",
+            "target": apps::device_target(), "tier": "lite", "entry": "bin/service",
+        });
+        let manifest = apps::Manifest::parse(&manifest.to_string()).expect("a valid manifest");
+        let package = apps::App { dir: PathBuf::from("/opt/gizlet/services").join(id), manifest, installed: std::time::SystemTime::UNIX_EPOCH };
+        Service { package, boot, state, pid: None }
+    };
+    vec![
+        service("io.gizlet.tailscale", "Tailscale", "Tailscale", services::State::Running, true),
+        service("dev.example.clock-sync", "Clock Sync", "时钟同步", services::State::Failed("exit-code".into()), false),
+    ]
+}
+
 /// Where the focus is, to hear it move.
 #[derive(Clone, Debug, PartialEq)]
 struct Place {
@@ -331,6 +445,7 @@ pub struct App {
     pub snapshot: Option<Snapshot>,
     system: System,
     updates: Option<Updates>,
+    pub services: ServicesUi,
     pub wifi: WifiUi,
     pub ssh_switching: Option<bool>,
     /// The time zone being set, until the device reports it.
@@ -365,6 +480,7 @@ impl App {
             version,
             system: System::start(data_dir),
             updates: None,
+            services: ServicesUi::new(),
             pages: vec![Page::Home],
             // The most recently played app has focus; without apps, Settings.
             home_row: if apps.is_empty() { HomeRow::Buttons } else { HomeRow::Tiles },
@@ -573,6 +689,7 @@ impl App {
                 self.refocus(focused);
             }
         }
+        self.update_services();
         if !events.is_empty() {
             let focused = self.focused_item();
             for event in events {
@@ -587,6 +704,23 @@ impl App {
         let keep = self.handle_input(input, dt);
         self.hear(&before, input);
         keep
+    }
+
+    /// Reads the services while Settings → Services is open, and takes in
+    /// what the worker finished.
+    fn update_services(&mut self) {
+        let open = self.page() == Page::Settings && self.focused_category() == Category::Services;
+        if open && !self.services.busy() && self.time - self.services.asked >= SERVICES_REFRESH {
+            self.services.send(ServiceOp::Refresh, self.time);
+        }
+        let focused = self.focused_item();
+        if let Some(done) = self.services.poll() {
+            if let Some(e) = done.failed {
+                self.toast(T::Failed.fmt(self.lang(), &[&e]));
+            }
+            self.revision += 1;
+            self.refocus(focused);
+        }
     }
 
     /// This frame's input on the open page, menu or keyboard. False to quit.
@@ -968,6 +1102,14 @@ impl App {
                 self.ssh_switching = Some(!current);
                 self.system.send(Request::Ssh(!current));
             }
+            ItemId::ServiceRunning(id) | ItemId::ServiceBoot(id) if !self.services.busy() => {
+                let op = match &item.id {
+                    ItemId::ServiceRunning(_) => ServiceOp::Run(id.clone(), !current),
+                    _ => ServiceOp::Boot(id.clone(), !current),
+                };
+                self.services.switching = Some((item.id.clone(), !current));
+                self.services.send(op, self.time);
+            }
             ItemId::SshPassword => {
                 let current = match self.snapshot.as_ref().map(|s| &s.ssh) {
                     Some(Ok(s)) => s.password.clone().unwrap_or_default(),
@@ -1043,6 +1185,8 @@ impl App {
                     self.system.send(Request::TimeZone(zone.clone()));
                 }
             }
+            // One service switch at a time: the next waits for the worker.
+            ItemId::ServiceRunning(_) | ItemId::ServiceBoot(_) => {}
             ItemId::Brightness | ItemId::Volume | ItemId::None => {}
         }
     }
@@ -1346,6 +1490,7 @@ impl App {
                     Err(m) => items.push(self.missing(m, T::TimeZone, None)),
                 }
             }
+            Category::Services => self.service_items(&mut items),
             Category::System => {
                 self.update_items(&mut items);
                 items.push(Item::section(t(T::About)));
@@ -1382,6 +1527,53 @@ impl App {
             }
         }
         items
+    }
+
+    /// Each installed service: whether it runs, whether it starts at boot, and its state.
+    fn service_items(&self, items: &mut Vec<Item>) {
+        let l = self.lang();
+        let t = |k: T| k.get(l).to_string();
+        let list = match &self.services.list {
+            None => {
+                items.push(Item::new(ItemId::None, t(T::ServicesReading), ItemValue::Busy));
+                return;
+            }
+            Some(Err(e)) => {
+                items.push(Item::notice(t(T::ServicesUnavailable), e.clone()));
+                return;
+            }
+            Some(Ok(list)) => list,
+        };
+        if list.is_empty() {
+            items.push(Item::notice(t(T::NoServices), t(T::NoServicesBody)));
+            return;
+        }
+        let switched = |id: &ItemId, now: bool| match &self.services.switching {
+            Some((switching, to)) if switching == id => *to,
+            _ => now,
+        };
+        for service in list {
+            let m = &service.package.manifest;
+            items.push(Item::section(format!("{} · {}", m.name_for(self.lang_code()), m.version)));
+            let running = ItemId::ServiceRunning(m.id.clone());
+            let on = switched(&running, service.state.on());
+            items.push(Item::new(running, t(T::ServiceRunning), ItemValue::Toggle(on)));
+            let boot = ItemId::ServiceBoot(m.id.clone());
+            let at_boot = switched(&boot, service.boot);
+            items.push(Item::new(boot, t(T::ServiceAtBoot), ItemValue::Toggle(at_boot)));
+            let state = match &service.state {
+                _ if matches!(self.services.switching, Some((ItemId::ServiceRunning(ref id), _)) if *id == m.id) => {
+                    if on { t(T::ServiceStarting) } else { t(T::ServiceStopping) }
+                }
+                services::State::Running => t(T::SshRunning),
+                services::State::Starting => t(T::ServiceStarting),
+                services::State::Stopping => t(T::ServiceStopping),
+                services::State::Stopped => t(T::ServiceStopped),
+                services::State::Restarting(why) => T::ServiceRestarting.fmt(l, &[why]),
+                services::State::Failed(why) => T::ServiceFailed.fmt(l, &[why]),
+            };
+            items.push(Item::info(t(T::BatteryState), state));
+        }
     }
 
     fn update_items(&self, items: &mut Vec<Item>) {

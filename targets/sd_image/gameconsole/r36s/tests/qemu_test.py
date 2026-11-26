@@ -15,6 +15,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import selectors
 import shutil
 import socket
@@ -327,21 +328,16 @@ def check_apps(console):
     console.expect(b"no launcher is on the screen")
     console.expect(b"\r\nstatus-1\r\n")
     console.expect(PROMPT)
-    # Manifest schema 2 names its kind: an app installs and runs like a schema 1 one, and a
-    # service is refused, since this release does not install or supervise services.
+    # Manifest schema 2 names its kind: an app installs and runs like a schema 1 one.
+    # Services are checked by check_services.
     v2 = (b'#!/bin/sh\necho "hello-v2 $GIZLET_APP_ID"\n', 0o755)
-    for kind, app_id in (("app", "dev.gizlet.test-v2"), ("service", "dev.gizlet.test-service")):
-        v2_manifest = dict(manifest, schema=2, kind=kind, id=app_id, entry="bin/hello.sh")
-        send(console, gzl({"manifest.json": (json.dumps(v2_manifest).encode(), 0o644), "bin/hello.sh": v2}), f"/tmp/{kind}.gzl")
+    v2_manifest = dict(manifest, schema=2, kind="app", id="dev.gizlet.test-v2", entry="bin/hello.sh")
+    send(console, gzl({"manifest.json": (json.dumps(v2_manifest).encode(), 0o644), "bin/hello.sh": v2}), "/tmp/app.gzl")
     console.enter("gizlet install /tmp/app.gzl")
     console.expect(b"\r\ninstalled dev.gizlet.test-v2 0.1.0 (Hello) in /opt/gizlet/apps/dev.gizlet.test-v2")
     console.expect(PROMPT)
     console.enter("gizlet run dev.gizlet.test-v2")
     console.expect(b"\r\nhello-v2 dev.gizlet.test-v2\r\n")
-    console.expect(PROMPT)
-    console.enter("gizlet install /tmp/service.gzl; echo status-$?")
-    console.expect(b"dev.gizlet.test-service is a service; this version of Gizlet OS installs apps only")
-    console.expect(b"\r\nstatus-1\r\n")
     console.expect(PROMPT)
     console.enter("gizlet list | cut -f1 | sort | tr '\\n' ' '; echo")
     console.expect(b"\r\ndev.gizlet.test-hello dev.gizlet.test-v2 \r\n")
@@ -355,7 +351,187 @@ def check_apps(console):
     # Nothing is left but the lock files: no staging, removal or backup folders.
     console.expect(b"\r\n0\r\n0\r\n")
     console.expect(PROMPT)
-    print("gizlet installs, lists, runs and removes schema 1 and 2 .gzl apps, and refuses a service and one that fails its checksums")
+    print("gizlet installs, lists, runs and removes schema 1 and 2 .gzl apps, and refuses one that fails its checksums")
+
+
+SERVICE = "dev.gizlet.test-service"
+KEEP = "dev.gizlet.test-keep"
+SERVICE_UNIT = f"gizlet-service-{SERVICE}.service"
+
+
+def service_gzl(service_id, version, body):
+    """A schema 2 service package whose entry is the shell script BODY."""
+    manifest = {"schema": 2, "kind": "service", "id": service_id, "name": "Test Service", "version": version,
+                "runtime": 1, "target": "aarch64-unknown-linux-gnu", "tier": "lite", "entry": "bin/serve"}
+    return gzl({"manifest.json": (json.dumps(manifest).encode(), 0o644), "bin/serve": (b"#!/bin/sh\n" + body, 0o755)})
+
+
+def test_service(version):
+    """The synthetic service: counts its starts in its state folder, writes its
+    folders and keeps a Unix socket in its runtime folder from a child process,
+    and runs until it is stopped."""
+    return service_gzl(SERVICE, version, (
+        b'n=$(cat "$GIZLET_STATE_DIR/starts" 2>/dev/null || echo 0)\n'
+        b'echo $((n + 1)) > "$GIZLET_STATE_DIR/starts"\n'
+        b'echo ' + version.encode() + b' > "$GIZLET_STATE_DIR/version"\n'
+        b'printf \'%s\\n\' "$GIZLET_SERVICE_DIR" "$GIZLET_STATE_DIR" "$GIZLET_RUNTIME_DIR" "$HOME" "$PWD" > "$GIZLET_RUNTIME_DIR/env"\n'
+        b'bun -e \'Bun.listen({ unix: process.env.GIZLET_RUNTIME_DIR + "/control.sock", socket: { data() {} } }); '
+        b'setInterval(() => {}, 1 << 30)\' &\n'
+        b'echo "test-service ' + version.encode() + b' running"\n'
+        b'exec sleep 4242\n'))
+
+
+ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def expect_lines(console, command, *lines):
+    """Runs COMMAND and expects LINES among its output lines, in order. Other
+    lines may come between them: the console is shared with the system."""
+    console.enter(command)
+    output = [ANSI.sub(b"", line).strip(b"\r") for line in console.expect(PROMPT).split(b"\n")]
+    found = 0
+    for line in output:
+        if found < len(lines) and line == lines[found]:
+            found += 1
+    assert found == len(lines), f"{command}: expected {lines[found:]!r} in order in {output!r}"
+
+
+def wait_for_socket(console):
+    expect_lines(console, f"for i in $(seq 100); do [ -S /run/gizlet-services/{SERVICE}/control.sock ] && break; sleep 1; done; "
+                          f"test -S /run/gizlet-services/{SERVICE}/control.sock && echo socket-ready", b"socket-ready")
+
+
+def service_processes(console, count):
+    """Checks how many of the synthetic service's processes run: its main process and its child."""
+    expect_lines(console, "echo $(pgrep -c -f 'sleep 4242') $(pgrep -c -f control.sock)", f"{count} {count}".encode())
+
+
+def check_services(console):
+    """Installs a schema 2 service, which runs under systemd beside the launcher; starts, stops, updates and
+    rolls it back; and leaves it set to start at boot for check_services_after_reboot."""
+    send(console, test_service("0.1.0"), "/tmp/service-1.gzl")
+    send(console, test_service("0.2.0"), "/tmp/service-2.gzl")
+    send(console, service_gzl(SERVICE, "0.3.0", b'echo "test-service 0.3.0 fails"\nexit 3\n'), "/tmp/service-bad.gzl")
+    send(console, service_gzl(KEEP, "1.0.0", b'exec sleep 4545\n'), "/tmp/keep.gzl")
+    console.enter("gizlet install /tmp/service-1.gzl")
+    console.expect(f"\r\ninstalled the service {SERVICE} 0.1.0 (Test Service) in /opt/gizlet/services/{SERVICE}: "
+                   "running, starts at boot\r\n".encode())
+    console.expect(PROMPT)
+    console.enter("gizlet install /tmp/keep.gzl")
+    console.expect(f"\r\ninstalled the service {KEEP} 1.0.0".encode())
+    console.expect(PROMPT)
+    wait_for_socket(console)
+    service_processes(console, 1)
+    # A service runs as a system unit with its own folders, never as an app.
+    expect_lines(console, f"cat /run/gizlet-services/{SERVICE}/env; systemctl show -P ControlGroup {SERVICE_UNIT}; "
+                          f"gizlet list | grep -c {SERVICE}; gizlet run {SERVICE} 2>&1 | grep -c 'is a service, not an app'",
+                 f"/opt/gizlet/services/{SERVICE}".encode(), f"/opt/gizlet/service-data/{SERVICE}".encode(),
+                 f"/run/gizlet-services/{SERVICE}".encode(), f"/opt/gizlet/service-data/{SERVICE}".encode(),
+                 f"/opt/gizlet/services/{SERVICE}".encode(), f"/system.slice/{SERVICE_UNIT}".encode(), b"0", b"1")
+    expect_lines(console, "gizlet service list",
+                 f"{KEEP}\t1.0.0\trunning\tenabled\tTest Service".encode(),
+                 f"{SERVICE}\t0.1.0\trunning\tenabled\tTest Service".encode())
+    # The launcher quitting and starting again, as it does around every app, leaves it running.
+    console.command(f"systemctl show -P MainPID {SERVICE_UNIT} > /tmp/service-pid")
+    console.enter("exit")
+    console.expect(b"Gizlet launcher: no display")
+    console.expect(PROMPT)
+    expect_lines(console, f'test "$(systemctl show -P MainPID {SERVICE_UNIT})" = "$(cat /tmp/service-pid)" && '
+                          f'systemctl is-active {SERVICE_UNIT}', b"active")
+    # Stopping ends it and its child and removes its runtime folder; starting brings them back.
+    expect_lines(console, f"gizlet service stop {SERVICE}; test -e /run/gizlet-services/{SERVICE} || echo runtime-removed",
+                 f"{SERVICE}: stopped, starts at boot".encode(), b"runtime-removed")
+    service_processes(console, 0)
+    expect_lines(console, f"gizlet service start {SERVICE}", f"{SERVICE}: running, starts at boot".encode())
+    wait_for_socket(console)
+    service_processes(console, 1)
+    # An update stops the running version, keeps its state and starts the new one.
+    console.enter("gizlet install /tmp/service-2.gzl")
+    console.expect(f"\r\ninstalled the service {SERVICE} 0.2.0 (Test Service) in /opt/gizlet/services/{SERVICE}: "
+                   "running, starts at boot\r\n".encode())
+    console.expect(PROMPT)
+    wait_for_socket(console)
+    service_processes(console, 1)
+    expect_lines(console, f"cat /opt/gizlet/service-data/{SERVICE}/starts /opt/gizlet/service-data/{SERVICE}/version",
+                 b"3", b"0.2.0")
+    # A version that does not start is replaced by the one before it.
+    console.enter("gizlet install /tmp/service-bad.gzl; echo status-$?")
+    console.expect(f"{SERVICE} 0.3.0 did not start".encode())
+    console.expect(b"0.2.0 is back and running")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    wait_for_socket(console)
+    expect_lines(console, f"gizlet service status {SERVICE} | sed -n '1p;3p'; gizlet service logs {SERVICE} | grep -q 'test-service 0.3.0 fails' && echo logged",
+                 f"{SERVICE} 0.2.0 (Test Service)".encode(), b"starts at boot: yes", b"logged")
+    # The other service keeps running but no longer starts at boot.
+    expect_lines(console, f"gizlet service disable {KEEP}", f"{KEEP}: running, does not start at boot".encode())
+    expect_lines(console, f"ls -A /opt/gizlet/services | grep -c '^[.]\\(old\\|install\\|remove\\)-'", b"0")
+    print("gizlet installs a schema 2 service under systemd, which outlives the launcher, starts and stops it with its "
+          "children, and updates it, keeping its state and restoring the previous version when the new one fails")
+
+
+def check_services_after_reboot(console):
+    """After a reboot into a custom entry, without the launcher: the service set to start at boot
+    runs again with its state; uninstalling a running service, and one whose state cannot be deleted."""
+    expect_lines(console, f"for i in $(seq 60); do systemctl -q is-active {SERVICE_UNIT} && break; sleep 1; done; "
+                          f"systemctl is-active {SERVICE_UNIT} gizlet-service-{KEEP}.service; "
+                          f"cat /opt/gizlet/service-data/{SERVICE}/starts",
+                 b"active", b"inactive", b"5")
+    wait_for_socket(console)
+    console.command(f"gizlet service start {KEEP}")
+    # Uninstalling the running service started at boot stops it and its child and removes all it had.
+    console.enter(f"gizlet uninstall {SERVICE}")
+    console.expect(f"\r\nremoved the service {SERVICE}: stopped, unregistered, and deleted with its state\r\n".encode())
+    console.expect(PROMPT)
+    service_processes(console, 0)
+    expect_lines(console, f"systemctl is-active {SERVICE_UNIT}; systemctl cat {SERVICE_UNIT} >/dev/null 2>&1 || echo no-unit; "
+                          f"for path in /opt/gizlet/services/{SERVICE} /opt/gizlet/services/.boot-{SERVICE} "
+                          f"/opt/gizlet/services/.running-{SERVICE} /opt/gizlet/service-data/{SERVICE} "
+                          f"/run/gizlet-services/{SERVICE} /run/systemd/system/{SERVICE_UNIT}; do "
+                          'test -e "$path" && echo "left: $path"; done; echo checked',
+                 b"inactive", b"no-unit", b"checked")
+    # Other services, apps' saves and system services stay.
+    expect_lines(console, f"systemctl is-active gizlet-service-{KEEP}.service gizlet-data; "
+                          "cat /opt/gizlet/saves/dev.gizlet.test-hello/kept",
+                 b"active", b"active", b"kept")
+    # A state file that cannot be deleted stops the uninstall with what to do; it finishes once that is fixed.
+    console.command(f"touch /opt/gizlet/service-data/{KEEP}/pinned && chattr +i /opt/gizlet/service-data/{KEEP}/pinned")
+    console.enter(f"gizlet uninstall {KEEP}; echo status-$?")
+    console.expect(f"{KEEP} is stopped and unregistered, but /opt/gizlet/service-data/{KEEP} cannot be deleted".encode())
+    console.expect(f"then run `gizlet uninstall {KEEP}` again".encode())
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    expect_lines(console, f"systemctl is-active gizlet-service-{KEEP}.service; pgrep -c -f 'sleep 4545'", b"inactive", b"0")
+    console.command(f"chattr -i /opt/gizlet/service-data/{KEEP}/pinned")
+    console.enter(f"gizlet uninstall {KEEP}")
+    console.expect(f"\r\nremoved the service {KEEP}: stopped".encode())
+    console.expect(PROMPT)
+    expect_lines(console, "ls -A /opt/gizlet/services /opt/gizlet/service-data | grep -v ':$' | grep -c .; "
+                          "ls /run/systemd/system | grep -c '^gizlet-service-'", b"0", b"0")
+    print("after a reboot without the launcher, the service set to start at boot runs with its state; "
+          "uninstalling stops it and its child and removes its unit, package, state, socket and runtime folder, "
+          "and a cleanup failure says what to do")
+
+
+def check_services_gone(console):
+    """A boot after the uninstall: nothing of the services is registered or kept, and the service installs again."""
+    expect_lines(console, "systemctl list-units --all --no-legend 'gizlet-service-*' | grep -c .; "
+                          "ls /run/systemd/system | grep -c '^gizlet-service-'; ls -A /opt/gizlet/services | grep -c .; "
+                          f"test -e /run/gizlet-services/{SERVICE} || echo no-runtime",
+                 b"0", b"0", b"0", b"no-runtime")
+    send(console, test_service("0.1.0"), "/tmp/service-1.gzl")
+    console.enter("gizlet install /tmp/service-1.gzl")
+    console.expect(f"\r\ninstalled the service {SERVICE} 0.1.0 (Test Service) in /opt/gizlet/services/{SERVICE}: "
+                   "running, starts at boot\r\n".encode())
+    console.expect(PROMPT)
+    wait_for_socket(console)
+    # A fresh state: its first start.
+    expect_lines(console, f"cat /opt/gizlet/service-data/{SERVICE}/starts", b"1")
+    console.enter(f"gizlet uninstall {SERVICE}")
+    console.expect(f"\r\nremoved the service {SERVICE}".encode())
+    console.expect(PROMPT)
+    service_processes(console, 0)
+    print("an uninstalled service stays gone after a reboot and installs again with a fresh state")
 
 
 def install_launcher_updates(console, pack_release):
@@ -657,6 +833,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
             console.expect(line)
         console.expect(PROMPT)
         check_apps(console)
+        check_services(console)
         check_runtime_reload(console)
         console.command("mkdir /opt/gizlet/bin")
         console.command("printf '%s\\n' '#!/bin/sh' 'echo hello-from-card' > /opt/gizlet/bin/hello && chmod 755 /opt/gizlet/bin/hello")
@@ -686,6 +863,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         console.expect(b"boot entry finished with status 0")
         console.expect(PROMPT)
         check_runtime_after_reboot(console)
+        check_services_after_reboot(console)
         console.enter("cat /home/check")
         console.expect(b"\r\npersistent-user-file\r\n")
         console.expect(PROMPT)
@@ -726,6 +904,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
     check_ssh(private, parts["boot"][1], kernel, root, work)
     with boot(private, kernel, root) as console:
         console.expect(PROMPT)
+        check_services_gone(console)
         install_launcher_updates(console, pack_release)
         console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini")
         console.stop()
