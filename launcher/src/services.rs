@@ -575,11 +575,17 @@ impl Library {
             }
             Ok(())
         });
-        let Err(problem) = started else {
-            // Committed: the backup is renamed away in one step before it is
-            // deleted, so recovery never puts back a half-deleted one.
-            let trash = root.join(format!(".remove-{id}-{}", std::process::id()));
-            if previous.is_some() && fs::rename(&old, &trash).is_ok() {
+        // Committing renames the backup away in one step before deleting it,
+        // so recovery never puts back a half-deleted one. An update that
+        // cannot be committed is undone now, as recovery would undo it.
+        let trash = root.join(format!(".remove-{id}-{}-old", std::process::id()));
+        let started_ok = started.is_ok();
+        let committed = started.and_then(|()| match previous {
+            Some(_) => fs::rename(&old, &trash).map_err(|e| format!("{}: {e}", old.display())),
+            None => Ok(()),
+        });
+        let Err(problem) = committed else {
+            if previous.is_some() {
                 apps::sync();
                 let _ = fs::remove_dir_all(&trash);
             }
@@ -594,8 +600,9 @@ impl Library {
         };
         // Put the previous version back as it was.
         let version = &previous.manifest.version;
+        let failed = if started_ok { "started, but its update cannot be confirmed" } else { "did not start" };
         let restored = self.stop_verified(id).and_then(|running| {
-            let trash = root.join(format!(".remove-{id}-{}", std::process::id()));
+            let trash = root.join(format!(".remove-{id}-{}-new", std::process::id()));
             fs::rename(&dest, &trash).map_err(|e| format!("{}: {e}", dest.display()))?;
             fs::rename(&old, &dest).map_err(|e| format!("{}: {e}", old.display()))?;
             apps::sync();
@@ -608,9 +615,9 @@ impl Library {
             Ok(())
         });
         Err(match restored {
-            Ok(()) if was_running => format!("{id} {} did not start: {problem} ({logs}); {version} is back and running", manifest.version),
-            Ok(()) => format!("{id} {} did not start: {problem} ({logs}); {version} is back", manifest.version),
-            Err(e) => format!("{id} {} did not start: {problem} ({logs}); restoring {version} failed: {e}", manifest.version),
+            Ok(()) if was_running => format!("{id} {} {failed}: {problem} ({logs}); {version} is back and running", manifest.version),
+            Ok(()) => format!("{id} {} {failed}: {problem} ({logs}); {version} is back", manifest.version),
+            Err(e) => format!("{id} {} {failed}: {problem} ({logs}); restoring {version} failed: {e}", manifest.version),
         })
     }
 
@@ -1146,6 +1153,22 @@ pub(crate) mod tests {
         let s = lib.service(A).unwrap();
         assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
         assert_eq!(leftovers(&lib), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_update_that_cannot_be_committed_is_undone() {
+        let dir = temp("svc-commit");
+        let (lib, _units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        // A file where the backup would be renamed to: the rename fails, as on a full disk.
+        let blocker = lib.services_dir().join(format!(".remove-{A}-{}-old", std::process::id()));
+        fs::write(&blocker, "").unwrap();
+        let err = lib.install(&service(&dir, A, "0.2.0")).unwrap_err();
+        assert!(err.contains("started, but its update cannot be confirmed") && err.contains("0.1.0 is back and running"), "{err}");
+        let s = lib.service(A).unwrap();
+        assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
+        fs::remove_file(&blocker).unwrap();
         let _ = fs::remove_dir_all(&dir);
     }
 
