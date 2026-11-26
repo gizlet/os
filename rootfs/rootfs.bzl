@@ -59,6 +59,9 @@ ROOTFS_EXECUTABLES = {
 }
 
 ROOTFS_ENABLE = [
+    # bluetoothd, wanted by bluetooth.target, which udev pulls in when a
+    # controller appears: it starts once one is plugged in, not at boot.
+    "bluetooth.service",
     "gizlet-audio-jack.service",
     "gizlet-boot-log.service",
     "gizlet-data.service",

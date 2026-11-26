@@ -74,6 +74,10 @@ def main():
     for wants in ("multi-user.target.wants/ssh.service", "multi-user.target.wants/iwd.service"):
         assert not (systemd / wants).is_symlink(), f"{wants} starts at boot"
     assert (root / "usr/lib/systemd/system/ssh.service.d/gizlet.conf").is_file(), "ssh.service uses gizlet-ssh"
+    # bluetoothd starts when a USB controller appears (udev pulls in bluetooth.target).
+    assert (systemd / "bluetooth.target.wants/bluetooth.service").is_symlink(), "bluetooth.service is enabled"
+    for tool in ("usr/libexec/bluetooth/bluetoothd", "usr/bin/bluetoothctl", "usr/bin/btmgmt"):
+        assert (root / tool).exists(), f"/{tool}"
     for unit in ("getty@.service", "serial-getty@.service", "systemd-firstboot.service"):
         assert os.readlink(systemd / unit) == "/dev/null", f"{unit} is masked"
     # Network time sets the clock; the time zone is linked under /run at boot (gizlet-switch).
@@ -94,7 +98,7 @@ def main():
         assert (root / directory).is_dir(), f"/{directory}"
     for notice in config["licenses"]:
         assert (root / "usr/share/licenses" / notice).stat().st_size > 0, f"license notice {notice}"
-    for package in ("libc6", "systemd", "openssh-server", "iwd"):
+    for package in ("libc6", "systemd", "openssh-server", "iwd", "bluez"):
         assert (root / "usr/share/doc" / package / "copyright").stat().st_size > 0, f"{package} copyright notice"
     assert (root / "usr/lib/gizlet/gizlet-booter").read_bytes() == booter.read_bytes(), "installed Booter differs from the build"
     for executable in ("usr/lib/gizlet/gizlet-booter", "usr/lib/gizlet/gizlet-launcher"):

@@ -258,6 +258,15 @@ def scenarios(image, kernel_name, work):
         console.enter("date +%Z; /usr/lib/gizlet/gizlet-switch timezone; systemctl is-active systemd-timesyncd")
         console.expect(b"\r\nUTC\r\nEtc/UTC\r\nactive\r\n")
         console.expect(PROMPT)
+        # The Bluetooth core is built in; with no controller plugged in, bluetoothd
+        # has not started. Started by hand it runs on the read-only base, keeps its
+        # state on the data partition and answers bluetoothctl.
+        console.enter("systemctl is-active bluetooth; systemctl start bluetooth; systemctl is-active bluetooth; "
+                      "findmnt -n -o SOURCE /var/lib/bluetooth; timeout 10 bluetoothctl show")
+        console.expect(b"\r\ninactive\r\nactive\r\n")
+        console.expect(b"[/system/bluetooth]\r\n")
+        console.expect(b"No default controller available")
+        console.expect(PROMPT)
         console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 15000000 ] && echo data-grown")
         console.expect(b"\r\ndata-grown\r\n")
         console.expect(PROMPT)

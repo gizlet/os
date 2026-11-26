@@ -2,7 +2,8 @@
 # Mounts the data partition: ext4 partition 3 of the very disk that supplied
 # the read-only base (partition 2), with the image's filesystem UUID. Its
 # gizlet/ and home/ directories become /opt/gizlet and /home; state that must
-# survive a reboot (ssh host key, WiFi networks) lives under system/.
+# survive a reboot (ssh host key, WiFi networks, Bluetooth pairings) lives
+# under system/.
 #
 # The image's data filesystem is small. The card writers (flash.sh, flash.ps1)
 # extend its partition to the end of the card; a card written another way has
@@ -95,9 +96,10 @@ for directory in gizlet home; do
 done
 mount -o bind "$store/gizlet" /opt/gizlet || { umount "$store"; exit 1; }
 mount -o bind "$store/home" /home || { umount /opt/gizlet; umount "$store"; exit 1; }
-mkdir -p -m 0700 "$store/system/ssh" "$store/system/iwd"
-mkdir -p /var/lib/iwd
+mkdir -p -m 0700 "$store/system/ssh" "$store/system/iwd" "$store/system/bluetooth"
+mkdir -p /var/lib/iwd /var/lib/bluetooth
 mount -o bind "$store/system/iwd" /var/lib/iwd
+mount -o bind "$store/system/bluetooth" /var/lib/bluetooth
 # Gizlet runtimes are read-only SquashFS images, each mounted beside its file:
 # runtime/1.sqfs at runtime/1. A runtime that fails to mount is left out.
 for image in /opt/gizlet/runtime/*.sqfs; do
