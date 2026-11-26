@@ -422,6 +422,10 @@ impl Library {
                     let _ = fs::remove_dir_all(e.path());
                     continue;
                 }
+                if let Some(id) = name.strip_prefix(".uninstall-").filter(|id| is_valid_id(id)) {
+                    let _ = self.finish_uninstall(id);
+                    continue;
+                }
                 let Some(id) = name.strip_prefix(".old-").filter(|id| is_valid_id(id)) else { continue };
                 if root == self.services_dir() {
                     self.restore_service(id, &e.path());
@@ -527,7 +531,12 @@ impl Library {
     /// service, with everything it keeps. Returns what was removed.
     pub fn remove(&self, id: &str, saves: bool) -> Result<Kind, String> {
         let _lock = self.lock(true);
+        // An earlier uninstall that stopped short: recovery finishes it, or this says why it cannot.
+        let unfinished = is_valid_id(id) && self.uninstalling(id).exists();
         self.recover();
+        if unfinished {
+            return self.finish_uninstall(id).map(|()| Kind::Service);
+        }
         if is_valid_id(id) && !self.apps_dir().join(id).is_dir() && self.services_dir().join(id).is_dir() {
             return self.remove_service(id).map(|()| Kind::Service);
         }

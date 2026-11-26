@@ -326,6 +326,18 @@ impl Library {
         self.services_dir().join(format!(".boot-{id}"))
     }
 
+    /// The package of a service being uninstalled: renamed here once it is
+    /// stopped and unregistered, it marks the uninstall until it is finished.
+    pub(crate) fn uninstalling(&self, id: &str) -> PathBuf {
+        self.services_dir().join(format!(".uninstall-{id}"))
+    }
+
+    /// Present while an update replaces a service that was running: in
+    /// `/run`, so it says so only until the next boot.
+    fn restart_flag(&self, id: &str) -> PathBuf {
+        self.run_dir().join(format!(".restart-{id}"))
+    }
+
     /// The unit that runs the service.
     pub fn unit_text(&self, id: &str) -> Result<String, String> {
         let cli = cli_path()?;
@@ -487,6 +499,9 @@ impl Library {
         if self.apps_dir().join(id).exists() {
             return Err(format!("{id} is installed as an app; uninstall it first"));
         }
+        if self.uninstalling(id).exists() {
+            return Err(format!("an earlier uninstall of {id} did not finish; run `gizlet uninstall {id}` first"));
+        }
         self.manager().available().map_err(|e| format!("cannot install the service {id}: {e}"))?;
         let root = self.services_dir();
         fs::create_dir_all(&root).map_err(|e| format!("{}: {e}", root.display()))?;
@@ -497,6 +512,8 @@ impl Library {
             false => None,
         };
         let was_running = previous.is_some() && self.unit_state(id)?.running();
+        // If this update is cut short, recovery in this boot starts the previous version again.
+        let _restart = if was_running { Some(Flag::write(self.restart_flag(id))?) } else { None };
         let running = self.stop_verified(id).map_err(|e| format!("cannot stop {id} to update it: {e}; the installed version is unchanged"))?;
         if previous.is_some() {
             fs::rename(&dest, &old).map_err(|e| format!("{}: {e}", dest.display()))?;
@@ -578,18 +595,31 @@ impl Library {
             }
             self.manager().reset_failed(&unit);
         }
+        // From here it is no longer installed, and the renamed package marks
+        // the uninstall until everything is deleted, even across a power loss.
+        let dir = root.join(id);
+        fs::rename(&dir, self.uninstalling(id)).map_err(|e| format!("{id} is stopped and unregistered, but {}: {e}; {again}", dir.display()))?;
+        apps::sync();
+        drop(running);
+        self.finish_uninstall(id)
+    }
+
+    /// Deletes what an uninstall leaves once the service is stopped and
+    /// unregistered: its state, runtime folder and lock, then its package.
+    pub(crate) fn finish_uninstall(&self, id: &str) -> Result<(), String> {
+        let again = format!("then run `gizlet uninstall {id}` again");
+        let root = self.services_dir();
+        let running = self.not_running(&root, id).map_err(|_| format!("{id} is still running, as `gizlet service exec {id}`; stop it, {again}"))?;
         for dir in [self.service_data(id), self.service_runtime(id)] {
             remove_tree(&dir).map_err(|e| format!("{id} is stopped and unregistered, but {} cannot be deleted: {e}; {again}", dir.display()))?;
         }
-        let trash = root.join(format!(".remove-{id}-{}", std::process::id()));
-        let dir = root.join(id);
-        fs::rename(&dir, &trash).map_err(|e| format!("{id} is stopped and unregistered, but {}: {e}; {again}", dir.display()))?;
-        // Once renamed it is no longer installed; recovery deletes what remains.
-        let deleted = fs::remove_dir_all(&trash);
+        let _ = fs::remove_file(self.boot_flag(id));
         drop(running);
         let _ = fs::remove_file(self.running_in(&root, id));
+        let package = self.uninstalling(id);
+        remove_tree(&package).map_err(|e| format!("{id} is stopped and unregistered, but {} cannot be deleted: {e}; {again}", package.display()))?;
         apps::sync();
-        deleted.map_err(|e| format!("{id} is uninstalled, but {} cannot be deleted yet: {e}", trash.display()))
+        Ok(())
     }
 
     /// After a crash in the middle of an update, with the library locked: a
@@ -613,11 +643,17 @@ impl Library {
         } else if fs::rename(backup, &dest).is_ok() {
             apps::sync();
         }
+        // The update was cut short in this boot: the previous version ran, so it runs again.
+        let flag = self.restart_flag(id);
+        if flag.exists() && dest.is_dir() && self.register(id).is_ok() {
+            let _ = self.manager().start(&unit_name(id), false);
+        }
+        let _ = fs::remove_file(flag);
     }
 
     /// After a crash in the middle of an uninstall, with the library locked:
-    /// deletes the boot flags, running locks and state of services that are
-    /// no longer installed.
+    /// deletes the boot flags, running locks, state and runtime folders of
+    /// services that are no longer installed.
     pub(crate) fn sweep_services(&self) {
         let root = self.services_dir();
         for e in fs::read_dir(&root).into_iter().flatten().flatten() {
@@ -631,10 +667,12 @@ impl Library {
                 }
             }
         }
-        for e in fs::read_dir(self.prefix().join("service-data")).into_iter().flatten().flatten() {
-            let id = e.file_name().to_string_lossy().into_owned();
-            if apps::is_valid_id(&id) && !root.join(&id).exists() {
-                let _ = fs::remove_dir_all(e.path());
+        for folder in [self.prefix().join("service-data"), self.run_dir().to_path_buf()] {
+            for e in fs::read_dir(&folder).into_iter().flatten().flatten() {
+                let id = e.file_name().to_string_lossy().into_owned();
+                if apps::is_valid_id(&id) && !root.join(&id).exists() {
+                    let _ = remove_tree(&e.path());
+                }
             }
         }
     }
@@ -769,6 +807,25 @@ impl Library {
             drop(running);
             format!("cannot start {}: services need Unix", entry.display())
         }
+    }
+}
+
+/// An empty file that exists until dropped, unless the process ends first.
+struct Flag(PathBuf);
+
+impl Flag {
+    fn write(path: PathBuf) -> Result<Flag, String> {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        fs::write(&path, "").map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(Flag(path))
+    }
+}
+
+impl Drop for Flag {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -1060,10 +1117,19 @@ pub(crate) mod tests {
             lib.running_in(&lib.services_dir(), id),
             lib.service_data(id),
             lib.service_runtime(id),
+            lib.restart_flag(id),
         ] {
             assert!(!path.exists(), "{} remains", path.display());
         }
         assert_eq!(leftovers(lib), 0);
+        let hidden: Vec<String> = fs::read_dir(lib.services_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with('.') && n.contains(id))
+            .collect();
+        assert!(hidden.is_empty(), "{hidden:?} remain");
     }
 
     #[test]
@@ -1130,11 +1196,58 @@ pub(crate) mod tests {
             fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
             let err = lib.remove(A, false).unwrap_err();
             assert!(err.contains("stopped and unregistered") && err.contains("cannot be deleted"), "{err}");
-            assert!(lib.services_dir().join(A).is_dir());
+            // It is no longer installed, and the uninstall stays marked until it finishes.
+            assert!(lib.uninstalling(A).is_dir() && lib.services().unwrap().is_empty());
+            assert!(lib.install(&service(&dir, A, "0.1.0")).unwrap_err().contains("did not finish"));
+            assert!(lib.remove(A, false).unwrap_err().contains("cannot be deleted"), "uninstalling again says why it still cannot");
             fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
-            lib.remove(A, false).unwrap();
+            assert_eq!(lib.remove(A, false).unwrap(), Kind::Service);
             assert_nothing_left(&lib, &units, A);
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_uninstall_cut_short_is_finished() {
+        let dir = temp("svc-uninstall-cut");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        fs::create_dir_all(lib.service_data(A).join("deep")).unwrap();
+        // Power is lost once it is stopped and marked, before its state is deleted.
+        lib.stop_service(A).unwrap();
+        fs::rename(lib.services_dir().join(A), lib.uninstalling(A)).unwrap();
+        drop((lib, units));
+        let (lib, units) = library(&dir);
+        units.lock().unwrap().text.insert(unit(A), String::new());
+        assert!(lib.boot_services().unwrap().is_empty(), "it does not start again");
+        assert_nothing_left(&lib, &units, A);
+        // Uninstalling it again once recovery has finished says it is gone.
+        assert!(lib.remove(A, false).unwrap_err().contains("not installed"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_update_cut_short_in_this_boot_runs_the_previous_version() {
+        let dir = temp("svc-killed-update");
+        let (lib, units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        // The installer is killed while 0.2.0 is on probation: the flag that 0.1.0 ran is still there.
+        fs::create_dir_all(lib.run_dir()).unwrap();
+        fs::write(lib.restart_flag(A), "").unwrap();
+        lib.manager().stop(&unit(A)).unwrap();
+        let (dest, backup) = (lib.services_dir().join(A), lib.backup_in(&lib.services_dir(), A));
+        fs::rename(&dest, &backup).unwrap();
+        fs::create_dir_all(dest.join("bin")).unwrap();
+        let newer = manifest_v(A, Some(2), Some("service")).replace("\"0.1.0\"", "\"0.2.0\"");
+        fs::write(dest.join(crate::apps::MANIFEST), newer).unwrap();
+        fs::write(dest.join("bin/hello"), "#!/bin/sh\n").unwrap();
+        lib.manager().start(&unit(A), true).unwrap();
+        // The launcher's next scan recovers it: 0.1.0 is back and running.
+        lib.scan();
+        let s = lib.service(A).unwrap();
+        assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
+        assert!(!lib.restart_flag(A).exists() && !backup.exists());
+        assert!(units.lock().unwrap().log.contains(&format!("start {} --no-block", unit(A))));
         let _ = fs::remove_dir_all(&dir);
     }
 
