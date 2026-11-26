@@ -656,8 +656,8 @@ impl Library {
     }
 
     /// After a crash in the middle of an uninstall, with the library locked:
-    /// deletes the boot flags, running locks, state and runtime folders of
-    /// services that are no longer installed.
+    /// deletes the boot flags, running locks and state of services that are
+    /// no longer installed.
     pub(crate) fn sweep_services(&self) {
         let root = self.services_dir();
         for e in fs::read_dir(&root).into_iter().flatten().flatten() {
@@ -671,12 +671,13 @@ impl Library {
                 }
             }
         }
-        for folder in [self.prefix().join("service-data"), self.run_dir().to_path_buf()] {
-            for e in fs::read_dir(&folder).into_iter().flatten().flatten() {
-                let id = e.file_name().to_string_lossy().into_owned();
-                if apps::is_valid_id(&id) && !root.join(&id).exists() {
-                    let _ = remove_tree(&e.path());
-                }
+        // Runtime folders are left alone: systemd removes each as its service
+        // stops, /run is empty after a power loss, and another prefix's
+        // services may share the folder.
+        for e in fs::read_dir(self.prefix().join("service-data")).into_iter().flatten().flatten() {
+            let id = e.file_name().to_string_lossy().into_owned();
+            if apps::is_valid_id(&id) && !root.join(&id).exists() {
+                let _ = remove_tree(&e.path());
             }
         }
     }
@@ -1267,6 +1268,21 @@ pub(crate) mod tests {
         assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
         assert!(!lib.restart_flag(A).exists() && !backup.exists());
         assert!(units.lock().unwrap().log.contains(&format!("start {} --no-block", unit(A))));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn another_prefix_leaves_running_services_alone() {
+        let dir = temp("svc-two-prefixes");
+        let (lib, _units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        fs::create_dir_all(lib.service_runtime(A)).unwrap();
+        fs::write(lib.service_runtime(A).join("control.sock"), "").unwrap();
+        // A second library, as with GIZLET_PREFIX, shares the runtime folder.
+        let other = Library::with_manager(dir.join("other"), Box::new(Fake { services: dir.join("other/services"), units: Default::default() }), dir.join("run"));
+        other.install(&app(&dir, "dev.example.game")).unwrap();
+        other.boot_services().unwrap();
+        assert!(lib.service_runtime(A).join("control.sock").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
