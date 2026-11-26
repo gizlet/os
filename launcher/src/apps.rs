@@ -1,7 +1,7 @@
 //! Installed apps: `.gzl` packages and the folders they install into.
 //!
 //! A `.gzl` is the package of the Gizlet store contract: a zip with
-//! `manifest.toml` at its root and `CHECKSUMS`, the SHA-256 of every other file
+//! `manifest.json` at its root and `CHECKSUMS`, the SHA-256 of every other file
 //! (`<64 hex>  <path>` per line). Installing extracts it into
 //! `<prefix>/apps/<id>/`, where the prefix is `/opt/gizlet` on Gizlet OS. Each
 //! app keeps its own files in `<prefix>/saves/<id>/`, which outlive updates.
@@ -10,6 +10,7 @@
 //! with canonical relative names, no symlinks, devices, encryption or ZIP64,
 //! and no two entries landing on the same path.
 
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -17,7 +18,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-pub const MANIFEST: &str = "manifest.toml";
+pub const MANIFEST: &str = "manifest.json";
 pub const CHECKSUMS: &str = "CHECKSUMS";
 const MAX_ENTRIES: usize = 20_000;
 const MAX_TOTAL_BYTES: u64 = 8 << 30;
@@ -86,8 +87,10 @@ fn runs_here(target: &str, device: &str) -> bool {
     device.contains("-linux-") && target.ends_with("-unknown-linux-musl") && arch(target) == arch(device)
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Manifest {
+    schema: Option<u32>,
+    runtime: Option<u32>,
     pub id: String,
     pub name: String,
     pub version: String,
@@ -97,71 +100,53 @@ pub struct Manifest {
     pub icon: Option<String>,
     pub color: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
     pub names: BTreeMap<String, String>,
+    #[serde(default)]
     pub descriptions: BTreeMap<String, String>,
 }
 
 impl Manifest {
     pub fn parse(text: &str) -> Result<Manifest, String> {
-        let table: toml::Table = text.parse().map_err(|e: toml::de::Error| {
-            format!("manifest.toml is not valid TOML: {}", e.message())
-        })?;
-        let string = |key: &str| -> Result<Option<String>, String> {
-            match table.get(key) {
-                None => Ok(None),
-                Some(toml::Value::String(s)) => Ok(Some(s.clone())),
-                Some(_) => Err(format!("manifest.toml: {key} must be a string")),
+        if !text.trim_start().starts_with('{') {
+            return Err(format!("{MANIFEST} must be a JSON object"));
+        }
+        let manifest: Manifest = serde_json::from_str(text).map_err(|e| format!("{MANIFEST}: {e}"))?;
+        manifest.validate()
+    }
+
+    fn validate(self) -> Result<Manifest, String> {
+        if let Some(schema) = self.schema.filter(|&schema| schema != 1) {
+            return Err(format!("unsupported manifest schema {schema}"));
+        }
+        if let Some(runtime) = self.runtime.filter(|&runtime| runtime != 1) {
+            return Err(format!("unsupported Gizlet runtime {runtime}"));
+        }
+        for (field, value) in [("name", &self.name), ("version", &self.version), ("entry", &self.entry)] {
+            if value.trim().is_empty() {
+                return Err(format!("manifest has no {field}"));
             }
-        };
-        let required = |key: &str| -> Result<String, String> {
-            string(key)?.filter(|s| !s.trim().is_empty()).ok_or_else(|| format!("manifest.toml has no {key}"))
-        };
-        let map = |key: &str| -> Result<BTreeMap<String, String>, String> {
-            match table.get(key) {
-                None => Ok(BTreeMap::new()),
-                Some(toml::Value::Table(t)) => t
-                    .iter()
-                    .map(|(k, v)| match v {
-                        toml::Value::String(s) => Ok((k.clone(), s.clone())),
-                        _ => Err(format!("manifest.toml: {key}.{k} must be a string")),
-                    })
-                    .collect(),
-                Some(_) => Err(format!("manifest.toml: {key} must be a table")),
-            }
-        };
-        let m = Manifest {
-            id: required("id")?,
-            name: required("name")?,
-            version: required("version")?,
-            tier: required("tier")?,
-            target: required("target")?,
-            entry: required("entry")?,
-            icon: string("icon")?,
-            color: string("color")?,
-            description: string("description")?,
-            names: map("names")?,
-            descriptions: map("descriptions")?,
-        };
-        if !is_valid_id(&m.id) {
+        }
+        if !is_valid_id(&self.id) {
             return Err(format!(
                 "id {:?} must be reverse-DNS: lowercase letters, digits, '-' and '_' in dot-separated parts",
-                m.id
+                self.id
             ));
         }
-        if !matches!(m.tier.as_str(), "lite" | "full") {
-            return Err(format!("tier {:?} must be lite or full", m.tier));
+        if !matches!(self.tier.as_str(), "lite" | "full") {
+            return Err(format!("tier {:?} must be lite or full", self.tier));
         }
-        if m.target.split('-').count() < 3 {
-            return Err(format!("target {:?} is not a target triple", m.target));
+        if self.target.split('-').count() < 3 {
+            return Err(format!("target {:?} is not a target triple", self.target));
         }
-        for (field, path) in [("entry", Some(&m.entry)), ("icon", m.icon.as_ref())] {
+        for (field, path) in [("entry", Some(&self.entry)), ("icon", self.icon.as_ref())] {
             if let Some(path) = path {
                 if let Some(problem) = name_problem(path) {
                     return Err(format!("{field} {path:?} {problem}"));
                 }
             }
         }
-        Ok(m)
+        Ok(self)
     }
 
     pub fn name_for(&self, lang: &str) -> &str {
@@ -679,11 +664,12 @@ pub fn unpack(package: &Path, dest: &Path) -> Result<Manifest, String> {
     if total > MAX_TOTAL_BYTES {
         return Err(format!("{what} is larger than 8 GiB unpacked"));
     }
-    let manifest_entry = list.iter().find(|e| e.name == MANIFEST && !e.dir);
-    match manifest_entry {
-        None => return Err(format!("{what} has no manifest.toml")),
-        Some(e) if e.size > MAX_MANIFEST_BYTES => return Err(format!("{what} has a manifest.toml larger than 64 KiB")),
-        Some(_) => {}
+    let manifest_entry = list
+        .iter()
+        .find(|e| e.name == MANIFEST && !e.dir)
+        .ok_or_else(|| format!("{what} has no {MANIFEST}"))?;
+    if manifest_entry.size > MAX_MANIFEST_BYTES {
+        return Err(format!("{what} has a {MANIFEST} larger than 64 KiB"));
     }
     match list.iter().find(|e| e.name == CHECKSUMS && !e.dir) {
         None => return Err(format!("{what} has no CHECKSUMS")),
@@ -756,7 +742,7 @@ pub fn unpack(package: &Path, dest: &Path) -> Result<Manifest, String> {
         return Err(format!("{what}: {rel} is not listed in CHECKSUMS"));
     }
 
-    let text = fs::read_to_string(dest.join(MANIFEST)).map_err(|e| format!("{what}: manifest.toml: {e}"))?;
+    let text = fs::read_to_string(dest.join(MANIFEST)).map_err(|e| format!("{what}: {MANIFEST}: {e}"))?;
     let manifest = Manifest::parse(&text).map_err(|e| format!("{what}: {e}"))?;
     let entry = dest.join(&manifest.entry);
     if !entry.is_file() {
@@ -875,15 +861,27 @@ mod tests {
     }
 
     fn manifest(id: &str, target: &str) -> String {
-        format!(
-            "id = \"{id}\"\nname = \"Hello\"\nversion = \"0.1.0\"\ntier = \"lite\"\ntarget = \"{target}\"\nentry = \"bin/hello\"\n\n[names]\nzh-CN = \"你好\"\n"
-        )
+        serde_json::json!({
+            "schema": 1,
+            "id": id,
+            "name": "Hello",
+            "names": {"zh-CN": "你好"},
+            "version": "0.1.0",
+            "description": null,
+            "descriptions": {"zh-CN": "一个测试应用"},
+            "color": "#7b4dff",
+            "runtime": 1,
+            "target": target,
+            "tier": "lite",
+            "entry": "bin/hello",
+            "icon": "icon.png",
+        }).to_string()
     }
 
     fn package(dir: &Path, manifest: &str, extra: &[(&str, &[u8], u32)]) -> PathBuf {
         let exe: &[u8] = b"#!/bin/sh\necho hello\n";
         let mut files: Vec<(&str, &[u8], u32)> =
-            vec![("manifest.toml", manifest.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755)];
+            vec![(MANIFEST, manifest.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755)];
         files.extend_from_slice(extra);
         let sums: String = files.iter().map(|(n, d, _)| format!("{}  {n}\n", sum(d))).collect();
         files.push(("CHECKSUMS", sums.as_bytes(), 0o100644));
@@ -903,10 +901,8 @@ mod tests {
     fn install_scan_update_remove() {
         let dir = temp("cycle");
         let lib = Library::new(dir.join("prefix"));
-        let pkg = package(&dir, &manifest("dev.example.hello", &device_target()), &[]);
+        let pkg = package(&dir, &manifest("dev.example.hello", &device_target()), &[("icon.png", b"icon", 0o100644)]);
         let app = lib.install(&pkg).unwrap();
-        assert_eq!(app.manifest.name_for("zh-CN"), "你好");
-        assert_eq!(app.manifest.name_for("en"), "Hello");
         assert_eq!(fs::read_to_string(app.entry()).unwrap(), "#!/bin/sh\necho hello\n");
         #[cfg(unix)]
         {
@@ -918,11 +914,36 @@ mod tests {
         lib.install(&pkg).unwrap();
         let apps = lib.scan();
         assert_eq!(apps.len(), 1);
+        let app = &apps[0];
+        assert_eq!(app.manifest.name_for("zh-CN"), "你好");
+        assert_eq!(app.manifest.name_for("en"), "Hello");
+        assert_eq!(app.manifest.description, None);
+        assert_eq!(app.manifest.descriptions["zh-CN"], "一个测试应用");
+        assert_eq!(app.manifest.rgb(), Some([0x7b, 0x4d, 0xff]));
+        assert_eq!(app.icon(), Some(app.dir.join("icon.png")));
         assert_eq!(leftovers(&lib), 0, "no staging folders are left");
         lib.remove("dev.example.hello", false).unwrap();
         assert!(lib.scan().is_empty());
         assert!(lib.saves("dev.example.hello").is_dir());
         assert!(lib.remove("dev.example.hello", false).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn requires_manifest() {
+        let dir = temp("missing-manifest");
+        let lib = Library::new(dir.join("prefix"));
+        let id = "dev.example.hello";
+        let path = dir.join("no-manifest.gzl");
+        let exe: &[u8] = b"#!/bin/sh\necho hello\n";
+        let sums = format!("{}  bin/hello\n", sum(exe));
+        fs::write(&path, zip(&[("bin/hello", exe, 0o100755), (CHECKSUMS, sums.as_bytes(), 0o100644)])).unwrap();
+        assert!(lib.install(&path).unwrap_err().contains("has no manifest.json"));
+
+        let app = lib.install(&package(&dir, &manifest(id, &device_target()), &[])).unwrap();
+        fs::remove_file(app.dir.join(MANIFEST)).unwrap();
+        assert!(lib.get(id).unwrap_err().contains(MANIFEST));
+        assert!(lib.scan().is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -934,6 +955,9 @@ mod tests {
         let err = |m: &str, extra: &[(&str, &[u8], u32)]| lib.install(&package(&dir, m, extra)).unwrap_err();
         assert!(err(&manifest("dev.example.hello", "riscv64gc-unknown-linux-gnu"), &[]).contains("built for"));
         assert!(err(&manifest("Bad", &target), &[]).contains("reverse-DNS"));
+        assert!(err("[]", &[]).contains("must be a JSON object"));
+        assert!(err(&manifest("dev.example.hello", &target).replace("\"schema\":1", "\"schema\":2"), &[]).contains("unsupported manifest schema"));
+        assert!(err(&manifest("dev.example.hello", &target).replace("\"runtime\":1", "\"runtime\":2"), &[]).contains("unsupported Gizlet runtime"));
         assert!(err(&manifest("dev.example.hello", &target).replace("bin/hello", "../x"), &[]).contains(".."));
         assert!(err(&manifest("dev.example.hello", &target), &[("../evil", b"x", 0o100644)]).contains("evil"));
         assert!(err(&manifest("dev.example.hello", &target), &[("link", b"bin/hello", 0o120777)]).contains("link"));
@@ -941,15 +965,15 @@ mod tests {
         // A file missing from CHECKSUMS, or one that does not match it.
         let exe: &[u8] = b"#!/bin/sh\necho hello\n";
         let m = manifest("dev.example.hello", &target);
-        let sums = format!("{}  manifest.toml\n", sum(m.as_bytes()));
+        let sums = format!("{}  {MANIFEST}\n", sum(m.as_bytes()));
         let path = dir.join("unlisted.gzl");
-        fs::write(&path, zip(&[("manifest.toml", m.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755), ("CHECKSUMS", sums.as_bytes(), 0o100644)])).unwrap();
+        fs::write(&path, zip(&[(MANIFEST, m.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755), ("CHECKSUMS", sums.as_bytes(), 0o100644)])).unwrap();
         assert!(lib.install(&path).unwrap_err().contains("not listed"));
-        let sums = format!("{}  manifest.toml\n{}  bin/hello\n", sum(m.as_bytes()), sum(b"other"));
-        fs::write(&path, zip(&[("manifest.toml", m.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755), ("CHECKSUMS", sums.as_bytes(), 0o100644)])).unwrap();
+        let sums = format!("{}  {MANIFEST}\n{}  bin/hello\n", sum(m.as_bytes()), sum(b"other"));
+        fs::write(&path, zip(&[(MANIFEST, m.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755), ("CHECKSUMS", sums.as_bytes(), 0o100644)])).unwrap();
         assert!(lib.install(&path).unwrap_err().contains("checksum"));
         let huge = vec![b' '; (MAX_CHECKSUMS_BYTES + 1) as usize];
-        fs::write(&path, zip(&[("manifest.toml", m.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755), ("CHECKSUMS", &huge, 0o100644)])).unwrap();
+        fs::write(&path, zip(&[(MANIFEST, m.as_bytes(), 0o100644), ("bin/hello", exe, 0o100755), ("CHECKSUMS", &huge, 0o100644)])).unwrap();
         assert!(lib.install(&path).unwrap_err().contains("larger than 4 MiB"));
         assert!(lib.scan().is_empty());
         assert_eq!(leftovers(&lib), 0, "failed installs leave nothing behind");

@@ -12,6 +12,7 @@ import base64
 from contextlib import contextmanager
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import selectors
@@ -281,14 +282,23 @@ def check_apps(console):
     console.enter("/usr/lib/gizlet/launcher/bin/cli target")
     console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\n")
     console.expect(PROMPT)
-    manifest = ('id = "dev.gizlet.test-hello"\nname = "Hello"\nversion = "0.1.0"\ntier = "lite"\n'
-                'target = "aarch64-unknown-linux-gnu"\nentry = "bin/hello.js"\n\n[names]\nzh-CN = "你好"\n')
+    manifest = {
+        "schema": 1,
+        "id": "dev.gizlet.test-hello",
+        "name": "Hello",
+        "names": {"zh-CN": "你好"},
+        "version": "0.1.0",
+        "runtime": 1,
+        "target": "aarch64-unknown-linux-gnu",
+        "tier": "lite",
+        "entry": "bin/hello.js",
+    }
     hello = (b'#!/usr/bin/bun\n'
              b'import { EOL } from "node:os";\n'
              b'const { GIZLET_SWAP_AB, GIZLET_SAVE_DIR } = process.env;\n'
              b'console.log("hello-app", GIZLET_SWAP_AB, process.cwd(), GIZLET_SAVE_DIR);\n'
              b'await Bun.write(`${GIZLET_SAVE_DIR}/kept`, "kept" + EOL);\n')
-    files = {"manifest.toml": (manifest.encode(), 0o644), "bin/hello.js": (hello, 0o755), "assets/a.txt": (b"asset\n", 0o644)}
+    files = {"manifest.json": (json.dumps(manifest).encode(), 0o644), "bin/hello.js": (hello, 0o755), "assets/a.txt": (b"asset\n", 0o644)}
     send(console, gzl(files), "/tmp/hello.gzl")
     # A file changed after packing no longer matches CHECKSUMS.
     send(console, gzl(dict(files, **{"assets/a.txt": (b"other\n", 0o644)}), listed=files), "/tmp/bad.gzl")
