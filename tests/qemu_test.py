@@ -435,9 +435,9 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         for mount in (b" / squashfs ro,", b" /opt/gizlet ext4 rw,", b" /home ext4 rw,", b" /opt/gizlet/runtime/1 squashfs ro,"):
             console.expect(mount)
         console.expect(PROMPT)
-        # Gizlet runtime 1 renders with its own glibc and Mesa; QEMU has no GPU, so llvmpipe.
+        # Gizlet runtime 1 creates an ES 3 context with llvmpipe, since QEMU has no GPU.
         console.enter("/opt/gizlet/runtime/1/bin/gizlet-run /opt/gizlet/runtime/1/bin/gizlet-gl-info")
-        for line in (b"platform: surfaceless", b"renderer: llvmpipe", b"render: ok"):
+        for line in (b"platform: surfaceless", b"renderer: llvmpipe", b"version: OpenGL ES 3.", b"render: ok"):
             console.expect(line)
         console.expect(PROMPT)
         check_apps(console)

@@ -12,7 +12,10 @@ def _repo_relative(f):
 
 def _raylib_library_impl(ctx):
     out = ctx.outputs.out
-    inputs = {ctx.file._script: "build_raylib.sh"}
+    inputs = {
+        ctx.file._script: "build_raylib.sh",
+        ctx.file._es3_patch: "raylib-es3.patch",
+    }
     for f in ctx.files._crates:
         inputs[f] = _repo_relative(f)
     krun_action(
@@ -31,11 +34,12 @@ def _raylib_library_impl(ctx):
 
 raylib_library = rule(
     implementation = _raylib_library_impl,
-    doc = "Builds raylib from the launcher's vendored raylib-sys sources as a shared library for DRM with OpenGL ES 2.",
+    doc = "Builds raylib from the launcher's vendored raylib-sys sources as a shared library for DRM with OpenGL ES 3.0.",
     attrs = KRUN_ATTRS | {
         "out": attr.output(mandatory = True),
         "source_date_epoch": attr.int(default = 1704067200),
         "_crates": attr.label(default = Label("@launcher_crates//:vendor")),
+        "_es3_patch": attr.label(default = Label(":raylib-es3.patch"), allow_single_file = True),
         "_rootfs": attr.label(default = Label("//tools/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
         "_script": attr.label(default = Label(":build_raylib.sh"), allow_single_file = True),
     },

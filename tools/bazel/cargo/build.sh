@@ -2,7 +2,7 @@
 # build.sh BINARY OUT FEATURES: cargo_binary's build in the build VM (see
 # defs.bzl). Inputs under /in: crate/ (the crate), vendor/ (its crates),
 # rust/ (the toolchain) and, for programs that draw, raylib/libraylib.so,
-# Gizlet runtime 1's raylib for DRM with OpenGL ES 2, which the program then
+# Gizlet runtime 1's raylib for DRM with OpenGL ES 3.0, which the program then
 # links. FEATURES is a comma-separated list, possibly empty.
 set -eu
 binary=$1
