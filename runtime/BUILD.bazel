@@ -4,7 +4,7 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["packages.lock.json"])
 
-# raylib 6.0 for DRM with OpenGL ES 2 on the runtime's Mesa. The launcher
+# raylib 6.0 for DRM with OpenGL ES 3.0 on the runtime's Mesa. The launcher
 # links it, and apps can too.
 raylib_library(
     name = "raylib",

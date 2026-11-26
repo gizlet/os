@@ -1,0 +1,11 @@
+Request an EGL context matching raylib's existing choice of EGL
+renderable type on DRM.
+
+--- a/src/platforms/rcore_drm.c
++++ b/src/platforms/rcore_drm.c
+@@ -1405,4 +1405,4 @@
+     const EGLint contextAttribs[] = {
+-        EGL_CONTEXT_CLIENT_VERSION, 2,
++        EGL_CONTEXT_CLIENT_VERSION, (rlGetVersion() == RL_OPENGL_ES_30)? 3 : 2,
+         EGL_NONE
+     };

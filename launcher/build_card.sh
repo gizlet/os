@@ -2,7 +2,7 @@
 # Builds the launcher for Gizlet OS in the build VM (see defs.bzl), with inputs
 # under /in: launcher/ (this crate), vendor/ (its crates), rust/ (the
 # toolchain) and raylib/libraylib.so, Gizlet runtime 1's raylib for DRM with
-# OpenGL ES 2. The launcher links that library and runs against the runtime
+# OpenGL ES 3.0. The launcher links that library and runs against the runtime
 # through gizlet-run. The CLI uses the base system's libraries.
 set -eu
 launcher_out=$1

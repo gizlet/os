@@ -99,7 +99,7 @@ Keys: arrows, Enter or K (A), Escape or J (B), I (X), U (Y), Q/E (L/R), = (Start
 bazel build --config=r36s //launcher:gizlet-launcher //launcher:gizlet-cli
 ```
 
-On the card the launcher draws with OpenGL ES 2 through Gizlet runtime 1's raylib and Mesa: Panfrost on the R36S's GPU, llvmpipe on the CPU where there is no GPU driver. It links the runtime's `libraylib.so` (`//runtime:raylib`, built from the same vendored raylib-sys sources as its bindings), and [start.sh](start.sh), installed as its boot entry, runs it through the runtime's `gizlet-run`. It draws 60 frames a second while anything moves. Four seconds after the last input the focus stops pulsing and the screen stands still: it is drawn again only for input, a device report or the clock, about once a second, so an idle launcher leaves the CPU and GPU asleep. On the R36S this cut the idle draw from about 790 to 530 mA. [Build](build_card.sh) · [Runtime](../runtime/README.md)
+On the card the launcher draws with OpenGL ES 3.0 through Gizlet runtime 1's raylib and Mesa: Panfrost on the R36S's GPU, llvmpipe on the CPU where there is no GPU driver. It links the runtime's `libraylib.so` (`//runtime:raylib`, built from the same vendored raylib-sys sources as its bindings), and [start.sh](start.sh), installed as its boot entry, runs it through the runtime's `gizlet-run`. It draws 60 frames a second while anything moves. Four seconds after the last input the focus stops pulsing and the screen stands still: it is drawn again only for input, a device report or the clock, about once a second, so an idle launcher leaves the CPU and GPU asleep. On the R36S this cut the idle draw from about 790 to 530 mA. [Build](build_card.sh) · [Runtime](../runtime/README.md)
 
 ## Fonts
 

@@ -25,7 +25,7 @@ typedef intptr_t EGLAttrib;
 #define EGL_NONE 0x3038
 #define EGL_RENDERABLE_TYPE 0x3040
 #define EGL_SURFACE_TYPE 0x3033
-#define EGL_OPENGL_ES2_BIT 0x0004
+#define EGL_OPENGL_ES3_BIT 0x0040
 #define EGL_CONTEXT_CLIENT_VERSION 0x3098
 #define EGL_OPENGL_ES_API 0x30A0
 
@@ -111,8 +111,8 @@ int main(void) {
     EGLConfig config = NULL;
     // Rendering goes to a texture, so any surface type will do: the surfaceless
     // platform has no window configs, while EGL asks for one by default.
-    const EGLint config_attribs[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_SURFACE_TYPE, 0, EGL_NONE};
-    const EGLint context_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+    const EGLint config_attribs[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_SURFACE_TYPE, 0, EGL_NONE};
+    const EGLint context_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
     if (!display) {
         fprintf(stderr, "gizlet-gl-info: no EGL display (0x%x)\n", GetError());
         return 1;
@@ -129,7 +129,7 @@ int main(void) {
     if (!ChooseConfig(display, config_attribs, &config, 1, &count) || count < 1) config = NULL;
     EGLContext context = CreateContext(display, config, NULL, context_attribs);
     if (!context || !MakeCurrent(display, NULL, NULL, context)) {
-        fprintf(stderr, "gizlet-gl-info: no OpenGL ES 2 context (0x%x)\n", GetError());
+        fprintf(stderr, "gizlet-gl-info: no OpenGL ES 3.0 context (0x%x)\n", GetError());
         return 1;
     }
     printf("egl: %d.%d\nvendor: %s\nrenderer: %s\nversion: %s\n", major, minor, GetString(GL_VENDOR),
