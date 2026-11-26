@@ -124,8 +124,10 @@ def check_ssh(private, boot_offset, kernel, root, work):
     with boot(private, kernel, root, ssh_port=port) as console:
         console.expect(PROMPT)
         console.command("ip addr add 10.0.2.15/24 dev eth0 && ip link set eth0 up")
-        # gizlet-switches.service imports setup.ini while the console is already up.
-        console.command("for i in $(seq 60); do [ \"$(systemctl show -P ActiveState gizlet-switches)\" = activating ] || break; sleep 1; done")
+        # gizlet-switches.service imports setup.ini while the console is already up,
+        # and starts sshd, whose gizlet-ssh.service writes to the console too.
+        console.command("for i in $(seq 60); do [ \"$(systemctl show -P ActiveState gizlet-switches)\" != activating ] && "
+                        "systemctl -q is-active ssh && break; sleep 1; done")
         console.enter("cat '/var/lib/iwd/=54657374204e657421.psk'; /usr/lib/gizlet/gizlet-switch wifi; /usr/lib/gizlet/gizlet-switch ssh; echo \"[$(/usr/lib/gizlet/gizlet-switch ssh-password)]\"")
         # Line by line: services such as gizlet-ssh may print to the console in between.
         for line in (b"[Security]\r\nPassphrase=passphrase-123", b"\r\n[Settings]\r\nAutoConnect=true", b"\r\non",
@@ -199,8 +201,9 @@ def check_ssh(private, boot_offset, kernel, root, work):
     with boot(private, kernel, root) as console:
         console.expect(PROMPT)
         # gizlet-switches.service starts them without holding up boot; wait for both.
-        console.enter("for i in $(seq 60); do systemctl -q is-active ssh && systemctl -q is-active iwd && break; sleep 1; done; systemctl is-active ssh iwd")
-        console.expect(b"\r\nactive\r\nactive\r\n")
+        console.enter("for i in $(seq 60); do systemctl -q is-active ssh && systemctl -q is-active iwd && break; sleep 1; done; "
+                      "systemctl is-active ssh iwd systemd-resolved")
+        console.expect(b"\r\nactive\r\nactive\r\nactive\r\n")
         console.expect(PROMPT)
         # Once imported, the switches stay as the launcher leaves them.
         console.command("/usr/lib/gizlet/gizlet-switch ssh off && /usr/lib/gizlet/gizlet-switch wifi off")
@@ -255,8 +258,9 @@ def scenarios(image, kernel_name, work):
             console.expect(line)
         console.expect(PROMPT)
         # A fresh card keeps UTC until a time zone is chosen; network time runs without a network.
-        console.enter("date +%Z; /usr/lib/gizlet/gizlet-switch timezone; systemctl is-active systemd-timesyncd")
-        console.expect(b"\r\nUTC\r\nEtc/UTC\r\nactive\r\n")
+        # systemd-resolved waits for Wi-Fi, and nothing scrubs ext4.
+        console.enter("date +%Z; /usr/lib/gizlet/gizlet-switch timezone; systemctl is-active systemd-timesyncd systemd-resolved e2scrub_reap")
+        console.expect(b"\r\nUTC\r\nEtc/UTC\r\nactive\r\ninactive\r\ninactive\r\n")
         console.expect(PROMPT)
         # The Bluetooth core is built in; with no controller plugged in, bluetoothd
         # has not started. Started by hand it runs on the read-only base, keeps its
@@ -294,8 +298,10 @@ def scenarios(image, kernel_name, work):
         console.stop()
     log = subprocess.run(["mtype", "-i", f"{private}@@{parts['boot'][1]}", "::gizlet.log"],
                          check=True, capture_output=True, text=True).stdout
-    for marker in ("== Gizlet OS boot log", "== Gizlet OS services", "data mounts ready", "gizlet-mount-data exit 0", "Linux version"):
+    for marker in ("== Gizlet OS boot log", "== Gizlet OS services", "data mounts ready", "gizlet-mount-data exit 0", "Linux version",
+                   "gizlet-mount-data steps: start="):
         assert marker in log, f"gizlet.log lacks {marker!r}"
+    print(next(line for line in log.splitlines() if line.startswith("gizlet-mount-data steps:")))
     late = subprocess.run(["mtype", "-i", f"{private}@@{parts['boot'][1]}", "::gizlet-late.log"],
                           check=True, capture_output=True, text=True).stdout
     # The late log carries the launcher's own output, captured by boot-session.

@@ -69,13 +69,19 @@ valid_zone() {
 
 # The stored zone, or Etc/UTC without a valid one.
 stored_zone() {
-    zone=$(cat "$zone_file" 2>/dev/null || :)
+    zone=
+    { read -r zone < "$zone_file"; } 2>/dev/null || :
     valid_zone "$zone" || zone=Etc/UTC
     echo "$zone"
 }
 
-# Replaces the link in one step, so programs never find it missing.
+# Replaces the link in one step, so programs never find it missing. At boot
+# (gizlet-data.service) there is no link yet, and one program is enough.
 apply_timezone() {
+    if [ ! -L "$localtime" ]; then
+        ln -s "$zoneinfo/$(stored_zone)" "$localtime"
+        return
+    fi
     ln -sfn "$zoneinfo/$(stored_zone)" "$localtime.new"
     mv -fT "$localtime.new" "$localtime"
 }

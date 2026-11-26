@@ -78,8 +78,15 @@ def main():
     assert (systemd / "bluetooth.target.wants/bluetooth.service").is_symlink(), "bluetooth.service is enabled"
     for tool in ("usr/libexec/bluetooth/bluetoothd", "usr/bin/bluetoothctl", "usr/bin/btmgmt"):
         assert (root / tool).exists(), f"/{tool}"
-    for unit in ("getty@.service", "serial-getty@.service", "systemd-firstboot.service"):
+    for unit in ("getty@.service", "serial-getty@.service", "systemd-firstboot.service",
+                 "e2scrub_all.timer", "e2scrub_reap.service",
+                 "systemd-journal-catalog-update.service", "systemd-update-done.service"):
         assert os.readlink(systemd / unit) == "/dev/null", f"{unit} is masked"
+    # systemd-resolved starts with iwd, not beside the data mount at boot.
+    for link in ("sysinit.target.wants/systemd-resolved.service", "dbus-org.freedesktop.resolve1.service"):
+        assert not os.path.lexists(systemd / link), f"systemd-resolved is enabled ({link})"
+    assert "Wants=systemd-resolved.service" in (root / "usr/lib/systemd/system/iwd.service.d/gizlet.conf").read_text(), \
+        "iwd.service starts systemd-resolved"
     # Network time sets the clock; the time zone is linked under /run at boot (gizlet-switch).
     assert (systemd / "sysinit.target.wants/systemd-timesyncd.service").is_symlink(), "systemd-timesyncd is enabled"
     assert os.readlink(root / "etc/localtime") == "/run/gizlet-localtime", "/etc/localtime points into /run"
