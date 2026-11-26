@@ -680,7 +680,12 @@ impl Library {
             Some(lock) => lock,
             None => self.not_running_settled(id).map_err(|_| format!("{id} is still running, as `gizlet service exec {id}`; stop it, {again}"))?,
         };
-        for dir in [self.service_data(id), self.service_runtime(id)] {
+        let mut folders = vec![self.service_data(id)];
+        // The runtime folder is shared by name; another prefix may run its own service of this ID by now.
+        if self.owns(&unit_name(id)).is_ok() {
+            folders.push(self.service_runtime(id));
+        }
+        for dir in folders {
             remove_tree(&dir).map_err(|e| format!("{id} is stopped and unregistered, but {} cannot be deleted: {e}; {again}", dir.display()))?;
         }
         let _ = fs::remove_file(self.boot_flag(id));
@@ -728,6 +733,19 @@ impl Library {
         let root = self.services_dir();
         // A backup that recovery could not yet put back still holds the service.
         let installed = |id: &str| root.join(id).exists() || self.backup_in(&root, id).exists();
+        // An update cut short before its backup was made stopped a running
+        // service that is still installed as it was: it runs again.
+        for e in fs::read_dir(self.run_dir()).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(id) = name.strip_prefix(".restart-").filter(|id| apps::is_valid_id(id)) else { continue };
+            if !root.join(id).is_dir() || self.backup_in(&root, id).exists() || self.owns(&unit_name(id)).is_err() {
+                continue;
+            }
+            if self.register(id).is_ok() {
+                let _ = self.manager().start(&unit_name(id), false);
+            }
+            let _ = fs::remove_file(e.path());
+        }
         for e in fs::read_dir(&root).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if let Some(id) = name.strip_prefix(".boot-").filter(|id| !installed(id)) {
@@ -1363,6 +1381,21 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_update_cut_short_while_stopping_runs_the_service_again() {
+        let dir = temp("svc-killed-stop");
+        let (lib, _units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        // The installer is killed once it has stopped the service, before making a backup.
+        fs::create_dir_all(lib.run_dir()).unwrap();
+        fs::write(lib.restart_flag(A), "").unwrap();
+        lib.manager().stop(&unit(A)).unwrap();
+        let s = lib.services().unwrap().remove(0);
+        assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
+        assert!(!lib.restart_flag(A).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn an_update_cut_short_in_this_boot_runs_the_previous_version() {
         let dir = temp("svc-killed-update");
         let (lib, units) = library(&dir);
@@ -1408,6 +1441,11 @@ pub(crate) mod tests {
         assert!(!other.services_dir().join(A).exists());
         let s = lib.service(A).unwrap();
         assert_eq!((s.package.manifest.version.as_str(), s.state), ("0.1.0", State::Running));
+        // Finishing an old uninstall of that ID there leaves this prefix's runtime folder alone.
+        fs::create_dir_all(other.uninstalling(A)).unwrap();
+        other.scan();
+        assert!(!other.uninstalling(A).exists());
+        assert!(lib.service_runtime(A).join("control.sock").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 
