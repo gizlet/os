@@ -537,8 +537,12 @@ impl Library {
             Ok(())
         });
         let Err(problem) = started else {
-            if previous.is_some() {
-                let _ = fs::remove_dir_all(&old);
+            // Committed: the backup is renamed away in one step before it is
+            // deleted, so recovery never puts back a half-deleted one.
+            let trash = root.join(format!(".remove-{id}-{}", std::process::id()));
+            if previous.is_some() && fs::rename(&old, &trash).is_ok() {
+                apps::sync();
+                let _ = fs::remove_dir_all(&trash);
             }
             return self.load(&dest);
         };
@@ -1223,6 +1227,21 @@ pub(crate) mod tests {
         assert_nothing_left(&lib, &units, A);
         // Uninstalling it again once recovery has finished says it is gone.
         assert!(lib.remove(A, false).unwrap_err().contains("not installed"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_confirmed_update_keeps_its_version_whatever_cuts_short_the_cleanup() {
+        let dir = temp("svc-cleanup-cut");
+        let (lib, _units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        lib.install(&service(&dir, A, "0.2.0")).unwrap();
+        // The deletion of the committed backup is cut short partway.
+        let half = lib.services_dir().join(format!(".remove-{A}-1"));
+        fs::create_dir_all(half.join("bin")).unwrap();
+        lib.scan();
+        assert!(!half.exists());
+        assert_eq!(lib.service(A).unwrap().package.manifest.version, "0.2.0");
         let _ = fs::remove_dir_all(&dir);
     }
 
