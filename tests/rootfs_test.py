@@ -195,6 +195,7 @@ def main():
                    "launcher/bin/gizlet-launcher", "launcher/bin/cli"):
         assert (root / "usr/lib/gizlet" / script).stat().st_mode & 0o111, f"/usr/lib/gizlet/{script} is executable"
     assert os.readlink(root / "usr/bin/gizlet") == "/usr/lib/gizlet/launcher-release"
+    assert (root / "usr/bin/bun").stat().st_mode & 0o111, "/usr/bin/bun is executable"
     # After boot the kernel keeps its messages off the LCD's console, which shows between apps.
     assert "kernel.printk = 3 " in (root / "usr/lib/sysctl.d/gizlet.conf").read_text(), "quiet console sysctl"
     assert (root / "usr/lib/systemd/system/systemd-sysctl.service").exists(), "systemd-sysctl applies sysctl.d"
@@ -208,7 +209,8 @@ def main():
     for package in ("libc6", "systemd", "openssh-server", "iwd", "bluez"):
         assert (root / "usr/share/doc" / package / "copyright").stat().st_size > 0, f"{package} copyright notice"
     assert (root / "usr/lib/gizlet/gizlet-booter").read_bytes() == booter.read_bytes(), "installed Booter differs from the build"
-    for executable in ("usr/lib/gizlet/gizlet-booter", "usr/lib/gizlet/launcher/bin/gizlet-launcher", "usr/lib/gizlet/launcher/bin/cli"):
+    for executable in ("usr/lib/gizlet/gizlet-booter", "usr/lib/gizlet/launcher/bin/gizlet-launcher",
+                       "usr/lib/gizlet/launcher/bin/cli", "usr/bin/bun"):
         assert "AArch64" in output("readelf", "-h", root / executable), f"/{executable} is AArch64"
     cli_libraries = output("readelf", "-dW", root / "usr/lib/gizlet/launcher/bin/cli")
     assert "libraylib" not in cli_libraries, "the CLI runs without the launcher runtime"

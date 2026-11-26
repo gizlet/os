@@ -46,3 +46,6 @@ use_repo(rocknix_joypad, "rocknix_joypad")
 
 linux_firmware = use_extension("//third_party/linux-firmware:repositories.bzl", "linux_firmware")
 use_repo(linux_firmware, "linux_firmware")
+
+bun = use_extension("//third_party/bun:repositories.bzl", "bun")
+use_repo(bun, "bun")

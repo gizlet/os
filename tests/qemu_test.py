@@ -282,10 +282,13 @@ def check_apps(console):
     console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\n")
     console.expect(PROMPT)
     manifest = ('id = "dev.gizlet.test-hello"\nname = "Hello"\nversion = "0.1.0"\ntier = "lite"\n'
-                'target = "aarch64-unknown-linux-gnu"\nentry = "bin/hello"\n\n[names]\nzh-CN = "你好"\n')
-    hello = (b'#!/bin/sh\necho "hello-app $GIZLET_SWAP_AB $PWD $GIZLET_SAVE_DIR"\n'
-             b'echo kept > "$GIZLET_SAVE_DIR/kept"\n')
-    files = {"manifest.toml": (manifest.encode(), 0o644), "bin/hello": (hello, 0o755), "assets/a.txt": (b"asset\n", 0o644)}
+                'target = "aarch64-unknown-linux-gnu"\nentry = "bin/hello.js"\n\n[names]\nzh-CN = "你好"\n')
+    hello = (b'#!/usr/bin/bun\n'
+             b'import { EOL } from "node:os";\n'
+             b'const { GIZLET_SWAP_AB, GIZLET_SAVE_DIR } = process.env;\n'
+             b'console.log("hello-app", GIZLET_SWAP_AB, process.cwd(), GIZLET_SAVE_DIR);\n'
+             b'await Bun.write(`${GIZLET_SAVE_DIR}/kept`, "kept" + EOL);\n')
+    files = {"manifest.toml": (manifest.encode(), 0o644), "bin/hello.js": (hello, 0o755), "assets/a.txt": (b"asset\n", 0o644)}
     send(console, gzl(files), "/tmp/hello.gzl")
     # A file changed after packing no longer matches CHECKSUMS.
     send(console, gzl(dict(files, **{"assets/a.txt": (b"other\n", 0o644)}), listed=files), "/tmp/bad.gzl")
@@ -302,6 +305,9 @@ def check_apps(console):
     # The kernel keeps all but critical messages off the console the LCD shows between apps.
     console.enter("cat /proc/sys/kernel/printk")
     console.expect(b"\r\n3\t4\t1\t7\r\n")
+    console.expect(PROMPT)
+    console.enter("bun -e 'process.stdout.write(String(6 * 7) + \"\\n\")'")
+    console.expect(b"\r\n42\r\n")
     console.expect(PROMPT)
     console.enter("gizlet run dev.gizlet.test-hello")
     console.expect(b"\r\nhello-app 0 /opt/gizlet/apps/dev.gizlet.test-hello /opt/gizlet/saves/dev.gizlet.test-hello\r\n")
@@ -457,6 +463,14 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         console.expect(PROMPT)
         console.enter("dmesg | grep -c 'not properly unmounted'")
         console.expect(b"\r\n0\r\n")
+        console.expect(PROMPT)
+        console.command("printf '%s\\n' '#!/usr/bin/bun' 'console.log(\"js-from-card\");' > /opt/gizlet/bin/hello.js "
+                        "&& chmod 755 /opt/gizlet/bin/hello.js "
+                        "&& printf '%s\\n' '[boot]' 'entry=bin/hello.js' > /opt/gizlet/boot.ini")
+        console.enter("exit")
+        console.expect(b"starting /opt/gizlet/bin/hello.js")
+        console.expect(b"\r\njs-from-card\r\n")
+        console.expect(b"boot entry finished with status 0")
         console.expect(PROMPT)
         # Exercise invalid configuration, a symlink and an executable rejected by the kernel.
         console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' 'entry=again' > /opt/gizlet/boot.ini")
