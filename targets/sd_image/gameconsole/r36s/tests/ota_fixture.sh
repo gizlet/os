@@ -4,7 +4,7 @@ cd /tmp/updates
 work=$PWD/ota
 mkdir -p "$work/bin"
 base=/usr/lib/gizlet/launcher
-cp /opt/gizlet/launcher/allowed_signers "$work/allowed_signers"
+printf 'launcher namespaces="gizlet-launcher" %s\n' "$(cat test-key.pub)" > "$work/allowed_signers"
 mount --bind "$work/allowed_signers" "$base/allowed_signers"
 cat > "$work/bin/curl" <<'EOF'
 #!/bin/sh

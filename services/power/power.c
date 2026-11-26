@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -466,7 +467,12 @@ int main(int argc, char **argv) {
         int released = pending && !any_key_down() && (t - pending_since >= PENDING_LIMIT_MS || !controls_held());
         if ((next == SCREEN_OFF && screen != SCREEN_OFF) || released) {
             pending = 0;
-            enum suspend_result r = suspend();
+            enum suspend_result r = SUSPEND_CANCELLED;
+            int ota_lock = open("/run/gizlet-ota.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+            if (ota_lock >= 0) {
+                if (flock(ota_lock, LOCK_EX | LOCK_NB) == 0) r = suspend();
+                close(ota_lock);
+            }
             if (r != SUSPEND_FAILED) {
                 last_use = last_event = now_ms();
                 /* A cancelled sleep did not resume, so nothing needs to settle. */

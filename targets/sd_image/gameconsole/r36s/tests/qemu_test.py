@@ -432,7 +432,8 @@ def check_runtime_after_reboot(console):
 def start_ota_fixture(console, pack_release, ota_fixture, tag):
     console.command("mkdir -p /tmp/updates && cd /tmp/updates && ssh-keygen -qt ed25519 -N '' -f test-key "
                     "&& mkdir -p /opt/gizlet/launcher "
-                    "&& (printf 'launcher '; cat test-key.pub) > /opt/gizlet/launcher/allowed_signers")
+                    "&& ssh-keygen -qt ed25519 -N '' -f manual-key "
+                    "&& (printf 'launcher '; cat manual-key.pub) > /opt/gizlet/launcher/allowed_signers")
     send(console, pack_release.read_bytes(), "/tmp/updates/pack.sh")
     send(console, ota_fixture.read_bytes(), "/tmp/updates/ota_fixture.sh")
     console.enter("sh /tmp/updates/ota_fixture.sh && echo ota-fixture-ready")
