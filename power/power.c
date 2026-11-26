@@ -138,24 +138,20 @@ static int read_str(const char *dir, const char *file, char *buf, size_t size) {
     return 1;
 }
 
-/* Whether the device runs on external power: a mains or USB supply online, or
- * a battery charging, full or "Not charging". The R36S's RK817 reports its
- * charger offline and the battery "Not charging" while it charges. */
+/* Whether any power supply says the device runs on external power
+ * (idle_supply_external). */
 static int external_power(void) {
     struct dirent **names;
     int n = scandir("/sys/class/power_supply", &names, NULL, alphasort);
     if (n < 0) return 0;
     int external = 0;
     for (int i = 0; i < n; i++) {
-        char dir[320], type[32], status[32];
+        char dir[320], type[32], scope[32], status[32];
         snprintf(dir, sizeof dir, "/sys/class/power_supply/%.200s", names[i]->d_name);
         if (!external && names[i]->d_name[0] != '.' && read_str(dir, "type", type, sizeof type)) {
-            if (strcmp(type, "Battery") == 0) {
-                external = read_str(dir, "status", status, sizeof status) &&
-                           (strcmp(status, "Charging") == 0 || strcmp(status, "Full") == 0 || strcmp(status, "Not charging") == 0);
-            } else {
-                external = read_int(dir, "online") == 1;
-            }
+            int has_scope = read_str(dir, "scope", scope, sizeof scope);
+            int has_status = read_str(dir, "status", status, sizeof status);
+            external = idle_supply_external(type, has_scope ? scope : NULL, has_status ? status : NULL, read_int(dir, "online"));
         }
         free(names[i]);
     }

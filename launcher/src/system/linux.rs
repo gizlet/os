@@ -54,9 +54,11 @@ struct SysfsBattery;
 
 impl BatterySource for SysfsBattery {
     fn read(&mut self) -> Result<Battery, Missing> {
+        // Supplies of scope Device are peripherals', such as a gamepad's battery.
+        let own = |d: &PathBuf| read_trim(&d.join("scope")).as_deref() != Some("Device");
         let dir = class_dirs("power_supply")
             .into_iter()
-            .find(|d| read_trim(&d.join("type")).as_deref() == Some("Battery") && d.join("capacity").exists())
+            .find(|d| own(d) && read_trim(&d.join("type")).as_deref() == Some("Battery") && d.join("capacity").exists())
             .ok_or(Missing::NoHardware)?;
         let percent = read_trim(&dir.join("capacity"))
             .and_then(|c| c.parse::<u16>().ok())
@@ -67,7 +69,7 @@ impl BatterySource for SysfsBattery {
         // The kernel counts current into the battery as positive.
         let inflow = first(&["current_avg", "current_now"]).is_some_and(|c| c > 0);
         let supply_online = class_dirs("power_supply").iter().any(|d| {
-            read_trim(&d.join("type")).as_deref() != Some("Battery") && read_trim(&d.join("online")).as_deref() == Some("1")
+            own(d) && read_trim(&d.join("type")).as_deref() != Some("Battery") && read_trim(&d.join("online")).as_deref() == Some("1")
         });
         let charge = charge_state(read_trim(&dir.join("status")).as_deref(), supply_online, inflow);
         // Gauges report µA and µV, some µW; the sign of the current differs
