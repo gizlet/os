@@ -407,6 +407,13 @@ impl Library {
         locked.then_some(Lock(file))
     }
 
+    /// Recovers unless another process, or this one, holds the library lock.
+    pub(crate) fn recover_if_free(&self) {
+        if let Some(_lock) = self.lock(false) {
+            self.recover();
+        }
+    }
+
     /// Finishes what a crash or power loss cut short, with the lock held: a
     /// backup whose app folder is missing goes back in place, one beside a
     /// complete update is deleted, and staging and removal folders, which
@@ -423,7 +430,7 @@ impl Library {
                     continue;
                 }
                 if let Some(id) = name.strip_prefix(".uninstall-").filter(|id| is_valid_id(id)) {
-                    let _ = self.finish_uninstall(id);
+                    let _ = self.finish_uninstall(id, None);
                     continue;
                 }
                 let Some(id) = name.strip_prefix(".old-").filter(|id| is_valid_id(id)) else { continue };
@@ -535,7 +542,7 @@ impl Library {
         let unfinished = is_valid_id(id) && self.uninstalling(id).exists();
         self.recover();
         if unfinished {
-            return self.finish_uninstall(id).map(|()| Kind::Service);
+            return self.finish_uninstall(id, None).map(|()| Kind::Service);
         }
         if is_valid_id(id) && !self.apps_dir().join(id).is_dir() && self.services_dir().join(id).is_dir() {
             return self.remove_service(id).map(|()| Kind::Service);

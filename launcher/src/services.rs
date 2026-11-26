@@ -441,8 +441,11 @@ impl Library {
         Service { boot, state: State::of(unit), pid: (unit.pid != 0).then_some(unit.pid), package }
     }
 
-    /// The installed services and how each runs.
+    /// The installed services and how each runs. Like the shelf's scan, it
+    /// first finishes an interrupted update or uninstall if nothing else holds
+    /// the library.
     pub fn services(&self) -> Result<Vec<Service>, String> {
+        self.recover_if_free();
         let packages = self.service_packages();
         if packages.is_empty() {
             return Ok(Vec::new());
@@ -454,6 +457,7 @@ impl Library {
     }
 
     pub fn service(&self, id: &str) -> Result<Service, String> {
+        self.recover_if_free();
         let package = self.find_service(id)?;
         self.manager().available()?;
         let unit = self.unit_state(id)?;
@@ -493,10 +497,9 @@ impl Library {
     /// running lock: nothing of it runs until the lock is dropped.
     fn stop_verified(&self, id: &str) -> Result<File, String> {
         let unit = unit_name(id);
-        let root = self.services_dir();
         if let Err(e) = self.manager().available() {
             // Without a manager nothing was started for it, except perhaps by hand.
-            return self.not_running(&root, id).map_err(|_| format!("{id} is running ({e})"));
+            return self.not_running_settled(id).map_err(|_| format!("{id} is running ({e})"));
         }
         self.owns(&unit)?;
         let before = self.unit_state(id)?;
@@ -508,7 +511,21 @@ impl Library {
             let left = if after.cgroup.is_empty() { String::new() } else { format!(", processes remain in {}", after.cgroup) };
             return Err(format!("{unit} is still {} ({}){left}", after.active, after.sub));
         }
-        self.not_running(&root, id).map_err(|_| format!("{id} is still running outside {unit}, as `gizlet service exec {id}`"))
+        self.not_running_settled(id).map_err(|_| format!("{id} is still running outside {unit}, as `gizlet service exec {id}`"))
+    }
+
+    /// The service's running lock, held exclusively. A process another thread
+    /// is starting holds a copy of every open descriptor until it runs its
+    /// program, so a lock that seems held is tried again for a moment.
+    fn not_running_settled(&self, id: &str) -> Result<File, String> {
+        let root = self.services_dir();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            match self.not_running(&root, id) {
+                Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+                result => return result,
+            }
+        }
     }
 
     /// Installs or updates the service unpacked in `staging`, with the
@@ -626,16 +643,19 @@ impl Library {
         let dir = root.join(id);
         fs::rename(&dir, self.uninstalling(id)).map_err(|e| format!("{id} is stopped and unregistered, but {}: {e}; {again}", dir.display()))?;
         apps::sync();
-        drop(running);
-        self.finish_uninstall(id)
+        self.finish_uninstall(id, Some(running))
     }
 
     /// Deletes what an uninstall leaves once the service is stopped and
     /// unregistered: its state, runtime folder and lock, then its package.
-    pub(crate) fn finish_uninstall(&self, id: &str) -> Result<(), String> {
+    /// `running` is its running lock if the caller holds it.
+    pub(crate) fn finish_uninstall(&self, id: &str, running: Option<File>) -> Result<(), String> {
         let again = format!("then run `gizlet uninstall {id}` again");
         let root = self.services_dir();
-        let running = self.not_running(&root, id).map_err(|_| format!("{id} is still running, as `gizlet service exec {id}`; stop it, {again}"))?;
+        let running = match running {
+            Some(lock) => lock,
+            None => self.not_running_settled(id).map_err(|_| format!("{id} is still running, as `gizlet service exec {id}`; stop it, {again}"))?,
+        };
         for dir in [self.service_data(id), self.service_runtime(id)] {
             remove_tree(&dir).map_err(|e| format!("{id} is stopped and unregistered, but {} cannot be deleted: {e}; {again}", dir.display()))?;
         }
@@ -1279,6 +1299,28 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn listing_services_recovers_an_interrupted_update() {
+        let dir = temp("svc-list-recovers");
+        let (lib, _units) = library(&dir);
+        lib.install(&service(&dir, A, "0.1.0")).unwrap();
+        // The installer is killed after moving the running version aside, before the new one is in place.
+        fs::create_dir_all(lib.run_dir()).unwrap();
+        fs::write(lib.restart_flag(A), "").unwrap();
+        lib.manager().stop(&unit(A)).unwrap();
+        fs::rename(lib.services_dir().join(A), lib.backup_in(&lib.services_dir(), A)).unwrap();
+        let listed = lib.services().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!((listed[0].id(), &listed[0].state), (A, &State::Running));
+        // While another process holds the library, reading neither waits nor recovers.
+        let held = lib.lock_waiting().unwrap();
+        fs::rename(lib.services_dir().join(A), lib.backup_in(&lib.services_dir(), A)).unwrap();
+        assert!(lib.services().unwrap().is_empty());
+        drop(held);
+        assert_eq!(lib.service(A).unwrap().package.manifest.version, "0.1.0");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn an_update_cut_short_in_this_boot_runs_the_previous_version() {
         let dir = temp("svc-killed-update");
         let (lib, units) = library(&dir);
@@ -1349,8 +1391,8 @@ pub(crate) mod tests {
         lib.stop_service(A).unwrap();
         // Cut short after the installed copy became the backup.
         fs::rename(lib.services_dir().join(A), lib.backup_in(&lib.services_dir(), A)).unwrap();
-        assert_eq!(lib.services().unwrap().len(), 0);
-        assert_eq!(lib.boot_services().unwrap(), [A], "recovery puts it back first");
+        assert_eq!(lib.services().unwrap().len(), 1, "reading the services puts it back");
+        assert_eq!(lib.boot_services().unwrap(), [A]);
         // What an uninstall cut short leaves of a service no longer installed.
         let gone = "dev.example.gone";
         fs::create_dir_all(lib.service_data(gone)).unwrap();
