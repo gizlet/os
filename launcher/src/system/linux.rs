@@ -122,10 +122,19 @@ impl Level for SysfsBacklight {
 
 struct Amixer {
     control: String,
+    /// The control reports decibels, so the level is set along them.
+    db: bool,
 }
 
 impl Amixer {
     const PREFERRED: [&'static str; 6] = ["Master", "Playback", "PCM", "Speaker", "Headphone", "DAC"];
+    /// The loudest level, below the control's full scale: the R36S's speaker
+    /// distorts at 0 dB.
+    const MAX_DB: f32 = -10.0;
+    /// The decibels from the quietest audible level to the loudest. Equal
+    /// steps in decibels sound equally large, where the R36S's raw scale
+    /// spends half its range below -47 dB, which cannot be heard.
+    const SPAN_DB: f32 = 40.0;
 
     fn detect() -> Result<Amixer, Missing> {
         let cards = read_trim(Path::new("/proc/asound/cards")).unwrap_or_default();
@@ -143,19 +152,43 @@ impl Amixer {
             .or_else(|| names.first())
             .cloned()
             .ok_or(Missing::NoHardware)?;
-        Ok(Amixer { control })
+        let db = run("amixer", &["sget", &control]).is_ok_and(|out| bracket(&out, "dB]").is_some());
+        Ok(Amixer { control, db })
     }
+}
+
+/// The first `[NUMBER<suffix>` in amixer's output, such as `[70%]` or `[-28.69dB]`.
+fn bracket(out: &str, suffix: &str) -> Option<f32> {
+    out.split('[').find_map(|p| p.split_once(suffix).map(|(n, _)| n)).and_then(|n| n.parse().ok())
+}
+
+/// The decibels for a 0–1 level, or None for silence at 0.
+fn level_db(value: f32) -> Option<f32> {
+    (value > 0.0).then(|| Amixer::MAX_DB - Amixer::SPAN_DB * (1.0 - value.min(1.0)))
+}
+
+/// The 0–1 level for decibels; louder than [`Amixer::MAX_DB`] reads as 1.
+fn db_level(db: f32) -> f32 {
+    (1.0 - (Amixer::MAX_DB - db) / Amixer::SPAN_DB).clamp(0.0, 1.0)
 }
 
 impl Level for Amixer {
     fn get(&mut self) -> Option<f32> {
         let out = run("amixer", &["sget", &self.control]).ok()?;
-        let pct = out.split('[').find_map(|p| p.split_once("%]").map(|(n, _)| n))?;
-        Some(pct.parse::<f32>().ok()? / 100.0)
+        let pct = bracket(&out, "%]")?;
+        match bracket(&out, "dB]") {
+            Some(_) if pct == 0.0 => Some(0.0),
+            Some(db) if self.db => Some(db_level(db)),
+            _ => Some(pct / 100.0),
+        }
     }
     fn set(&mut self, value: f32) -> Result<(), String> {
-        let pct = format!("{}%", (value * 100.0).round() as u32);
-        run("amixer", &["-q", "sset", &self.control, &pct]).map(|_| ())
+        let level = match level_db(value) {
+            Some(db) if self.db => format!("{db:.2}dB"),
+            Some(_) => format!("{}%", (value * 100.0).round() as u32),
+            None => "0%".into(),
+        };
+        run("amixer", &["-q", "--", "sset", &self.control, &level]).map(|_| ())
     }
 }
 
@@ -552,6 +585,27 @@ impl Power for LinuxPower {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sets_the_volume_along_decibels() {
+        let out = "  Limits: Playback 0 - 255\n  Front Left: Playback 178 [70%] [-28.69dB] Capture 178 [70%] [-28.69dB]\n";
+        assert_eq!(bracket(out, "%]"), Some(70.0));
+        assert_eq!(bracket(out, "dB]"), Some(-28.69));
+        assert_eq!(bracket("Front Left: Playback 3 [5%]", "dB]"), None);
+        assert_eq!(level_db(0.0), None, "0 is silent");
+        assert_eq!(level_db(1.0), Some(Amixer::MAX_DB), "full volume leaves headroom");
+        assert_eq!(level_db(0.5), Some(-30.0));
+        for step in 1..=20 {
+            let v = step as f32 / 20.0;
+            assert!((db_level(level_db(v).unwrap()) - v).abs() < 1e-5, "{v} round-trips");
+            // amixer sets the nearest of the R36S's 0.37 dB steps: the slider still shows the same percent.
+            for off in [-0.18, 0.18] {
+                assert_eq!((db_level(level_db(v).unwrap() + off) * 100.0).round(), (v * 100.0).round(), "{v} {off}");
+            }
+        }
+        assert_eq!(db_level(0.0), 1.0, "louder than the limit, as set over ssh");
+        assert_eq!(db_level(-95.0), 0.0);
+    }
 
     #[test]
     fn parses_iwctl_networks_table() {

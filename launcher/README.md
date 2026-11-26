@@ -14,6 +14,8 @@ On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A
 
 Brightness and volume change on screen at once and reach the device on the system worker. A device report read before the latest change keeps the value shown, so a slider does not jump back while the device catches up.
 
+Where the mixer control reports decibels, the volume moves along them: 0% is silent, and 5% to 100% run evenly from -50 dB to -10 dB, 2 dB a step. The R36S's `Master` spans -95 dB to 0 dB, so its raw percentage left half the slider inaudible, and its speaker distorts at full scale. Other controls are set by percentage. [Volume](src/system/linux.rs)
+
 Moving the focus, opening or closing a page, menu or keyboard, and changing a setting play short tones that the launcher synthesizes; Settings → Sound turns them off. Every volume change, from the slider or the volume keys, plays a tone once the device has the new level, so it is heard at that level. The audio device opens for a sound and closes after eight seconds of quiet, so an idle launcher keeps no audio running. [Sounds](src/sound.rs)
 
 ## Apps
