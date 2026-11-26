@@ -160,6 +160,7 @@ fn run() {
     let mut last = unsafe { ffi::GetTime() };
     let mut active_at = 0.0;
     let mut drawn: Option<(f64, u64)> = None;
+    let mut settling = false;
 
     while !unsafe { ffi::WindowShouldClose() } {
         // Measured here rather than by raylib, which counts drawn frames only.
@@ -192,7 +193,7 @@ fn run() {
         // the focus pulse settles and the screen stands still: it is drawn
         // again only for a device report, a resize or the clock, and the
         // controls are polled in between without touching the GPU.
-        if !input.pressed.is_empty() || !input.held.is_empty() || !input.text.is_empty() || app.animating() || script.running() {
+        if !input.pressed.is_empty() || !input.held.is_empty() || !input.text.is_empty() || app.animating() || script.running() || settling {
             active_at = app.time;
         }
         let quiet = (app.time - active_at - PULSE_FOR_SECONDS) as f32;
@@ -205,6 +206,9 @@ fn run() {
                 continue;
             }
         }
+        // Easing advances by the time since the last drawn frame, which may be
+        // a second on a still screen.
+        let draw_dt = drawn.map_or(dt, |(at, _)| ((app.time - at) as f32).min(0.1));
         drawn = Some((app.time, app.revision));
 
         painter.time = app.time;
@@ -212,7 +216,7 @@ fn run() {
             ffi::BeginDrawing();
             ffi::ClearBackground(painter.pal.bg_bottom);
         }
-        ui.draw(&mut painter, &app, &pad, dt);
+        settling = ui.draw(&mut painter, &app, &pad, draw_dt);
         unsafe { ffi::EndDrawing() };
 
         if let Some(path) = shot {

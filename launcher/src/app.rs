@@ -321,6 +321,8 @@ impl App {
         self.apps_stamp = stamp;
         let focused = self.apps.get(self.home_tile).map(|a| a.id().to_string());
         self.apps = self.library.scan();
+        // The shelf changes without input: draw it, and let it settle.
+        self.revision += 1;
         self.home_tile = focused.and_then(|id| self.apps.iter().position(|a| a.id() == id)).unwrap_or(0);
         if self.apps.is_empty() && self.home_row == HomeRow::Tiles {
             self.home_row = HomeRow::Buttons;
