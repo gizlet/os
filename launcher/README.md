@@ -1,6 +1,6 @@
 # Gizlet launcher
 
-The launcher on a Gizlet OS card: a home screen with the installed apps, settings and a button test, written in Rust with raylib. Its program also carries the `gizlet` command that installs and runs apps and installs and controls background services. Its design follows [gizlet/gizlet](https://github.com/gizlet/gizlet)'s frontend; the Store is not connected yet.
+The launcher on a Gizlet OS card: a home screen with the installed apps, settings and a button test, written in Rust with raylib. Its program also carries the `gizlet` command that installs and runs apps and installs and controls background services. Its design follows [gizlet/gizlet](https://github.com/gizlet/gizlet)'s frontend.
 
 Pages are laid out in logical units: the screen is 720 units tall and at least 960 wide, so one layout fits the R36S's 640×480 panel, a 1280×720 window and a 4K monitor; wider screens get more width. [Painter](src/painter.rs)
 
@@ -9,6 +9,7 @@ Pages are laid out in logical units: the screen is 720 units tall and at least 9
 | Home | Starred apps and services, with Apps, Services, Store, Button Test, Settings and Power icons below |
 | Apps | A grid of installed apps. Press A to launch the selected app. |
 | Services | A grid of installed `.gzl` background services. Press A to see the selected service's status, running and start-at-boot controls. |
+| Store | Featured cards and lists from gizlet.io, updates, search (Y), installing by link (X), and each gizlet's page |
 | Settings | Wi-Fi, SSH, display, sound, battery, controls, language, date and time, system information and updates, and profiles |
 | Button test | A handheld drawn from primitives that lights up with every button, stick and trigger; hold Back to leave |
 
@@ -124,6 +125,8 @@ See [Activating a new build](../runtime/README.md#activating-a-new-build) for ru
 The Store installs from [gizlet.io](https://gizlet.io) without an account, through its public API, with `curl` like system updates. Its lists and search show apps. Installing by a short link id (`rocket`, `gizlet.io/rocket`) or a GitHub repository is a way of installing of its own: it installs an app or a service, whichever the link leads to, listed or not. A package downloads into `/data/device/store/downloads`, resumes after a dropped connection, must match the size and SHA-256 the API named, and installs like `gizlet install`. Updates are only ever installed when asked for. [Store](src/store.rs)
 
 Each app or service installed from the Store is recorded in `/data/device/store/origins.json` with its repository and GitHub's id for it. Only that repository, with the same ID and kind, updates it, and a package is checked against both before anything installed is replaced: another repository declaring the same ID, or a new repository at a renamed one's path, never replaces it or reaches its saves. Installing a file with `gizlet install` or uninstalling forgets the record. Store installs, updates and removals take `/data/device/store/.lock`, so two commands at once take turns. Store art is cached as PNGs in `/data/device/store/cache`, the least recently used first out beyond 32 MiB. `GIZLET_STORE_API` points the Store at another API.
+
+The Store page fits the screen without scrolling: the featured cards on top, Left and Right going through them, and below them one list at a time, L and R changing it. Installed gizlets with an update come first as their own list, after an Update All button. A card opens into the gizlet's page: its cover, a button that turns into the download's progress, the facts, screenshots (A shows one full screen), its description and controls. Search (Y) shows apps; a link (X) opens any gizlet's page, an unlisted one marked as such, and a service asks before installing, as it runs as root and may start at boot. Without a network the Store shows the lists saved last time. [Store pages](src/ui/store.rs) · [Store state](src/storefront.rs)
 
 ## Services
 

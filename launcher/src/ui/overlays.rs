@@ -65,7 +65,7 @@ pub fn dialog(p: &mut Painter, app: &App) {
             p.rect(x + 12.0, ry + 4.0, w - 24.0, 56.0, 12.0, pal.surface_hi);
             focus_ring(p, x + 16.0, ry + 8.0, w - 32.0, 48.0, 8.0, -3.0);
         }
-        let danger = matches!(action, DialogAction::WifiForget(_) | DialogAction::WifiDisconnect | DialogAction::ProfileDeleteAsk(_) | DialogAction::ProfileDelete(_));
+        let danger = matches!(action, DialogAction::WifiForget(_) | DialogAction::WifiDisconnect | DialogAction::ProfileDeleteAsk(_) | DialogAction::ProfileDelete(_) | DialogAction::StoreRemove { .. });
         let c = if danger { pal.danger } else { pal.text };
         let ic = if danger { pal.danger } else { pal.dim };
         let (icon_x, cy) = (x + pad + 6.0, ry + 32.0);
@@ -75,16 +75,19 @@ pub fn dialog(p: &mut Painter, app: &App) {
             }
             DialogAction::Power(PowerAction::Reboot) => icons::restart(p, icon_x, cy, 26.0, ic),
             DialogAction::Power(PowerAction::PowerOff) | DialogAction::Quit => icons::power(p, icon_x, cy, 26.0, ic),
-            DialogAction::InstallUpdate | DialogAction::ProfileSwitchAsk(_) => icons::chevron(p, icon_x, cy, 26.0, true, ic),
+            DialogAction::InstallUpdate | DialogAction::StoreInstall { .. } | DialogAction::ProfileSwitchAsk(_) => icons::chevron(p, icon_x, cy, 26.0, true, ic),
             DialogAction::ProfileSwitch(_) => icons::restart(p, icon_x, cy, 26.0, ic),
             DialogAction::ProfileRename(_) => icons::person(p, icon_x, cy, 26.0, ic),
-            DialogAction::WifiForget(_) | DialogAction::WifiDisconnect | DialogAction::ProfileDeleteAsk(_) | DialogAction::ProfileDelete(_) | DialogAction::Close => {
+            DialogAction::WifiForget(_) | DialogAction::WifiDisconnect | DialogAction::ProfileDeleteAsk(_) | DialogAction::ProfileDelete(_) | DialogAction::StoreRemove { .. } | DialogAction::Close => {
                 icons::cross_circle(p, icon_x, cy, 26.0, ic)
             }
         }
         let weight = if focused { Weight::Bold } else { Weight::Regular };
         p.text_mid(label, x + pad + 34.0, cy, 22.0, weight, c);
     }
+    // The page's hints would show through the scrim under these.
+    p.rect(0.0, p.h - chrome::BOTTOM_H, p.w, chrome::BOTTOM_H, 0.0, pal.bg_bottom);
+    p.rect(0.0, p.h - chrome::BOTTOM_H, p.w, chrome::BOTTOM_H, 0.0, alpha(pal.scrim, t));
     chrome::hints(p, app, &[("B", app.t(T::Back)), ("A", app.t(T::Ok))]);
 }
 
@@ -101,7 +104,8 @@ pub fn keyboard(p: &mut Painter, app: &App) {
     p.rect(0.0, top, p.w, panel_h + 30.0, 26.0, pal.surface);
 
     // Title and field.
-    p.text_mid(&kb.title, 60.0, top + 42.0, 22.0, Weight::Display, pal.text);
+    let title = p.fit(&kb.title, p.w - 120.0, 22.0, Weight::Display);
+    p.text_mid(&title, 60.0, top + 42.0, 22.0, Weight::Display, pal.text);
     let (fx, fw, fy) = (60.0, p.w - 120.0, top + 70.0);
     p.rect(fx, fy, fw, 58.0, 14.0, pal.surface_hi);
     let shown = if kb.masked { "•".repeat(kb.text.chars().count()) } else { kb.text.clone() };
@@ -109,10 +113,12 @@ pub fn keyboard(p: &mut Painter, app: &App) {
     if (app.time * 2.0) as i64 % 2 == 0 {
         p.rect(fx + 22.0 + tw, fy + 14.0, 2.5, 30.0, 1.0, pal.accent);
     }
-    let toggle = app.t(if kb.masked { T::KbShow } else { T::KbHide });
-    let toggle_w = p.measure(toggle, 18.0, Weight::Regular);
-    p.text_right(toggle, fx + fw - 20.0, fy + 29.0, 18.0, Weight::Regular, pal.dim);
-    icons::button_glyph(p, "X", fx + fw - 38.0 - toggle_w, fy + 29.0, 11.0, pal.dim, pal.surface_hi);
+    if kb.hideable() {
+        let toggle = app.t(if kb.masked { T::KbShow } else { T::KbHide });
+        let toggle_w = p.measure(toggle, 18.0, Weight::Regular);
+        p.text_right(toggle, fx + fw - 20.0, fy + 29.0, 18.0, Weight::Regular, pal.dim);
+        icons::button_glyph(p, "X", fx + fw - 38.0 - toggle_w, fy + 29.0, 11.0, pal.dim, pal.surface_hi);
+    }
 
     let grid_top = fy + 80.0;
     for (r, row) in rows.iter().enumerate() {

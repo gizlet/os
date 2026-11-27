@@ -36,6 +36,10 @@ pub enum Purpose {
     SshPassword,
     /// The device's name.
     Hostname,
+    /// Words to search the Store for.
+    StoreSearch,
+    /// A short link or GitHub address to open in the Store.
+    StoreLink,
     /// A profile's name: of the profile with this ID, or of a new one.
     ProfileName(Option<String>),
 }
@@ -82,6 +86,19 @@ impl Keyboard {
         kb.purpose = Purpose::SshPassword;
         kb.masked = false;
         kb.text = current.to_string();
+        kb
+    }
+
+    /// Whether the text can be hidden: everything but Store searches and links.
+    pub fn hideable(&self) -> bool {
+        !matches!(self.purpose, Purpose::StoreSearch | Purpose::StoreLink)
+    }
+
+    /// Plain text in the clear, starting from `current`.
+    pub fn text(title: String, purpose: Purpose, current: &str) -> Keyboard {
+        let mut kb = Keyboard::ssh_password(title, current);
+        kb.purpose = purpose;
+        kb.max_len = 200;
         kb
     }
 

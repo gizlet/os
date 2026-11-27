@@ -71,7 +71,7 @@ fn other(e: impl std::fmt::Display) -> Error {
     Error::Other(e.to_string())
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Rating {
     pub average: Option<f32>,
     #[serde(default)]
@@ -79,7 +79,7 @@ pub struct Rating {
 }
 
 /// A gizlet as lists show it.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Summary {
     pub repo: String,
     pub id: String,
@@ -201,7 +201,7 @@ impl Detail {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Section {
     pub id: String,
     pub title: String,
@@ -219,7 +219,7 @@ impl Section {
 }
 
 /// The Store's home: a hero row and the sections below it.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Featured {
     #[serde(default)]
     pub hero: Vec<Summary>,
@@ -321,6 +321,7 @@ pub enum Progress {
 
 /// The Store of one library: its API and its files under `<prefix>/device/store`,
 /// shared by every profile like the packages.
+#[derive(Clone)]
 pub struct Store {
     api: String,
     dir: PathBuf,
@@ -337,15 +338,27 @@ impl Store {
         Store { api: api.trim_end_matches('/').into(), dir: library.device_dir().join("store") }
     }
 
-    fn query(&self) -> String {
-        format!("kind=app&target={}&tier={}", encode(&apps::device_target()), encode(&apps::device_tier()))
+    fn query(target: &str) -> String {
+        format!("kind=app&target={}&tier={}", encode(target), encode(&apps::device_tier()))
     }
 
-    /// The home lists, saved for when the device is offline.
+    /// The home lists, saved for when the device is offline: of every target
+    /// this device runs (the API matches targets exactly), its own first.
     pub fn featured(&self) -> Result<Featured, Error> {
-        let body = get(&format!("{}/v1/featured?{}", self.api, self.query()), JSON_LIMIT)?;
-        let featured: Featured = serde_json::from_slice(&body).map_err(other)?;
-        let _ = write_atomic(&self.dir.join("featured.json"), &body);
+        let mut featured = Featured::default();
+        for (i, target) in apps::device_targets().iter().enumerate() {
+            let got = get(&format!("{}/v1/featured?{}", self.api, Store::query(target)), JSON_LIMIT)
+                .and_then(|body| serde_json::from_slice::<Featured>(&body).map_err(other));
+            match got {
+                Ok(more) => merge_featured(&mut featured, more),
+                // The device's own target answers for the Store; the others only add to it.
+                Err(e) if i == 0 => return Err(e),
+                Err(_) => {}
+            }
+        }
+        if let Ok(body) = serde_json::to_vec(&featured) {
+            let _ = write_atomic(&self.dir.join("featured.json"), &body);
+        }
         Ok(featured)
     }
 
@@ -360,9 +373,16 @@ impl Store {
         struct Page {
             gizlets: Vec<Summary>,
         }
-        let url = format!("{}/v1/gizlets?{}&sort=score&limit=48&q={}", self.api, self.query(), encode(q.trim()));
-        let page: Page = serde_json::from_slice(&get(&url, JSON_LIMIT)?).map_err(other)?;
-        Ok(page.gizlets)
+        let mut found: Vec<Summary> = Vec::new();
+        for (i, target) in apps::device_targets().iter().enumerate() {
+            let url = format!("{}/v1/gizlets?{}&sort=score&limit=48&q={}", self.api, Store::query(target), encode(q.trim()));
+            match get(&url, JSON_LIMIT).and_then(|body| serde_json::from_slice::<Page>(&body).map_err(other)) {
+                Ok(page) => found.extend(page.gizlets.into_iter().filter(|g| !found.iter().any(|f| f.repo == g.repo)).collect::<Vec<_>>()),
+                Err(e) if i == 0 => return Err(e),
+                Err(_) => {}
+            }
+        }
+        Ok(found)
     }
 
     /// The repository a link names: a short link (`rocket`, `gizlet.io/rocket`)
@@ -406,6 +426,18 @@ impl Store {
     pub fn install(&self, library: &Library, repo: &str, progress: &mut dyn FnMut(Progress)) -> Result<App, Error> {
         let offer = self.offer(repo)?;
         let kind = kind_of(&offer.kind)?;
+        let source = Source { repo: &offer.repo, repository_id: offer.repository_id, id: &offer.id, kind, replaces: None, version: &offer.version, tag: &offer.tag };
+        self.install_package(library, source, &offer.package, progress)
+    }
+
+    /// Installs `repo` only while it offers what was asked for: `id`, as `kind`. A page shown from
+    /// saved lists may be out of date, and a service is only installed after asking.
+    pub fn install_expecting(&self, library: &Library, repo: &str, id: &str, kind: Kind, progress: &mut dyn FnMut(Progress)) -> Result<App, Error> {
+        let offer = self.offer(repo)?;
+        let offered = kind_of(&offer.kind)?;
+        if offer.id != id || offered != kind {
+            return Err(Error::Other(format!("{repo} now offers {} as {}; open its page again", offer.id, apps::kind_word(offered))));
+        }
         let source = Source { repo: &offer.repo, repository_id: offer.repository_id, id: &offer.id, kind, replaces: None, version: &offer.version, tag: &offer.tag };
         self.install_package(library, source, &offer.package, progress)
     }
@@ -720,6 +752,27 @@ fn package_for<'a>(packages: &'a [Package], target: &str, tier: &str) -> Option<
     packages.iter().filter(fits).min_by_key(rank)
 }
 
+/// Adds the lists `more` has to `featured`: each gizlet once, each section once by id.
+fn merge_featured(featured: &mut Featured, more: Featured) {
+    for g in more.hero {
+        if !featured.hero.iter().any(|h| h.repo == g.repo) {
+            featured.hero.push(g);
+        }
+    }
+    for section in more.sections {
+        match featured.sections.iter_mut().find(|s| s.id == section.id) {
+            Some(mine) => {
+                for g in section.gizlets {
+                    if !mine.gizlets.iter().any(|m| m.repo == g.repo) {
+                        mine.gizlets.push(g);
+                    }
+                }
+            }
+            None => featured.sections.push(section),
+        }
+    }
+}
+
 fn kind_of(kind: &str) -> Result<Kind, Error> {
     match kind {
         "app" => Ok(Kind::App),
@@ -859,6 +912,17 @@ mod tests {
         assert_eq!(package_for(&both, gnu, "lite").unwrap().file, "aarch64-unknown-linux-gnu-lite");
         assert_eq!(package_for(&both, gnu, "full").unwrap().file, "aarch64-unknown-linux-gnu-full");
         assert!(package_for(&[pkg(gnu, "full")], gnu, "lite").is_none());
+    }
+
+    #[test]
+    fn merges_the_lists_of_every_target() {
+        let g = |repo: &str| serde_json::from_value::<Summary>(serde_json::json!({ "repo": repo, "id": "dev.a.b", "name": repo })).unwrap();
+        let section = |id: &str, repos: &[&str]| Section { id: id.into(), title: id.into(), titles: BTreeMap::new(), layout: "row".into(), gizlets: repos.iter().map(|r| g(r)).collect() };
+        let mut featured = Featured { hero: vec![g("a")], sections: vec![section("new", &["a", "b"])] };
+        merge_featured(&mut featured, Featured { hero: vec![g("a"), g("m")], sections: vec![section("new", &["b", "m"]), section("games", &["m"])] });
+        assert_eq!(featured.hero.iter().map(|h| h.repo.as_str()).collect::<Vec<_>>(), ["a", "m"]);
+        let ids: Vec<_> = featured.sections.iter().map(|s| (s.id.as_str(), s.gizlets.iter().map(|g| g.repo.as_str()).collect::<Vec<_>>())).collect();
+        assert_eq!(ids, [("new", vec!["a", "b", "m"]), ("games", vec!["m"])]);
     }
 
     #[test]
