@@ -530,7 +530,7 @@ impl Store {
         fs::create_dir_all(&self.dir).map_err(other)?;
         let file = File::options().create(true).truncate(false).write(true).open(self.dir.join(".lock")).map_err(other)?;
         file.lock().map_err(other)?;
-        self.recover(library);
+        self.recover(library)?;
         Ok(file)
     }
 
@@ -541,17 +541,19 @@ impl Store {
     /// An install recorded in `pending.json` before its package was committed
     /// ended without recording its origin: it is recorded if that version is
     /// installed now, and dropped otherwise.
-    fn recover(&self, library: &Library) {
+    /// Until that succeeds, no other Store change is made.
+    fn recover(&self, library: &Library) -> Result<(), Error> {
         let path = self.pending_path();
         let Some(pending) = fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Pending>(&b).ok()) else {
             let _ = fs::remove_file(&path);
-            return;
+            return Ok(());
         };
         let landed = install_stamp(library, &pending.id).is_some_and(|now| Some(now) != pending.before);
-        if landed && self.set_origin(&pending.id, pending.origin).is_err() {
-            return;
+        if landed {
+            self.set_origin(&pending.id, pending.origin)
+                .map_err(|e| Error::Other(format!("cannot finish recording where {} came from: {e}", pending.id)))?;
         }
-        let _ = fs::remove_file(&path);
+        fs::remove_file(&path).map_err(|e| Error::Other(format!("{}: {e}", path.display())))
     }
 
     /// Runs `install`, changing `id`'s origin record to `origin` once it has
