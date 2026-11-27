@@ -584,8 +584,7 @@ def check_store(console):
     console.expect(b"\r\n2 installed dev.gizlet.test-store 1.0.0 (Store Test) from github.com/fixture/store-test\r\n")
     console.expect(PROMPT)
     console.enter("grep -c '\"repository_id\": 4242' /opt/gizlet/store/origins.json && gizlet run dev.gizlet.test-store && ./gz store updates")
-    console.expect(b"\r\n1\r\nstore-app 1.0.0\r\n")
-    console.expect(b"\r\neverything from the Store is up to date\r\n")
+    console.expect(b"\r\n1\r\nstore-app 1.0.0\r\neverything from the Store is up to date\r\n")
     console.expect(PROMPT)
     # Another repository naming the same app ID never replaces it.
     console.enter("./gz store install github.com/fixture/impostor; echo status-$?")
