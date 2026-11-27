@@ -8,16 +8,18 @@ The base includes Bun at `/usr/bin/bun`. Run `bun /home/hello.js` from SSH or th
 
 - **Gamepad-first Launcher.** Browse the app shelf, test buttons and sticks, and adjust brightness, volume, theme, language, and A/B mapping from the handheld.
 - **Wi-Fi and SSH from Settings.** Scan for networks, enter a Wi-Fi password with the on-screen keyboard, and see the SSH login commands for the device's `.local` name and IP address.
-- **Apps and background services.** Install `.gzl` packages with `gizlet` and open games and apps from the shelf. Manage services such as Tailscale with separate controls for running now and starting at boot.
+- **Apps and background services.** Install `.gzl` packages with `gizlet` and launch games and apps from the Apps tab. In the Services tab, manage packages such as Tailscale with separate controls for running now and starting at boot.
 - **Handheld power controls.** See battery charge and estimated time remaining, set separate idle sleep timers for battery and charging, and suspend from the Power menu.
 - **Two-card storage.** The read-only system runs from TF1, and the data partition keeps installed apps, saves, and settings. TF2 mounts at `/media/tf2` for user files such as games.
 - **Signed Launcher and Runtime updates.** Install updates from Settings and restart to try the new pair. If the new Launcher fails to start, the system restores the previous pair.
 
 ## Screenshots
 
-![Gizlet Launcher home with The Little Prince selected in the app library](docs/screenshots/launcher-home.png)
+![Gizlet Launcher Apps tab with three installed games and apps](docs/screenshots/launcher-home.png)
 
-**Library** focuses the app shelf. The same row opens **Button Test**, **Settings**, and **Power**. **Store** is a placeholder.
+The Launcher opens on **Apps**. L/R switches between **Apps**, **Services**, **Store**, and **Settings**. Start opens **Power**, and **Settings → Controls** opens the button test. **Store** is a placeholder.
+
+![Services tab with Running and Start at boot controls for Tailscale](docs/screenshots/launcher-services.png)
 
 ### Settings
 
@@ -25,9 +27,7 @@ The base includes Bun at `/usr/bin/bun`. Run `bun /home/hello.js` from SSH or th
 | --- | --- |
 | ![Wi-Fi settings with a connected network and nearby networks](docs/screenshots/launcher-wifi.png) | ![On-screen keyboard for entering a Wi-Fi password](docs/screenshots/launcher-wifi-join.png) |
 
-| SSH remote login | Background services |
-| --- | --- |
-| ![SSH enabled with example login commands for the hostname and IP address](docs/screenshots/launcher-ssh.png) | ![Tailscale service with Running and Start at boot enabled](docs/screenshots/launcher-services.png) |
+![SSH enabled with example login commands for the hostname and IP address](docs/screenshots/launcher-ssh.png)
 
 | Display | Battery |
 | --- | --- |

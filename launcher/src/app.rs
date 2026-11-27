@@ -20,37 +20,23 @@ pub const TEST_EXIT_SECONDS: f32 = 1.2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
-    Home,
-    Settings,
-    ButtonTest,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HomeRow {
-    Tiles,
-    Buttons,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HomeButton {
-    Library,
+    Apps,
+    Services,
     Store,
-    ButtonTest,
     Settings,
-    Power,
+    ButtonTest,
 }
 
-impl HomeButton {
-    pub const ALL: [HomeButton; 5] =
-        [HomeButton::Library, HomeButton::Store, HomeButton::ButtonTest, HomeButton::Settings, HomeButton::Power];
+impl Page {
+    pub const TABS: [Page; 4] = [Page::Apps, Page::Services, Page::Store, Page::Settings];
 
     pub fn title(self) -> T {
         match self {
-            HomeButton::Library => T::Library,
-            HomeButton::Store => T::Store,
-            HomeButton::ButtonTest => T::ButtonTest,
-            HomeButton::Settings => T::Settings,
-            HomeButton::Power => T::Power,
+            Page::Apps => T::Apps,
+            Page::Services => T::Services,
+            Page::Store => T::Store,
+            Page::Settings => T::Settings,
+            Page::ButtonTest => T::ButtonTest,
         }
     }
 }
@@ -65,12 +51,11 @@ pub enum Category {
     Controls,
     Language,
     Time,
-    Services,
     System,
 }
 
 impl Category {
-    pub const ALL: [Category; 10] = [
+    pub const ALL: [Category; 9] = [
         Category::Network,
         Category::Ssh,
         Category::Display,
@@ -79,7 +64,6 @@ impl Category {
         Category::Controls,
         Category::Language,
         Category::Time,
-        Category::Services,
         Category::System,
     ];
 
@@ -93,7 +77,6 @@ impl Category {
             Category::Controls => T::CatControls,
             Category::Language => T::CatLanguage,
             Category::Time => T::CatTime,
-            Category::Services => T::CatServices,
             Category::System => T::CatSystem,
         }
     }
@@ -309,7 +292,7 @@ impl Updates {
     }
 }
 
-/// What Settings → Services changes.
+/// What the Services tab changes.
 #[derive(Clone, Debug)]
 enum ServiceOp {
     Refresh,
@@ -322,7 +305,7 @@ struct ServicesDone {
     list: Result<Vec<Service>, String>,
 }
 
-/// Settings → Services: the installed services, read and switched on a
+/// Installed services, read and switched on a
 /// worker thread, since systemd can take seconds to start or stop one.
 pub struct ServicesUi {
     pub list: Option<Result<Vec<Service>, String>>,
@@ -335,7 +318,7 @@ pub struct ServicesUi {
     simulated: bool,
 }
 
-/// How often the list is read again while Settings → Services is open.
+/// How often the list is read again while the Services tab is open.
 const SERVICES_REFRESH: f64 = 4.0;
 
 impl ServicesUi {
@@ -393,7 +376,6 @@ impl ServicesUi {
         };
         self.work = None;
         self.switching = None;
-        self.list = Some(done.list.clone());
         Some(done)
     }
 }
@@ -419,7 +401,8 @@ fn simulated_services() -> Vec<Service> {
 #[derive(Clone, Debug, PartialEq)]
 struct Place {
     depth: usize,
-    home: (HomeRow, usize, usize),
+    tab: (Page, bool),
+    content: (usize, usize),
     settings: (usize, usize, bool),
     dialog: Option<usize>,
     /// The keyboard's key and layout, and how much is typed.
@@ -432,11 +415,11 @@ pub struct App {
     pub power: Power,
     pub version: &'static str,
     pages: Vec<Page>,
-    pub home_row: HomeRow,
-    pub home_button: usize,
-    /// Installed apps, as the home shelf shows them, and the focused one.
+    pub tab_focused: bool,
+    /// Installed apps and the focused tile on the Apps tab.
     pub apps: Vec<apps::App>,
     pub home_tile: usize,
+    pub service_item: usize,
     library: Library,
     apps_stamp: Option<std::time::SystemTime>,
     /// Set when the launcher should quit, as when it hands the screen to an app.
@@ -481,12 +464,11 @@ impl App {
             system: System::start(data_dir),
             updates: None,
             services: ServicesUi::new(),
-            pages: vec![Page::Home],
-            // The most recently played app has focus; without apps, Settings.
-            home_row: if apps.is_empty() { HomeRow::Buttons } else { HomeRow::Tiles },
-            home_button: 3,
+            pages: vec![Page::Apps],
+            tab_focused: apps.is_empty(),
             apps,
             home_tile: 0,
+            service_item: 0,
             library,
             apps_stamp,
             leave: false,
@@ -526,7 +508,7 @@ impl App {
     }
 
     pub fn page(&self) -> Page {
-        *self.pages.last().unwrap_or(&Page::Home)
+        *self.pages.last().unwrap_or(&Page::Apps)
     }
 
     pub fn depth(&self) -> usize {
@@ -544,6 +526,7 @@ impl App {
             || self.keyboard.is_some()
             || !self.toasts.is_empty()
             || self.page() == Page::ButtonTest
+            || (self.page() == Page::Services && (self.services.busy() || self.services.list.is_none()))
             || self.wifi.scanning
             || self.wifi.connecting.is_some()
             || self.wifi.switching.is_some()
@@ -582,7 +565,8 @@ impl App {
     fn place(&self) -> Place {
         Place {
             depth: self.pages.len(),
-            home: (self.home_row, self.home_button, self.home_tile),
+            tab: (self.page(), self.tab_focused),
+            content: (self.home_tile, self.service_item),
             settings: (self.focus.category, self.focus.item, self.focus.in_content),
             dialog: self.dialog.as_ref().map(|d| d.focus),
             keyboard: self.keyboard.as_ref().map(|k| (k.row, k.col, k.shift, k.symbols, k.text.chars().count())),
@@ -627,8 +611,8 @@ impl App {
         // The shelf changes without input: draw it, and let it settle.
         self.revision += 1;
         self.home_tile = focused.and_then(|id| self.apps.iter().position(|a| a.id() == id)).unwrap_or(0);
-        if self.apps.is_empty() && self.home_row == HomeRow::Tiles {
-            self.home_row = HomeRow::Buttons;
+        if self.page() == Page::Apps && self.apps.is_empty() {
+            self.tab_focused = true;
         }
     }
 
@@ -706,20 +690,28 @@ impl App {
         keep
     }
 
-    /// Reads the services while Settings → Services is open, and takes in
+    /// Reads the services while their tab is open, and takes in
     /// what the worker finished.
     fn update_services(&mut self) {
-        let open = self.page() == Page::Settings && self.focused_category() == Category::Services;
+        let open = self.page() == Page::Services;
         if open && !self.services.busy() && self.time - self.services.asked >= SERVICES_REFRESH {
             self.services.send(ServiceOp::Refresh, self.time);
         }
-        let focused = self.focused_item();
         if let Some(done) = self.services.poll() {
+            let selected = self.service_items().get(self.service_item).map(|item| item.id.clone());
+            self.services.list = Some(done.list);
             if let Some(e) = done.failed {
                 self.toast(T::Failed.fmt(self.lang(), &[&e]));
             }
             self.revision += 1;
-            self.refocus(focused);
+            let items = self.service_items();
+            let first = || items.iter().position(|item| item.id != ItemId::None);
+            let index = selected.filter(|id| *id != ItemId::None)
+                .and_then(|id| items.iter().position(|item| item.id == id)).or_else(first);
+            self.service_item = index.unwrap_or(0);
+            if open && index.is_none() {
+                self.tab_focused = true;
+            }
         }
     }
 
@@ -740,13 +732,6 @@ impl App {
             }
         }
         match self.page() {
-            Page::Home => {
-                self.home_input(input);
-                if self.leave {
-                    return false;
-                }
-            }
-            Page::Settings => self.settings_input(input),
             Page::ButtonTest => {
                 if input.held(Action::B) {
                     self.test_hold += dt;
@@ -758,8 +743,9 @@ impl App {
                     self.test_hold = 0.0;
                 }
             }
+            _ => self.tab_input(input),
         }
-        true
+        !self.leave
     }
 
     fn on_event(&mut self, event: Event) {
@@ -858,9 +844,6 @@ impl App {
 
     pub fn push(&mut self, page: Page) {
         self.pages.push(page);
-        if page == Page::Settings {
-            self.focus = SettingsFocus::default();
-        }
         self.test_hold = 0.0;
     }
 
@@ -886,33 +869,81 @@ impl App {
         self.dialog = Some(Dialog { title: self.t(T::PowerTitle).into(), buttons, focus: 0, opened: self.time });
     }
 
-    fn home_input(&mut self, input: &Input) {
-        let n = HomeButton::ALL.len();
-        let tiles = self.apps.len();
-        for &a in &input.pressed {
-            match (a, self.home_row) {
-                (Action::Down, HomeRow::Tiles) => self.home_row = HomeRow::Buttons,
-                (Action::Up, HomeRow::Buttons) => self.home_row = HomeRow::Tiles,
-                (Action::Left, HomeRow::Tiles) if tiles > 0 => self.home_tile = self.home_tile.saturating_sub(1),
-                (Action::Right, HomeRow::Tiles) if tiles > 0 => self.home_tile = (self.home_tile + 1).min(tiles - 1),
-                (Action::Left, HomeRow::Buttons) => self.home_button = (self.home_button + n - 1) % n,
-                (Action::Right, HomeRow::Buttons) => self.home_button = (self.home_button + 1) % n,
-                (Action::A, HomeRow::Tiles) if tiles > 0 => {
-                    self.launch(self.home_tile);
-                    if self.leave {
-                        return;
+    fn tab_input(&mut self, input: &Input) {
+        if input.pressed(Action::Start) {
+            self.power_dialog();
+            return;
+        }
+        let previous = input.pressed(Action::L) || (self.tab_focused && input.pressed(Action::Left));
+        let next = input.pressed(Action::R) || (self.tab_focused && input.pressed(Action::Right));
+        if previous || next {
+            let tabs = Page::TABS;
+            let current = tabs.iter().position(|&page| page == self.page()).unwrap_or(0);
+            let step = if previous { tabs.len() - 1 } else { 1 };
+            self.pages[0] = tabs[(current + step) % tabs.len()];
+            self.tab_focused = true;
+            return;
+        }
+        if self.tab_focused {
+            if input.pressed(Action::A) || input.pressed(Action::Down) {
+                let has_content = match self.page() {
+                    Page::Apps => !self.apps.is_empty(),
+                    Page::Services => matches!(&self.services.list, Some(Ok(services)) if !services.is_empty()),
+                    Page::Settings => true,
+                    _ => false,
+                };
+                self.tab_focused = !has_content;
+            }
+            return;
+        }
+        match self.page() {
+            Page::Apps => self.apps_input(input),
+            Page::Services => self.services_input(input),
+            Page::Settings => self.settings_input(input),
+            _ => {}
+        }
+    }
+
+    fn apps_input(&mut self, input: &Input) {
+        for &action in &input.pressed {
+            match action {
+                Action::Up | Action::B => self.tab_focused = true,
+                Action::Left => self.home_tile = self.home_tile.saturating_sub(1),
+                Action::Right => self.home_tile = (self.home_tile + 1).min(self.apps.len().saturating_sub(1)),
+                Action::A => self.launch(self.home_tile),
+                _ => {}
+            }
+            if self.leave || self.tab_focused {
+                break;
+            }
+        }
+    }
+
+    fn services_input(&mut self, input: &Input) {
+        if input.pressed.is_empty() {
+            return;
+        }
+        let items = self.service_items();
+        for &action in &input.pressed {
+            match action {
+                Action::B => {
+                    self.tab_focused = true;
+                    break;
+                }
+                Action::Up => {
+                    if let Some(index) = (0..self.service_item).rev().find(|&index| items[index].id != ItemId::None) {
+                        self.service_item = index;
+                    } else {
+                        self.tab_focused = true;
+                        break;
                     }
                 }
-                (Action::A, HomeRow::Tiles) => self.toast(self.t(T::LibrarySoon)),
-                (Action::A, HomeRow::Buttons) => match HomeButton::ALL[self.home_button] {
-                    HomeButton::Library if tiles > 0 => self.home_row = HomeRow::Tiles,
-                    HomeButton::Library => self.toast(self.t(T::LibrarySoon)),
-                    HomeButton::Store => self.toast(self.t(T::StoreSoon)),
-                    HomeButton::ButtonTest => self.push(Page::ButtonTest),
-                    HomeButton::Settings => self.push(Page::Settings),
-                    HomeButton::Power => self.power_dialog(),
-                },
-                (Action::Start, _) => self.push(Page::Settings),
+                Action::Down => {
+                    if let Some(index) = (self.service_item + 1..items.len()).find(|&index| items[index].id != ItemId::None) {
+                        self.service_item = index;
+                    }
+                }
+                Action::A => self.activate(&items[self.service_item]),
                 _ => {}
             }
         }
@@ -924,8 +955,12 @@ impl App {
             if !self.focus.in_content {
                 let n = Category::ALL.len();
                 match a {
-                    Action::Up => self.focus.category = (self.focus.category + n - 1) % n,
-                    Action::Down => self.focus.category = (self.focus.category + 1) % n,
+                    Action::Up if self.focus.category == 0 => {
+                        self.tab_focused = true;
+                        return;
+                    }
+                    Action::Up => self.focus.category -= 1,
+                    Action::Down => self.focus.category = (self.focus.category + 1).min(n - 1),
                     Action::A | Action::Right => {
                         if let Some(i) = items.iter().position(Item::focusable) {
                             self.focus.item = i;
@@ -933,7 +968,7 @@ impl App {
                         }
                     }
                     Action::B => {
-                        self.pages.pop();
+                        self.tab_focused = true;
                         return;
                     }
                     _ => {}
@@ -1490,7 +1525,6 @@ impl App {
                     Err(m) => items.push(self.missing(m, T::TimeZone, None)),
                 }
             }
-            Category::Services => self.service_items(&mut items),
             Category::System => {
                 self.update_items(&mut items);
                 items.push(Item::section(t(T::About)));
@@ -1530,24 +1564,18 @@ impl App {
     }
 
     /// Each installed service: whether it runs, whether it starts at boot, and its state.
-    fn service_items(&self, items: &mut Vec<Item>) {
+    pub fn service_items(&self) -> Vec<Item> {
         let l = self.lang();
         let t = |k: T| k.get(l).to_string();
         let list = match &self.services.list {
-            None => {
-                items.push(Item::new(ItemId::None, t(T::ServicesReading), ItemValue::Busy));
-                return;
-            }
-            Some(Err(e)) => {
-                items.push(Item::notice(t(T::ServicesUnavailable), e.clone()));
-                return;
-            }
+            None => return vec![Item::new(ItemId::None, t(T::ServicesReading), ItemValue::Busy)],
+            Some(Err(e)) => return vec![Item::notice(t(T::ServicesUnavailable), e.clone())],
             Some(Ok(list)) => list,
         };
         if list.is_empty() {
-            items.push(Item::notice(t(T::NoServices), t(T::NoServicesBody)));
-            return;
+            return vec![Item::notice(t(T::NoServices), t(T::NoServicesBody))];
         }
+        let mut items = Vec::new();
         let switched = |id: &ItemId, now: bool| match &self.services.switching {
             Some((switching, to)) if switching == id => *to,
             _ => now,
@@ -1574,6 +1602,7 @@ impl App {
             };
             items.push(Item::info(t(T::BatteryState), state));
         }
+        items
     }
 
     fn update_items(&self, items: &mut Vec<Item>) {
