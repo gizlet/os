@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
-const API: &str = "https://api.gizlet.io";
+const API: &str = "https://gizlet.io/api";
 const JSON_LIMIT: u64 = 4 * 1024 * 1024;
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024;
 const PACKAGE_LIMIT: u64 = 1024 * 1024 * 1024;
@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     fn reads_api_summaries() {
-        let s: Summary = serde_json::from_str(r##"{"repo":"github.com/a/b","id":"dev.a.b","name":"B","names":{"zh-CN":"乙"},"description":null,"kind":"app","category":"game","color":"#c8553d","device_icon_url":"https://dl.gizlet.io/x/~device/icon.png","rating":{"average":4.5,"count":2},"visibility":"unlisted","extra":1}"##).unwrap();
+        let s: Summary = serde_json::from_str(r##"{"repo":"github.com/a/b","id":"dev.a.b","name":"B","names":{"zh-CN":"乙"},"description":null,"kind":"app","category":"game","color":"#c8553d","device_icon_url":"https://gizlet.io/assets/x/~device/icon.png","rating":{"average":4.5,"count":2},"visibility":"unlisted","extra":1}"##).unwrap();
         assert_eq!(s.name_for("zh-CN"), "乙");
         assert_eq!(s.rgb(), Some([0xc8, 0x55, 0x3d]));
         assert!(s.is_unlisted());

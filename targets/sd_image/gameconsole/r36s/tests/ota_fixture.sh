@@ -8,15 +8,15 @@ printf 'launcher namespaces="gizlet-launcher" %s\n' "$(cat test-key.pub)" > "$wo
 mount --bind "$work/allowed_signers" "$base/allowed_signers"
 cat > "$work/bin/curl" <<'EOF'
 #!/bin/sh
-exec /usr/bin/curl -q --connect-to dl.gizlet.io:443:127.0.0.1:8444 --noproxy '*' "$@"
+exec /usr/bin/curl -q --connect-to gizlet.io:443:127.0.0.1:8444 --noproxy '*' "$@"
 EOF
 chmod 755 "$work/bin/curl"
 cd "$work"
-openssl req -x509 -newkey ed25519 -nodes -days 1 -subj /CN=dl.gizlet.io \
-    -addext subjectAltName=DNS:dl.gizlet.io -keyout tls.key -out tls.crt
+openssl req -x509 -newkey ed25519 -nodes -days 1 -subj /CN=gizlet.io \
+    -addext subjectAltName=DNS:gizlet.io -keyout tls.key -out tls.crt
 cp ../pack.sh pack.sh
 for version in 2.0.0 2.0.1; do
-    dir=$work/releases/v$version
+    dir=$work/assets/releases/v$version
     mkdir -p "$dir/runtime" "$dir/launcher"
     runtime=$dir/runtime/gizlet-runtime-1.sqfs
     bundle=$dir/launcher/gizlet-launcher-$version.gizlet
@@ -52,9 +52,10 @@ const server = Bun.serve({
   async fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === "/") return new Response("ready");
-    if (path === "/releases/latest/manifest.json") {
+    if (path === "/api/v1/os/releases/latest") {
       const tag = (await Bun.file("latest").text()).trim();
-      return Response.redirect(`https://dl.gizlet.io/releases/${tag}/manifest.json`);
+      const manifest_url = `https://gizlet.io/assets/releases/${tag}/manifest.json`;
+      return Response.json({ tag, manifest_url, signature_url: `${manifest_url}.sig` });
     }
     const fault = (await Bun.file("fault").text()).trim();
     if (fault === "signature" && path.endsWith("manifest.json.sig")) return new Response("invalid");

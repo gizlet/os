@@ -124,7 +124,7 @@ def publish(tag, output, credentials):
         else:
             content_type = "application/octet-stream"
         args = [*command, "put-object", "--bucket", bucket, "--key", key, "--body", str(path),
-                "--content-type", content_type]
+                "--content-type", content_type, "--cache-control", "public, max-age=31536000, immutable"]
         if key == manifest_key:
             args.extend(["--if-none-match", "*"])
         subprocess.run(args, env=environment, stdout=subprocess.DEVNULL, check=True)

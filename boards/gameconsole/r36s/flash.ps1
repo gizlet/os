@@ -360,7 +360,9 @@ function Update-Card([string]$raw, $disk) {
     if (-not ($env:GIZLET_IMAGE -or $env:GIZLET_IMAGE_URL -or $env:GIZLET_RELEASE)) {
         $entryPath = Join-Path ([IO.Path]::GetTempPath()) "gizlet-entry-$([guid]::NewGuid()).ps1"
         try {
-            Invoke-WebRequest -UseBasicParsing -Uri 'https://dl.gizlet.io/releases/latest/flash.ps1' -OutFile $entryPath
+            $latest = Invoke-RestMethod -Uri 'https://gizlet.io/api/v1/os/releases/latest' -MaximumRedirection 0
+            if ($latest.tag -cnotmatch '\Av(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8})){2}\z') { throw 'Invalid Gizlet OS release tag.' }
+            Invoke-WebRequest -UseBasicParsing -Uri "https://gizlet.io/assets/releases/$($latest.tag)/flash.ps1" -MaximumRedirection 0 -OutFile $entryPath
             & ([scriptblock]::Create([IO.File]::ReadAllText($entryPath))) -Board gameconsole.r36s
         } finally {
             Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue

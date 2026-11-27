@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-release=${GIZLET_RELEASE:-https://dl.gizlet.io/releases/@RELEASE_TAG@}
+release=${GIZLET_RELEASE:-https://gizlet.io/assets/releases/@RELEASE_TAG@}
 lang=
 board=
 while [ "$#" -gt 0 ]; do
@@ -40,7 +40,12 @@ command -v jq >/dev/null || fail "$(message 'Install jq to read the release mani
 
 release=${release%/}
 case "$release" in
-    https://*/releases/@RELEASE_TAG@) fail 'Use --release with a published version directory URL.' ;;
+    https://gizlet.io/assets/releases/@RELEASE_TAG@)
+        tag=$(fetch https://gizlet.io/api/v1/os/releases/latest | jq -er '.tag | select(type == "string")') ||
+            fail 'Cannot load the latest Gizlet OS release.'
+        [[ "$tag" =~ ^v(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8})){2}$ ]] || fail 'Invalid Gizlet OS release tag.'
+        release="https://gizlet.io/assets/releases/$tag"
+        ;;
     https://*) ;;
     *) fail 'The release URL must use HTTPS.' ;;
 esac

@@ -412,7 +412,7 @@ def check_apps(console):
 
 STORE_APP = "dev.gizlet.test-store"
 
-# A stand-in for api.gizlet.io and dl.gizlet.io, over HTTPS: the Store's part of the public API.
+# HTTPS fixture for the Store API and download paths.
 # `version` holds the release the API offers; `fault` set to `drop` cuts the next download in half;
 # `renamed` makes another GitHub repository hold the store test's path.
 STORE_SERVER = r"""
@@ -427,7 +427,7 @@ const error = (status, code, message) => json({ error: { code, message } }, stat
 async function pkg(file) {
   const bytes = new Uint8Array(await Bun.file(`${root}/pkg/${file}`).arrayBuffer());
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  return { file, target: TARGET, tier: "lite", entry: "bin/hello.sh", size: bytes.length, sha256, url: `https://dl.gizlet.io/pkg/${file}?sha256=${sha256}` };
+  return { file, target: TARGET, tier: "lite", entry: "bin/hello.sh", size: bytes.length, sha256, url: `https://gizlet.io/assets/pkg/${file}?sha256=${sha256}` };
 }
 const summary = (version) => ({
   repo: REPO, id: "dev.gizlet.test-store", name: "Store Test", names: { "zh-CN": "商店测试" },
@@ -453,8 +453,8 @@ Bun.serve({
     appendFileSync(`${root}/requests.log`, `${req.method} ${host}${path} range=${req.headers.get("range") ?? "-"}\n`);
     const version = await state("version");
     if (path === "/healthz") return new Response("ready");
-    if (host === "dl.gizlet.io" && path.startsWith("/pkg/")) {
-      const file = Bun.file(`${root}${path}`);
+    if (host === "gizlet.io" && path.startsWith("/assets/pkg/")) {
+      const file = Bun.file(`${root}${path.slice("/assets".length)}`);
       if (!(await file.exists())) return new Response("Not found", { status: 404 });
       const range = /^bytes=(\d+)-$/.exec(req.headers.get("range") ?? "");
       if (range) {
@@ -473,26 +473,26 @@ Bun.serve({
       }
       return new Response(file);
     }
-    if (host !== "api.gizlet.io") return new Response("Not found", { status: 404 });
+    if (host !== "gizlet.io") return new Response("Not found", { status: 404 });
     const device = url.searchParams.get("target") === TARGET && url.searchParams.get("tier") === "lite";
     const asked = url.searchParams.get("target");
-    if (path === "/v1/featured") {
+    if (path === "/api/v1/featured") {
       if (!device || url.searchParams.get("kind") !== "app") return error(400, "bad_request", "the Store asks for apps for this device");
       return json({ hero: [summary(version)], sections: [{ id: "new", title: "New", titles: { "zh-CN": "最新" }, layout: "row", gizlets: [summary(version)] }] });
     }
-    if (path === "/v1/gizlets") {
+    if (path === "/api/v1/gizlets") {
       if (!device || url.searchParams.get("kind") !== "app") return error(400, "bad_request", "the Store asks for apps for this device");
       const q = url.searchParams.get("q") ?? "";
       return json({ gizlets: "store test".includes(q.toLowerCase()) ? [summary(version)] : [], next_cursor: null });
     }
-    if (path === "/v1/resolve") {
+    if (path === "/api/v1/resolve") {
       const link = url.searchParams.get("url");
       const github = /github\.com\/([^/]+)\/([^/?#]+)/i.exec(link);
       const named = github ? `github.com/${github[1]}/${github[2]}`.toLowerCase() : null;
       const repo = link === "gizlet.io/storetest" ? REPO : named === REPO || others[named] ? named : null;
       return repo ? json({ repo }) : error(404, "not_found", `${link} leads nowhere`);
     }
-    if (path === `/v1/gizlets/${REPO}`) {
+    if (path === `/api/v1/gizlets/${REPO}`) {
       return json({ ...summary(version), owner: "fixture", device_screenshots: [], controls: [{ button: "a", action: "Jump", actions: {} }], packages: [await pkg(`store-${version}.gzl`)] });
     }
     const install = /^\/v1\/gizlets\/(.+)\/install$/.exec(path);
@@ -503,7 +503,7 @@ Bun.serve({
       if (g?.target && g.target !== asked) return error(404, "no_compatible_package", `${g.name} has no package for ${asked} (lite)`);
       if (g) return json({ repo, repository_id: 5150, id: g.id, name: g.name, kind: g.kind, version: g.version, tag: `v${g.version}`, package: await pkg(g.file) });
     }
-    if (path === "/v1/updates" && req.method === "POST") {
+    if (path === "/api/v1/updates" && req.method === "POST") {
       const body = await req.json();
       const gizlets = [];
       for (const one of body.installed) {
@@ -548,8 +548,8 @@ def check_store(console):
     repository at the old path, concurrent installs, an update whose download is cut and resumed,
     uninstalling, and no network."""
     console.command("mkdir -p /tmp/store/pkg /tmp/store/bin && cd /tmp/store && "
-                    "openssl req -x509 -newkey ed25519 -nodes -days 1 -subj /CN=api.gizlet.io "
-                    "-addext subjectAltName=DNS:api.gizlet.io,DNS:dl.gizlet.io -keyout tls.key -out tls.crt 2>/dev/null")
+                    "openssl req -x509 -newkey ed25519 -nodes -days 1 -subj /CN=gizlet.io "
+                    "-addext subjectAltName=DNS:gizlet.io -keyout tls.key -out tls.crt 2>/dev/null")
     send(console, STORE_SERVER.encode(), "/tmp/store/serve.js")
     send(console, store_app(STORE_APP, "1.0.0"), "/tmp/store/pkg/store-1.0.0.gzl")
     send(console, store_app(STORE_APP, "1.1.0"), "/tmp/store/pkg/store-1.1.0.gzl")
@@ -559,13 +559,13 @@ def check_store(console):
         send(console, store_app("dev.gizlet.test-static", version, pad=16, target="aarch64-unknown-linux-musl"),
              f"/tmp/store/pkg/static-{version}.gzl")
     # curl reaches both hosts on the stand-in, which the test certificate vouches for; the gizlet
-    # command's own requests stay HTTPS to api.gizlet.io and dl.gizlet.io.
-    send(console, b"#!/bin/sh\nexec /usr/bin/curl --connect-to api.gizlet.io:443:127.0.0.1:8445 "
-                  b"--connect-to dl.gizlet.io:443:127.0.0.1:8445 --noproxy '*' \"$@\"\n", "/tmp/store/bin/curl")
+    # command's own requests stay HTTPS to gizlet.io.
+    send(console, b"#!/bin/sh\nexec /usr/bin/curl --connect-to gizlet.io:443:127.0.0.1:8445 "
+                  b"--noproxy '*' \"$@\"\n", "/tmp/store/bin/curl")
     send(console, b"#!/bin/sh\nPATH=/tmp/store/bin:$PATH CURL_CA_BUNDLE=/tmp/store/tls.crt exec gizlet \"$@\"\n", "/tmp/store/gz")
     console.command("chmod 755 /tmp/store/bin/curl /tmp/store/gz && echo 1.0.0 > version && : > fault && "
                     "(bun serve.js </dev/null >/tmp/store/server.log 2>&1 &)")
-    console.enter("timeout 15 sh -c 'until /tmp/store/bin/curl --cacert tls.crt -qfsS https://api.gizlet.io/healthz; do sleep 1; done' "
+    console.enter("timeout 15 sh -c 'until /tmp/store/bin/curl --cacert tls.crt -qfsS https://gizlet.io/healthz; do sleep 1; done' "
                   "&& echo; echo store-https-ready")
     console.expect(b"ready\r\nstore-https-ready\r\n")
     console.expect(PROMPT)
@@ -629,8 +629,8 @@ def check_store(console):
     console.enter("./gz store upgrade")
     console.expect(b"updated dev.gizlet.test-store 1.0.0 -> 1.1.0\r\n")
     console.expect(PROMPT)
-    console.enter("grep -c 'GET dl.gizlet.io/pkg/store-1.1.0.gzl range=-' requests.log; "
-                  "grep -c 'GET dl.gizlet.io/pkg/store-1.1.0.gzl range=bytes=[1-9]' requests.log; "
+    console.enter("grep -c 'GET gizlet.io/assets/pkg/store-1.1.0.gzl range=-' requests.log; "
+                  "grep -c 'GET gizlet.io/assets/pkg/store-1.1.0.gzl range=bytes=[1-9]' requests.log; "
                   "gizlet run dev.gizlet.test-store; ls /data/device/store/downloads | wc -l")
     console.expect(b"\r\n1\r\n1\r\nstore-app 1.1.0\r\n0\r\n")
     console.expect(PROMPT)
@@ -1078,7 +1078,7 @@ def start_ota_fixture(console, pack_release, ota_fixture, tag):
     console.expect(PROMPT)
     console.command(f"cd /tmp/updates/ota && echo {tag} > latest && (bun serve.js </dev/null >/tmp/ota-server.log 2>&1 &)")
     console.command("export CURL_CA_BUNDLE=$PWD/tls.crt PATH=$PWD/bin:$PATH")
-    console.enter("timeout 15 sh -c 'until curl -qfsS https://dl.gizlet.io/; do sleep 1; done' && echo ota-https-ready")
+    console.enter("timeout 15 sh -c 'until curl -qfsS https://gizlet.io/; do sleep 1; done' && echo ota-https-ready")
     console.expect(b"readyota-https-ready")
     console.expect(PROMPT)
 

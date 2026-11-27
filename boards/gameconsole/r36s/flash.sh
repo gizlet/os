@@ -41,10 +41,15 @@ main() {
         esac
     done
     if [ -z "${image}${dry_run}${GIZLET_IMAGE_URL:-}${GIZLET_RELEASE:-}" ]; then
-        local entry
+        local entry tag
         local entry_args=(--board gameconsole.r36s)
-        entry=$(curl -fsSL --proto '=https' --proto-redir '=https' https://dl.gizlet.io/releases/latest/flash.sh) ||
+        command -v jq >/dev/null || { printf '%s\n' 'Install jq to read the release metadata.' >&2; exit 1; }
+        tag=$(curl -fsS --proto '=https' https://gizlet.io/api/v1/os/releases/latest | jq -er '.tag | select(type == "string")') ||
             { printf '%s\n' 'Cannot load the latest Gizlet OS release. / 无法加载最新的 Gizlet OS 版本。' >&2; exit 1; }
+        [[ "$tag" =~ ^v(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8})){2}$ ]] ||
+            { printf '%s\n' 'Invalid Gizlet OS release tag.' >&2; exit 1; }
+        entry=$(curl -fsS --proto '=https' "https://gizlet.io/assets/releases/$tag/flash.sh") ||
+            { printf '%s\n' 'Cannot load the Gizlet OS flash script.' >&2; exit 1; }
         if [ -n "${lang}" ]; then entry_args+=(--lang "${lang}"); fi
         bash -s -- "${entry_args[@]}" -- ${original_args[@]+"${original_args[@]}"} <<< "${entry}"
         return
