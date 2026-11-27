@@ -4,7 +4,13 @@ This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts`, which describes th
 
 ## Writing a card
 
-The writers ask for a language (English or 中文) and the card's disk, then take the panel from the card when it tells (see [Display variants](#display-variants)) and ask otherwise, download the matching `.img.gz` from the latest release, check it against `SHA256SUMS` and write the whole card. They list every external disk, smallest first with the first as the default answer, and flag those over 256 GB, then erase only after three confirmations: the disk's number, `y`, and the disk's name typed out. Everything on the card is lost; keep the stock card as a backup. A card that already has Gizlet OS can instead be updated (`--update`, or `GIZLET_MODE=update` for `flash.ps1`; the writers ask otherwise): only the boot code, U-Boot and partitions 1 and 2 are written, after one confirmation, and the data partition, with installed programs, saves, Wi-Fi networks and settings, is kept, as are `authorized_keys` and an unimported `setup.ini` on the boot partition. The writers refuse an update, writing nothing, unless partitions 1 and 2 match the image's and partition 3 starts where the image's does and holds its data filesystem; the partition table is written last. The next boot selects the newest compatible Launcher and CLI on the data partition, or runs the factory pair from the new base if no compatible release is installed. Gizlet runtime 1 lives on the data partition and is not updated. They also extend the data partition to the end of the card and grow its ext4 filesystem to fill it, offline, without e2fsprogs on the computer: they write the new superblocks, group descriptors and the last group's block bitmap, a few dozen 4 KiB blocks on a 32 GB card, and the card boots with all its space at once. A card written with another tool keeps the image's 128 MiB data partition until its first boot, which extends the partition and grows the filesystem before mounting it, and so takes longer. [macOS and Linux](flash.sh) · [Windows](flash.ps1)
+Each release publishes one R36S image, `gizlet-os-r36s.img.gz`. The writers ask for a language (English or 中文) and the target disk, then download the image and verify it against `SHA256SUMS` before writing. They read the display configuration from the card when possible and prompt when needed. The writer uses that setting to configure the boot partition. [Display variants](#display-variants) · [macOS and Linux writer](flash.sh) · [Windows writer](flash.ps1)
+
+The writers list external disks from smallest to largest, offer the smallest as the default, and flag disks over 256 GB. A full write erases all data after you select the disk, answer `y`, and type its name. Keep the stock card as a backup.
+
+A card with Gizlet OS can be updated using `--update` or `GIZLET_MODE=update` on Windows. After confirmation, the writer replaces the boot code, U-Boot and partitions 1 and 2 while keeping partition 3 with installed programs, saves, Wi-Fi networks and settings. It also keeps `authorized_keys` and an unimported `setup.ini` on the boot partition. The writer checks that partitions 1 and 2 match the image and that partition 3 starts at the expected sector and holds the data filesystem before writing. It writes the partition table last. On the next boot, the system selects the newest compatible Launcher and CLI on the data partition, or uses the factory pair. Gizlet runtime 1 stays on the data partition.
+
+The writers can extend the data partition and grow its ext4 filesystem to fill the card offline. A card written with another tool starts with the image's 128 MiB data partition and grows it on first boot.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.sh | bash
@@ -16,7 +22,16 @@ In PowerShell opened as Administrator:
 irm https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.ps1 | iex
 ```
 
-`flash.sh --image FILE` writes a local `.img` or `.img.gz`, such as one from `bazel build --config=r36s //targets/sd_image/gameconsole/r36s:release`; `GIZLET_IMAGE` does the same for `flash.ps1`.
+## Local images and display validation
+
+Build the standard `:gizlet-os-r36s` target to produce `gizlet-os-r36s.img`. Run this board's `flash.sh --image FILE` to write a local `.img` or `.img.gz`, or set `GIZLET_IMAGE` for `flash.ps1`. The local image path uses the boot configuration already in the image. To use a different display configuration, set `mipi-panel.dtbo` on the boot partition as described in [Display variants](#display-variants).
+
+For bench testing a card with the overlay already selected, Bazel provides an optional preconfigured image and its card test.
+
+```sh
+bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-v30-panel4
+bazel test --config=r36s --test_output=errors //targets/sd_image/gameconsole/r36s:image_test_r36s_v30_panel4
+```
 
 ## Display variants
 
