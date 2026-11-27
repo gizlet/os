@@ -594,12 +594,11 @@ def check_store(console):
     # A release with only a static musl build installs and updates: the device runs it, and the
     # Store asks for it when nothing is built for the device's own target.
     console.enter("./gz store install github.com/fixture/static && ./gz store updates")
-    console.expect(b"installed dev.gizlet.test-static 1.0.0 (Store Test) from github.com/fixture/static\r\n")
-    console.expect(b"\r\ndev.gizlet.test-static\t1.0.0 -> 1.0.1\tStatic\r\n")
+    console.expect(b"installed dev.gizlet.test-static 1.0.0 (Store Test) from github.com/fixture/static\r\n"
+                   b"dev.gizlet.test-static\t1.0.0 -> 1.0.1\tStatic\r\n")
     console.expect(PROMPT)
     console.enter("./gz store upgrade dev.gizlet.test-static && gizlet run dev.gizlet.test-static && gizlet uninstall dev.gizlet.test-static --saves")
-    console.expect(b"updated dev.gizlet.test-static 1.0.0 -> 1.0.1\r\n")
-    console.expect(b"\r\nstore-app 1.0.1\r\n")
+    console.expect(b"updated dev.gizlet.test-static 1.0.0 -> 1.0.1\r\nstore-app 1.0.1\r\n")
     console.expect(PROMPT)
     # Two installs at once take turns; neither removes the other's download.
     console.enter("(./gz store install storetest >one.log 2>&1 &) ; ./gz store install github.com/fixture/store-test >two.log 2>&1; "
