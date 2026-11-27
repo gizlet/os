@@ -1078,9 +1078,11 @@ def start_ota_fixture(console, pack_release, ota_fixture, tag):
     console.expect(PROMPT)
     console.command(f"cd /tmp/updates/ota && echo {tag} > latest && (bun serve.js </dev/null >/tmp/ota-server.log 2>&1 &)")
     console.command("export CURL_CA_BUNDLE=$PWD/tls.crt PATH=$PWD/bin:$PATH")
-    console.enter("timeout 15 sh -c 'until curl -qfsS https://gizlet.io/; do sleep 1; done' && echo ota-https-ready")
-    console.expect(b"readyota-https-ready")
-    console.expect(PROMPT)
+    console.enter("timeout 75 sh -c 'until curl -qfsS --max-time 5 -o /dev/null "
+                  "https://gizlet.io/api/v1/os/releases/latest; do sleep 1; done' "
+                  "&& echo ota-https-ready || cat /tmp/ota-server.log")
+    output = console.expect(PROMPT)
+    assert b"\r\nota-https-ready\r\n" in output, output.decode(errors="replace")
 
 
 def stage_ota_updates(console, pack_release, ota_fixture):
