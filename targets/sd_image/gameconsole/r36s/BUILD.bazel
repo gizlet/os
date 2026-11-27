@@ -1,4 +1,4 @@
-load("//boards/gameconsole/r36s:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_PANELS", "R36S_UBOOT_DTB_NAMES")
+load("//boards/gameconsole/r36s:card.bzl", "R36S_CARD", "R36S_DATA_UUID", "R36S_UBOOT_DTB_NAMES")
 load("//devops/bazel/debian:defs.bzl", "debian_base")
 load("//devops/bazel/rockchip:defs.bzl", "rockchip_sd_image")
 load("//rootfs:rootfs.bzl", "ROOTFS_DEBS", "ROOTFS_DIRECTORIES", "ROOTFS_DISABLE", "ROOTFS_ENABLE", "ROOTFS_EXECUTABLES", "ROOTFS_FILES", "ROOTFS_LICENSES", "ROOTFS_MASK", "ROOTFS_SUITE", "ROOTFS_SYMLINKS")
@@ -71,13 +71,8 @@ _CARD_FILES = {
 } | {
     ":parts/" + dtb_name: dtb_name
     for dtb_name in R36S_UBOOT_DTB_NAMES
-} | {
-    _BOARD + "%s.dtbo" % panel: "%s.dtbo" % panel
-    for panel in R36S_PANELS
 }
 
-# The R36S card. Its panel overlays sit beside the device tree; boot.scr
-# applies the one copied to mipi-panel.dtbo.
 rockchip_sd_image(
     name = "gizlet-os-r36s",
     out = "gizlet-os-r36s.img",
@@ -87,40 +82,6 @@ rockchip_sd_image(
     source_date_epoch = _EPOCH,
     target_compatible_with = _R36S,
 )
-
-# The card's former name. CI checks run main's .github/workflows/build.yml,
-# which builds this label until this name change reaches main.
-alias(
-    name = "gizlet-os-r36s-panel0",
-    actual = ":gizlet-os-r36s",
-)
-
-# The same card with a panel overlay already selected, for flashing a known unit.
-[genrule(
-    name = "sdcard_" + panel,
-    srcs = [_BOARD + "sdcard.cfg"],
-    outs = ["%s/sdcard.cfg" % panel],
-    cmd = "sed 's/\"r36s.dtb\",/\"r36s.dtb\", \"mipi-panel.dtbo\",/' $< > $@ && grep -q mipi-panel.dtbo $@",
-    target_compatible_with = _R36S,
-) for panel in R36S_PANELS]
-
-[rockchip_sd_image(
-    name = "gizlet-os-" + panel,
-    out = "gizlet-os-%s.img" % panel,
-    inputs = _CARD_FILES | {":%s/mipi-panel.dtbo" % panel: "mipi-panel.dtbo"},
-    layout = ":%s/sdcard.cfg" % panel,
-    layout_image = "sdcard.img",
-    source_date_epoch = _EPOCH,
-    target_compatible_with = _R36S,
-) for panel in R36S_PANELS]
-
-[genrule(
-    name = "mipi_panel_" + panel,
-    srcs = [_BOARD + "%s.dtbo" % panel],
-    outs = ["%s/mipi-panel.dtbo" % panel],
-    cmd = "cp $< $@",
-    target_compatible_with = _R36S,
-) for panel in R36S_PANELS]
 
 rockchip_card_test(
     name = "image_test",
@@ -132,17 +93,6 @@ rockchip_card_test(
     target_compatible_with = _R36S,
     trust_checksum = _BOARD + "boot/trust.sha256",
 )
-
-[rockchip_card_test(
-    name = "image_test_" + panel.replace("-", "_"),
-    bl31 = _BOARD + "bl31",
-    boot_command = _BOARD + "boot/boot.cmd",
-    card = card,
-    image = ":gizlet-os-" + panel,
-    tags = ["manual"],
-    target_compatible_with = _R36S,
-    trust_checksum = _BOARD + "boot/trust.sha256",
-) for panel, card in R36S_PANELS.items()]
 
 gizlet_rootfs_test(
     name = "rootfs_test",
@@ -184,22 +134,18 @@ gizlet_qemu_test(
     target_compatible_with = _R36S,
 )
 
-# Release downloads for boards/gameconsole/r36s/flash.sh and flash.ps1: the
-# compressed cards and their SHA256SUMS.
-_RELEASE_IMAGES = ["gizlet-os-r36s"] + ["gizlet-os-" + panel for panel in R36S_PANELS]
-
-[genrule(
-    name = image + "_gz",
-    srcs = [":" + image],
-    outs = ["release/%s.img.gz" % image],
+genrule(
+    name = "gizlet-os-r36s_gz",
+    srcs = [":gizlet-os-r36s"],
+    outs = ["release/gizlet-os-r36s.img.gz"],
     cmd = "gzip -9 -n -c $< > $@",
     target_compatible_with = _R36S,
-) for image in _RELEASE_IMAGES]
+)
 
 genrule(
     name = "release",
-    srcs = [":%s_gz" % image for image in _RELEASE_IMAGES],
+    srcs = [":gizlet-os-r36s_gz"],
     outs = ["release/SHA256SUMS"],
-    cmd = "for f in $(SRCS); do (cd $$(dirname $$f) && shasum -a 256 $$(basename $$f)); done > $@",
+    cmd = "(cd $$(dirname $<) && shasum -a 256 $$(basename $<)) > $@",
     target_compatible_with = _R36S,
 )

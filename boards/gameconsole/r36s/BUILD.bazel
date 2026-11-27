@@ -124,10 +124,8 @@ rockchip_linux_kernel(
     dts_dirs = {":rocknix_dts": "rockchip"},
     dts_files = {
         "kernel/gizlet-r36s.dts": "rockchip/gizlet-r36s.dts",
-        "kernel/panels/r36s-v30-panel4.dtso": "rockchip/r36s-v30-panel4.dtso",
+        "kernel/panels/r36s-v30-panel4.dtsi": "rockchip/r36s-v30-panel4.dtsi",
     },
-    extra_dtb_targets = ["rockchip/r36s-v30-panel4.dtbo"],
-    extra_dtbs = ["r36s-v30-panel4.dtbo"],
     image = "Image",
     # ROCKNIX applies this set with plain `patch -p1`, whose default fuzz is 2.
     patch_fuzz = 2,
@@ -159,7 +157,7 @@ rockchip_legacy_uboot(
         "boot/rk3326_trust.patch",
     ],
     script = "boot.scr",
-    script_name = "Gizlet R36S Panel 0",
+    script_name = "Gizlet R36S",
     source_date_epoch = _EPOCH,
     target_compatible_with = [":r36s"],
     trust = "trust.img",

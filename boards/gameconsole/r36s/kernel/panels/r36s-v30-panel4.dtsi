@@ -11,13 +11,8 @@
  * registers DA, DB and DC), which the driver logs in order as read[N] lines
  * in dmesg, or "failed to read" when the panel does not answer; either way
  * initialization goes on. These reads are the evidence for telling panels
- * apart at boot instead of by the card's overlay.
- *
- * boot.scr applies mipi-panel.dtbo from the FAT boot partition when present.
- * Copy this overlay there under that name for a V30 Panel 4 unit.
+ * apart at boot.
  */
-/dts-v1/;
-/plugin/;
 
 &internal_display {
 	compatible = "rocknix,generic-dsi";

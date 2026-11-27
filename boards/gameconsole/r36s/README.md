@@ -1,10 +1,10 @@
 # Game Console R36S
 
-This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts`, which describes the R36S with Panel 0, an ST7703. [Board tree](kernel/gizlet-r36s.dts) [Board and display reference](https://github.com/southoz/dArkOSRE-R36/tree/3f372c85aa53a26b265c3dc0c2661ec0fae5faf0/files/BOOT/dtb/r36s/R36S-V12%202023-08-18%20Panel%200)
+This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts` and uses the V30 NV3051D (Panel 4) display configuration. [Board tree](kernel/gizlet-r36s.dts)
 
 ## Writing a card
 
-Each release publishes one R36S image, `gizlet-os-r36s.img.gz`. The writers ask for a language (English or 中文) and the target disk, then download the image and verify it against `SHA256SUMS` before writing. They read the display configuration from the card when possible and prompt when needed. The writer uses that setting to configure the boot partition. [Display variants](#display-variants) · [macOS and Linux writer](flash.sh) · [Windows writer](flash.ps1)
+Each release publishes one R36S image, `gizlet-os-r36s.img.gz`. The writers ask for a language (English or 中文) and the target disk, then download the image and verify it against `SHA256SUMS` before writing. The image contains the display configuration and works on a blank card. [Display support](#display-support) · [macOS and Linux writer](flash.sh) · [Windows writer](flash.ps1)
 
 The writers list external disks from smallest to largest, offer the smallest as the default, and flag disks over 256 GB. A full write erases all data after you select the disk, answer `y`, and type its name. Keep the stock card as a backup.
 
@@ -24,22 +24,13 @@ irm https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/fla
 
 ## Local images and display validation
 
-Build the standard `:gizlet-os-r36s` target to produce `gizlet-os-r36s.img`. Run this board's `flash.sh --image FILE` to write a local `.img` or `.img.gz`, or set `GIZLET_IMAGE` for `flash.ps1`. The local image path uses the boot configuration already in the image. To use a different display configuration, set `mipi-panel.dtbo` on the boot partition as described in [Display variants](#display-variants).
+Build `:gizlet-os-r36s` to produce `gizlet-os-r36s.img`. Run this board's `flash.sh --image FILE` to write a local `.img` or `.img.gz`, or set `GIZLET_IMAGE` for `flash.ps1`. To validate the display, write the standard image to a blank TF1 card and cold boot to the Launcher.
 
-For bench testing a card with the overlay already selected, Bazel provides an optional preconfigured image and its card test.
+## Display support
 
-```sh
-bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-v30-panel4
-bazel test --config=r36s --test_output=errors //targets/sd_image/gameconsole/r36s:image_test_r36s_v30_panel4
-```
+The current image supports the V30 NV3051D (Panel 4) configuration. The R36S tree includes the [panel profile](kernel/panels/r36s-v30-panel4.dtsi), which supplies timings and initialization commands to the built-in ROCKNIX generic DSI driver.
 
-## Display variants
-
-R36S units ship with different LCD panels. The stock firmware numbers them; the two Gizlet OS supports have different controllers. Panel 0, on early V12 boards, is a Sitronix ST7703, and Panel 4, on later V12 boards and on V21, V22 and V30 boards, is a NewVision NV3051D. As in ROCKNIX, the device tree describes Panel 0 and `boot.scr` applies `mipi-panel.dtbo` from the FAT boot partition when it is present. Each card carries the known panel overlays beside the tree; copy the one for your unit to `mipi-panel.dtbo`, or flash a card that already has it. `r36s-v30-panel4.dtbo` drives Panel 4 through ROCKNIX's generic DSI driver, with the init sequence converted from the stock V30 dtb; the V21 and V22 dtbs tune the same controller differently, as the Y02 dtb tunes an ST7703, and are untested. A wrong panel boots with the backlight on and a blank screen. `uboot.log` records which overlay was applied.
-
-The writers tell the panel from the card being written. A stock card's `boot.ini` loads the kernel dtb that describes the unit, and the first command of its panel's init sequence names the controller: ST7703's `B9 F1 12 83` or NV3051D's page select `FF 30`, `FF 52`, `FF 01`. That answer is taken without a question. The R36S Plus's ST7703 sequence starts otherwise and is not matched. A Gizlet OS card offers the panel it was written for as the default, since it may be the wrong one being corrected. Any other card, or a card that cannot be read, leaves the choice to the user, and `--panel` (`GIZLET_PANEL` for `flash.ps1`) skips it.
-
-The Panel 4 overlay first asks the panel for its identification, DCS `04` and the ID registers `DA`, `DB` and `DC`, and the driver logs the answers in order as `read[N]` lines in dmesg, and so in `gizlet.log`. Initialization goes on whether or not the panel answers. Those reads decide whether a later kernel can tell the panels apart at boot. [V30 Panel 4](kernel/panels/r36s-v30-panel4.dtso)
+The driver reads DCS `04`, `DA`, `DB`, and `DC` before initialization and reports the results in `gizlet.log`. These values provide diagnostics. Boot currently uses the single built-in profile. Additional panels need their own profiles and a verified way to select them at boot.
 
 The legacy U-Boot picks a dtb name from a board-revision ADC reading before it runs `boot.scr`. Each card therefore carries its tree as `r36s.dtb` and under every name U-Boot can choose. [Card facts](card.bzl)
 
