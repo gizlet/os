@@ -5,6 +5,7 @@
 use crate::apps::{self, Kind, Library};
 use crate::services::{self, Service};
 use crate::settings::{self, Settings};
+use crate::store::{self, Store};
 use std::path::Path;
 
 const USAGE: &str = "\
@@ -18,6 +19,14 @@ usage: gizlet <command>
                          for 1 s or Select+Start for 2 s ends it
   start ID               hand the screen from the launcher to an app
   target                 print this device's target triple and tier
+
+  store search [WORDS]   search the Gizlet Store for apps this device runs
+  store info LINK        show an app's page: a short link such as
+                         gizlet.io/rocket, or a GitHub repository
+  store install LINK     install an app or a service from its short link
+                         or GitHub repository
+  store updates          list updates for what the Store installed
+  store upgrade [ID...]  install those updates, all of them without IDs
 
   service list           list installed services: ID, version, state,
                          whether it starts at boot, and name
@@ -69,6 +78,7 @@ pub fn main(args: &[String]) -> i32 {
             Ok(())
         }
         ("service" | "services", rest) => service(&library, rest),
+        ("store", rest) => store_command(&library, rest),
         ("install" | "uninstall" | "remove" | "list" | "run" | "start" | "target", _) => {
             Err(format!("wrong arguments for {command}\n{USAGE}"))
         }
@@ -90,7 +100,8 @@ fn install(library: &Library, file: &Path) -> Result<(), String> {
     if file.extension().is_none_or(|e| e != "gzl") {
         return Err(format!("{} is not a .gzl package", file.display()));
     }
-    let app = library.install(file)?;
+    // A file replaces what the Store installed; the Store no longer updates it.
+    let app = Store::new(library).install_file(library, file).map_err(|e| e.to_string())?;
     let m = &app.manifest;
     if m.kind() == Kind::Service {
         let service = library.service(&m.id)?;
@@ -103,7 +114,8 @@ fn install(library: &Library, file: &Path) -> Result<(), String> {
 }
 
 fn uninstall(library: &Library, id: &str, saves: bool) -> Result<(), String> {
-    if library.remove(id, saves)? == Kind::Service {
+    let kind = Store::new(library).uninstall(library, id, saves).map_err(|e| e.to_string())?;
+    if kind == Kind::Service {
         println!("removed the service {id}: stopped, unregistered, and deleted with its state");
     } else if saves {
         println!("removed {id} and its saves");
@@ -117,6 +129,115 @@ fn list(library: &Library) {
     for app in library.scan() {
         let m = &app.manifest;
         println!("{}\t{}\t{}", m.id, m.version, m.name);
+    }
+}
+
+/// `gizlet store ...`: the Gizlet Store, without signing in.
+fn store_command(library: &Library, args: &[String]) -> Result<(), String> {
+    let store = Store::new(library);
+    let lang = Settings::load(&settings::data_dir().join("settings.ini")).language.app_code();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let fail = |e: store::Error| e.to_string();
+    match args.as_slice() {
+        ["search", words @ ..] => {
+            let found = store.search(&words.join(" ")).map_err(fail)?;
+            if found.is_empty() {
+                println!("no apps found");
+            }
+            for g in found {
+                println!("{}\t{}\t{}", g.repo, g.version.as_deref().unwrap_or("-"), g.name_for(lang));
+            }
+            Ok(())
+        }
+        ["info", link] => {
+            let detail = store.detail(&store.resolve(link).map_err(fail)?).map_err(fail)?;
+            let g = &detail.summary;
+            println!("{} {} ({})", g.name_for(lang), g.version.as_deref().unwrap_or("-"), g.id);
+            println!("repository: {}", g.repo);
+            if g.is_unlisted() {
+                println!("unlisted: not reviewed for the Store's lists");
+            }
+            if let Some(d) = g.description_for(lang) {
+                println!("{d}");
+            }
+            if g.is_service() {
+                println!("a background service: it runs as root, starts now and at boot");
+            }
+            if let Some(p) = detail.package_here() {
+                println!("package: {} ({} bytes)", p.file, p.size.unwrap_or(0));
+            } else {
+                println!("no package for {} ({})", apps::device_target(), apps::device_tier());
+            }
+            if let Some(origin) = store.origin(&g.id) {
+                println!("installed: {} from {}", origin.version, origin.repo);
+            }
+            Ok(())
+        }
+        ["install", link] => {
+            let repo = store.resolve(link).map_err(fail)?;
+            let app = store.install(library, &repo, &mut progress()).map_err(fail)?;
+            eprintln!();
+            let m = &app.manifest;
+            if m.kind() == Kind::Service {
+                let state = library.service(&m.id).map(|s| s.state.word().to_string()).unwrap_or_else(|_| "installed".into());
+                println!("installed the service {} {} ({}) from {repo}: {state}", m.id, m.version, m.name_for(lang));
+            } else {
+                println!("installed {} {} ({}) from {repo}", m.id, m.version, m.name_for(lang));
+            }
+            Ok(())
+        }
+        ["updates"] => {
+            let all = store.updates(library).map_err(fail)?;
+            for u in &all {
+                match u.status.as_str() {
+                    "unverified" => eprintln!("{}: installed without GitHub's id for {}; install it again to update it", u.id, u.repo),
+                    "repository_changed" => eprintln!("{}: {} is now another repository; it is not updated from there", u.id, u.repo),
+                    _ => {}
+                }
+            }
+            let updates: Vec<_> = all.into_iter().filter(|u| u.has_update()).collect();
+            if updates.is_empty() {
+                println!("everything from the Store is up to date");
+            }
+            for u in updates {
+                println!("{}\t{} -> {}\t{}", u.id, u.installed, u.version.as_deref().unwrap_or("-"), u.name_for(lang));
+            }
+            Ok(())
+        }
+        ["upgrade", ids @ ..] => {
+            let updates = store.updates(library).map_err(fail)?;
+            for id in ids {
+                if !updates.iter().any(|u| u.id == *id && u.has_update()) {
+                    return Err(format!("{id} has no update from the Store"));
+                }
+            }
+            let chosen: Vec<_> = updates.iter().filter(|u| u.has_update() && (ids.is_empty() || ids.contains(&u.id.as_str()))).collect();
+            if chosen.is_empty() {
+                println!("everything from the Store is up to date");
+            }
+            for u in chosen {
+                let app = store.upgrade(library, u, &mut progress()).map_err(fail)?;
+                eprintln!();
+                println!("updated {} {} -> {}", app.manifest.id, u.installed, app.manifest.version);
+            }
+            Ok(())
+        }
+        _ => Err(format!("wrong arguments for store\n{USAGE}")),
+    }
+}
+
+/// Prints download progress on one line of standard error.
+fn progress() -> impl FnMut(store::Progress) {
+    let mut last = None;
+    move |p| {
+        let line = match p {
+            store::Progress::Downloading(done, total) => format!("downloading {}%", done * 100 / total.max(1)),
+            store::Progress::Installing => "installing".into(),
+        };
+        if last.as_ref() != Some(&line) {
+            eprint!("\r{line:<20}");
+            last = Some(line);
+        }
     }
 }
 

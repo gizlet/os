@@ -80,6 +80,11 @@ On Gizlet OS, `/usr/bin/gizlet` runs the CLI from the Launcher release selected 
 | `gizlet run ID [ARGS]` | Runs it here and waits; the screen must be free, as in the recovery shell |
 | `gizlet start ID` | Asks the launcher on the screen to quit and run it, then come back |
 | `gizlet target` | Prints the target triple and tier packages must match |
+| `gizlet store search [WORDS]` | Searches the Gizlet Store for listed apps this device runs |
+| `gizlet store info LINK` | Shows an app's page from a short link (`rocket`, `gizlet.io/rocket`) or a GitHub repository, listed or not |
+| `gizlet store install LINK` | Installs an app or a service from its short link or GitHub repository, listed or not |
+| `gizlet store updates` | Lists updates for the apps and services installed from the Store |
+| `gizlet store upgrade [ID...]` | Installs those updates, all of them without IDs |
 | `gizlet service list` | Lists installed services: ID, version, state, `enabled` or `disabled` at boot, and name |
 | `gizlet service status ID` | Shows a service's state and process, whether it starts at boot, its unit and its folders |
 | `gizlet service start\|stop\|restart ID` | Starts or stops a service now; stopping ends every process it started |
@@ -88,6 +93,12 @@ On Gizlet OS, `/usr/bin/gizlet` runs the CLI from the Launcher release selected 
 | `gizlet system reload-runtime FILE.sqfs` | Activates a local runtime 1 image for new launches on Gizlet OS as root |
 
 See [Activating a new build](../runtime/README.md#activating-a-new-build) for runtime updates.
+
+## Store
+
+The Store installs from [gizlet.io](https://gizlet.io) without an account, through its public API, with `curl` like system updates. Its lists and search show apps. Installing by a short link id (`rocket`, `gizlet.io/rocket`) or a GitHub repository is a way of installing of its own: it installs an app or a service, whichever the link leads to, listed or not. A package downloads into `/opt/gizlet/store/downloads`, resumes after a dropped connection, must match the size and SHA-256 the API named, and installs like `gizlet install`. Updates are only ever installed when asked for. [Store](src/store.rs)
+
+Each app or service installed from the Store is recorded in `/opt/gizlet/store/origins.json` with its repository and GitHub's id for it. Only that repository, with the same ID and kind, updates it, and a package is checked against both before anything installed is replaced: another repository declaring the same ID, or a new repository at a renamed one's path, never replaces it or reaches its saves. Installing a file with `gizlet install` or uninstalling forgets the record. Store installs, updates and removals take `/opt/gizlet/store/.lock`, so two commands at once take turns. Store art is cached as PNGs in `/opt/gizlet/store/cache`, the least recently used first out beyond 32 MiB. `GIZLET_STORE_API` points the Store at another API.
 
 ## Services
 

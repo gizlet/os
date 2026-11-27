@@ -76,12 +76,22 @@ pub fn device_target() -> String {
 }
 
 /// `lite` on handhelds, or `GIZLET_TIER`: `lite` packages run on `lite` and `full`, `full` only on `full`.
+/// Targets this device runs, its own first: on Linux, also static musl programs of its CPU.
+pub fn device_targets() -> Vec<String> {
+    let device = device_target();
+    let mut targets = vec![device.clone()];
+    if device.contains("-linux-") && !device.ends_with("-musl") {
+        targets.push(format!("{}-unknown-linux-musl", device.split('-').next().unwrap_or("")));
+    }
+    targets
+}
+
 pub fn device_tier() -> String {
     std::env::var("GIZLET_TIER").unwrap_or_else(|_| "lite".into())
 }
 
 /// Linux runs packages for its C library or static musl ones of the same CPU.
-fn runs_here(target: &str, device: &str) -> bool {
+pub fn runs_here(target: &str, device: &str) -> bool {
     if target == device {
         return true;
     }
@@ -193,6 +203,14 @@ impl Manifest {
 }
 
 /// Why a manifest's package cannot run as an app.
+/// `an app` or `a service`.
+pub fn kind_word(kind: Kind) -> &'static str {
+    match kind {
+        Kind::App => "an app",
+        Kind::Service => "a service",
+    }
+}
+
 pub fn not_an_app(manifest: &Manifest) -> String {
     format!("{0} is a service, not an app; start it with `gizlet service start {0}`", manifest.id)
 }
@@ -369,11 +387,22 @@ impl Library {
     /// Installs or updates the app or service in `package`, a `.gzl`. The
     /// previous version stays in place until the new one is complete and checked.
     pub fn install(&self, package: &Path) -> Result<App, String> {
+        self.install_checked(package, None)
+    }
+
+    /// Installs or updates `id`, an app or a service as `kind` says, from
+    /// `package`, and nothing else: a package that holds another ID or kind is
+    /// refused once unpacked, before anything installed is replaced or started.
+    pub fn install_as(&self, package: &Path, id: &str, kind: Kind) -> Result<App, String> {
+        self.install_checked(package, Some((id, kind)))
+    }
+
+    fn install_checked(&self, package: &Path, expected: Option<(&str, Kind)>) -> Result<App, String> {
         let _lock = self.lock_waiting()?;
         self.recover();
         let staging = self.apps_dir().join(format!(".install-{}", std::process::id()));
         let _ = fs::remove_dir_all(&staging);
-        let result = self.install_staged(package, &staging);
+        let result = self.install_staged(package, &staging, expected);
         if result.is_err() {
             let _ = fs::remove_dir_all(&staging);
         }
@@ -499,8 +528,16 @@ impl Library {
         }
     }
 
-    fn install_staged(&self, package: &Path, staging: &Path) -> Result<App, String> {
+    fn install_staged(&self, package: &Path, staging: &Path, expected: Option<(&str, Kind)>) -> Result<App, String> {
         let manifest = unpack(package, staging)?;
+        if let Some((id, kind)) = expected {
+            if manifest.id != id {
+                return Err(format!("the package holds {}, not {id}", manifest.id));
+            }
+            if manifest.kind() != kind {
+                return Err(format!("{id} is packaged as {}, not {}", kind_word(manifest.kind()), kind_word(kind)));
+            }
+        }
         let (device, tier) = (device_target(), device_tier());
         if !runs_here(&manifest.target, &device) {
             return Err(format!("{} is built for {}; this device runs {device}", manifest.id, manifest.target));
@@ -769,6 +806,38 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The ID in `package`'s manifest, read without unpacking it; installing
+/// checks the package in full.
+pub fn package_id(package: &Path) -> Result<String, String> {
+    let what = package.display();
+    let mut file = File::open(package).map_err(|e| format!("{what}: {e}"))?;
+    let list = entries(&mut file).map_err(|e| format!("{what} {e}"))?;
+    let e = list.iter().find(|e| e.name == MANIFEST && !e.dir).ok_or_else(|| format!("{what} has no {MANIFEST}"))?;
+    if e.size > MAX_MANIFEST_BYTES {
+        return Err(format!("{what} has a {MANIFEST} larger than 64 KiB"));
+    }
+    let damaged = || format!("{what} has a damaged entry for {MANIFEST}");
+    let mut local = [0u8; 30];
+    file.seek(SeekFrom::Start(e.local_offset)).map_err(|err| err.to_string())?;
+    file.read_exact(&mut local).map_err(|_| damaged())?;
+    if u32_at(&local, 0) != 0x0403_4b50 {
+        return Err(damaged());
+    }
+    let skip = u16_at(&local, 26) as i64 + u16_at(&local, 28) as i64;
+    file.seek(SeekFrom::Current(skip)).map_err(|err| err.to_string())?;
+    let data = (&mut file).take(e.compressed);
+    let mut text = Vec::new();
+    let read = if e.method == 8 {
+        flate2::read::DeflateDecoder::new(data).take(e.size + 1).read_to_end(&mut text)
+    } else {
+        data.take(e.size + 1).read_to_end(&mut text)
+    };
+    if read.is_err() || text.len() as u64 != e.size {
+        return Err(damaged());
+    }
+    Ok(Manifest::parse(&String::from_utf8_lossy(&text))?.id)
+}
+
 /// Extracts `package` into the new folder `dest`, checks every file against
 /// `CHECKSUMS` and returns its manifest.
 pub fn unpack(package: &Path, dest: &Path) -> Result<Manifest, String> {
@@ -1025,6 +1094,34 @@ pub(crate) mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn reads_a_package_id_without_unpacking() {
+        let dir = temp("package-id");
+        let pkg = package(&dir, &manifest("dev.example.peek", &device_target()), &[]);
+        assert_eq!(package_id(&pkg).unwrap(), "dev.example.peek");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_as_refuses_another_id_or_kind_before_replacing() {
+        let dir = temp("expected");
+        let lib = Library::new(dir.join("prefix"));
+        for d in ["mine", "other"] {
+            fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        let mine = package(&dir.join("mine"), &manifest("dev.example.mine", &device_target()), &[]);
+        lib.install(&mine).unwrap();
+        let other = package(&dir.join("other"), &manifest("dev.example.other", &device_target()), &[]);
+        let err = lib.install_as(&other, "dev.example.mine", Kind::App).unwrap_err();
+        assert!(err.contains("holds dev.example.other"), "{err}");
+        assert!(!lib.apps_dir().join("dev.example.other").exists());
+        let err = lib.install_as(&mine, "dev.example.mine", Kind::Service).unwrap_err();
+        assert!(err.contains("packaged as an app, not a service"), "{err}");
+        assert_eq!(lib.scan().iter().map(|a| a.id().to_string()).collect::<Vec<_>>(), ["dev.example.mine"]);
+        lib.install_as(&mine, "dev.example.mine", Kind::App).unwrap();
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

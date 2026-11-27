@@ -410,6 +410,248 @@ def check_apps(console):
     print("gizlet installs, lists, runs and removes schema 1 and 2 .gzl apps, and refuses one that fails its checksums")
 
 
+STORE_APP = "dev.gizlet.test-store"
+
+# A stand-in for api.gizlet.io and dl.gizlet.io, over HTTPS: the Store's part of the public API.
+# `version` holds the release the API offers; `fault` set to `drop` cuts the next download in half;
+# `renamed` makes another GitHub repository hold the store test's path.
+STORE_SERVER = r"""
+import { appendFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+const root = "/tmp/store";
+const REPO = "github.com/fixture/store-test";
+const TARGET = "aarch64-unknown-linux-gnu";
+const state = async (name) => (await Bun.file(`${root}/${name}`).text().catch(() => "")).trim();
+const json = (body, status = 200) => Response.json(body, { status });
+const error = (status, code, message) => json({ error: { code, message } }, status);
+async function pkg(file) {
+  const bytes = new Uint8Array(await Bun.file(`${root}/pkg/${file}`).arrayBuffer());
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  return { file, target: TARGET, tier: "lite", entry: "bin/hello.sh", size: bytes.length, sha256, url: `https://dl.gizlet.io/pkg/${file}?sha256=${sha256}` };
+}
+const summary = (version) => ({
+  repo: REPO, id: "dev.gizlet.test-store", name: "Store Test", names: { "zh-CN": "商店测试" },
+  description: "An app the Store installs.", kind: "app", category: "game", color: "#7b4dff",
+  device_icon_url: null, device_cover_url: null, version, visibility: "listed", rating: { average: 4.5, count: 2 },
+});
+const others = {
+  "github.com/fixture/clock": { id: "dev.gizlet.test-clock", name: "Clock", kind: "service", version: "1.0.0", file: "clock-1.0.0.gzl" },
+  "github.com/fixture/impostor": { id: "dev.gizlet.test-store", name: "Impostor", kind: "app", version: "2.0.0", file: "impostor-2.0.0.gzl" },
+  // Only a static musl build, which the device runs; the API matches targets exactly.
+  "github.com/fixture/static": { id: "dev.gizlet.test-static", name: "Static", kind: "app", version: "1.0.0", file: "static-1.0.0.gzl", target: "aarch64-unknown-linux-musl" },
+};
+const MUSL = "aarch64-unknown-linux-musl";
+Bun.serve({
+  port: 8445,
+  hostname: "127.0.0.1",
+  idleTimeout: 0,
+  tls: { key: Bun.file(`${root}/tls.key`), cert: Bun.file(`${root}/tls.crt`) },
+  async fetch(req) {
+    const url = new URL(req.url);
+    const host = (req.headers.get("host") ?? "").split(":")[0];
+    const path = url.pathname;
+    appendFileSync(`${root}/requests.log`, `${req.method} ${host}${path} range=${req.headers.get("range") ?? "-"}\n`);
+    const version = await state("version");
+    if (path === "/healthz") return new Response("ready");
+    if (host === "dl.gizlet.io" && path.startsWith("/pkg/")) {
+      const file = Bun.file(`${root}${path}`);
+      if (!(await file.exists())) return new Response("Not found", { status: 404 });
+      const range = /^bytes=(\d+)-$/.exec(req.headers.get("range") ?? "");
+      if (range) {
+        const start = Number(range[1]);
+        return new Response(file.slice(start), { status: 206, headers: { "content-range": `bytes ${start}-${file.size - 1}/${file.size}` } });
+      }
+      if ((await state("fault")) === "drop") {
+        await Bun.write(`${root}/fault`, "");
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        return new Response(new ReadableStream({
+          start(c) {
+            c.enqueue(bytes.slice(0, bytes.length >> 1));
+            setTimeout(() => c.error(new Error("dropped")), 50);
+          },
+        }), { headers: { "content-length": String(bytes.length) } });
+      }
+      return new Response(file);
+    }
+    if (host !== "api.gizlet.io") return new Response("Not found", { status: 404 });
+    const device = url.searchParams.get("target") === TARGET && url.searchParams.get("tier") === "lite";
+    const asked = url.searchParams.get("target");
+    if (path === "/v1/featured") {
+      if (!device || url.searchParams.get("kind") !== "app") return error(400, "bad_request", "the Store asks for apps for this device");
+      return json({ hero: [summary(version)], sections: [{ id: "new", title: "New", titles: { "zh-CN": "最新" }, layout: "row", gizlets: [summary(version)] }] });
+    }
+    if (path === "/v1/gizlets") {
+      if (!device || url.searchParams.get("kind") !== "app") return error(400, "bad_request", "the Store asks for apps for this device");
+      const q = url.searchParams.get("q") ?? "";
+      return json({ gizlets: "store test".includes(q.toLowerCase()) ? [summary(version)] : [], next_cursor: null });
+    }
+    if (path === "/v1/resolve") {
+      const link = url.searchParams.get("url");
+      const github = /github\.com\/([^/]+)\/([^/?#]+)/i.exec(link);
+      const named = github ? `github.com/${github[1]}/${github[2]}`.toLowerCase() : null;
+      const repo = link === "gizlet.io/storetest" ? REPO : named === REPO || others[named] ? named : null;
+      return repo ? json({ repo }) : error(404, "not_found", `${link} leads nowhere`);
+    }
+    if (path === `/v1/gizlets/${REPO}`) {
+      return json({ ...summary(version), owner: "fixture", device_screenshots: [], controls: [{ button: "a", action: "Jump", actions: {} }], packages: [await pkg(`store-${version}.gzl`)] });
+    }
+    const install = /^\/v1\/gizlets\/(.+)\/install$/.exec(path);
+    if (install && (device || (asked === MUSL && url.searchParams.get("tier") === "lite"))) {
+      const repo = install[1];
+      if (repo === REPO) return json({ repo, repository_id: (await state("renamed")) ? 9999 : 4242, id: "dev.gizlet.test-store", name: "Store Test", kind: "app", version, tag: `v${version}`, package: await pkg(`store-${version}.gzl`) });
+      const g = others[repo];
+      if (g?.target && g.target !== asked) return error(404, "no_compatible_package", `${g.name} has no package for ${asked} (lite)`);
+      if (g) return json({ repo, repository_id: 5150, id: g.id, name: g.name, kind: g.kind, version: g.version, tag: `v${g.version}`, package: await pkg(g.file) });
+    }
+    if (path === "/v1/updates" && req.method === "POST") {
+      const body = await req.json();
+      const gizlets = [];
+      for (const one of body.installed) {
+        if (one.repo === "github.com/fixture/static") {
+          if (body.target !== MUSL) gizlets.push({ ...one, installed: one.version, status: "no_package" });
+          else if (one.version === "1.0.1") gizlets.push({ ...one, installed: one.version, status: "current", version: "1.0.1" });
+          else gizlets.push({ ...one, installed: one.version, status: "update", version: "1.0.1", tag: "v1.0.1", kind: "app", name: "Static", package: await pkg("static-1.0.1.gzl") });
+          continue;
+        }
+        if (one.repo !== REPO || one.id !== "dev.gizlet.test-store") {
+          gizlets.push({ ...one, installed: one.version, status: "not_found" });
+        } else if (one.repository_id !== 4242) {
+          gizlets.push({ ...one, installed: one.version, status: "repository_changed" });
+        } else if (one.version === version) {
+          gizlets.push({ ...one, installed: one.version, status: "current", version, name: "Store Test" });
+        } else {
+          gizlets.push({ ...one, installed: one.version, status: "update", version, tag: `v${version}`, kind: "app", name: "Store Test", package: await pkg(`store-${version}.gzl`) });
+        }
+      }
+      return json({ gizlets });
+    }
+    return error(404, "not_found", `no route for ${req.method} ${path}`);
+  },
+});
+console.log("store-server-up");
+"""
+
+
+def store_app(app_id, version, pad=16 << 10, target="aarch64-unknown-linux-gnu"):
+    """An app package for the Store test; PAD random bytes make a download worth cutting in half."""
+    manifest = {"schema": 2, "kind": "app", "id": app_id, "name": "Store Test", "names": {"zh-CN": "商店测试"},
+                "version": version, "runtime": 1, "target": target, "tier": "lite",
+                "entry": "bin/hello.sh"}
+    return gzl({"manifest.json": (json.dumps(manifest).encode(), 0o644),
+                "bin/hello.sh": (f'#!/bin/sh\necho "store-app {version}"\n'.encode(), 0o755),
+                "assets/pad.bin": (os.urandom(pad), 0o644)})
+
+
+def check_store(console):
+    """`gizlet store` against a stand-in for gizlet.io: search, a page, installing an app and a service
+    by short link or GitHub repository, refusing the same app ID from another repository or a new
+    repository at the old path, concurrent installs, an update whose download is cut and resumed,
+    uninstalling, and no network."""
+    console.command("mkdir -p /tmp/store/pkg /tmp/store/bin && cd /tmp/store && "
+                    "openssl req -x509 -newkey ed25519 -nodes -days 1 -subj /CN=api.gizlet.io "
+                    "-addext subjectAltName=DNS:api.gizlet.io,DNS:dl.gizlet.io -keyout tls.key -out tls.crt 2>/dev/null")
+    send(console, STORE_SERVER.encode(), "/tmp/store/serve.js")
+    send(console, store_app(STORE_APP, "1.0.0"), "/tmp/store/pkg/store-1.0.0.gzl")
+    send(console, store_app(STORE_APP, "1.1.0"), "/tmp/store/pkg/store-1.1.0.gzl")
+    send(console, store_app(STORE_APP, "2.0.0", pad=16), "/tmp/store/pkg/impostor-2.0.0.gzl")
+    send(console, service_gzl("dev.gizlet.test-clock", "1.0.0", b"exec sleep 4545\n"), "/tmp/store/pkg/clock-1.0.0.gzl")
+    for version in ("1.0.0", "1.0.1"):
+        send(console, store_app("dev.gizlet.test-static", version, pad=16, target="aarch64-unknown-linux-musl"),
+             f"/tmp/store/pkg/static-{version}.gzl")
+    # curl reaches both hosts on the stand-in, which the test certificate vouches for; the gizlet
+    # command's own requests stay HTTPS to api.gizlet.io and dl.gizlet.io.
+    send(console, b"#!/bin/sh\nexec /usr/bin/curl --connect-to api.gizlet.io:443:127.0.0.1:8445 "
+                  b"--connect-to dl.gizlet.io:443:127.0.0.1:8445 --noproxy '*' \"$@\"\n", "/tmp/store/bin/curl")
+    send(console, b"#!/bin/sh\nPATH=/tmp/store/bin:$PATH CURL_CA_BUNDLE=/tmp/store/tls.crt exec gizlet \"$@\"\n", "/tmp/store/gz")
+    console.command("chmod 755 /tmp/store/bin/curl /tmp/store/gz && echo 1.0.0 > version && : > fault && "
+                    "(bun serve.js </dev/null >/tmp/store/server.log 2>&1 &)")
+    console.enter("timeout 15 sh -c 'until /tmp/store/bin/curl --cacert tls.crt -qfsS https://api.gizlet.io/healthz; do sleep 1; done' "
+                  "&& echo; echo store-https-ready")
+    console.expect(b"ready\r\nstore-https-ready\r\n")
+    console.expect(PROMPT)
+    console.enter("./gz store search store")
+    console.expect(b"\r\ngithub.com/fixture/store-test\t1.0.0\tStore Test\r\n")
+    console.expect(PROMPT)
+    console.enter("./gz store info storetest")
+    console.expect(b"\r\nStore Test 1.0.0 (dev.gizlet.test-store)\r\nrepository: github.com/fixture/store-test\r\n")
+    console.expect(b"\r\npackage: store-1.0.0.gzl (")
+    console.expect(PROMPT)
+    console.enter("./gz store info nowhere; echo status-$?")
+    console.expect(b"gizlet.io/nowhere leads nowhere")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    # Installing by link is for apps and services alike.
+    console.enter("./gz store install https://github.com/Fixture/clock")
+    console.expect(b"installed the service dev.gizlet.test-clock 1.0.0 (Test Service) from github.com/fixture/clock: ")
+    console.expect(PROMPT)
+    console.enter("systemctl is-active gizlet-service-dev.gizlet.test-clock.service; grep -c test-clock /opt/gizlet/store/origins.json")
+    console.expect(b"\r\nactive\r\n1\r\n")
+    console.expect(PROMPT)
+    console.enter("gizlet uninstall dev.gizlet.test-clock && grep -c test-clock /opt/gizlet/store/origins.json")
+    console.expect(b"removed the service dev.gizlet.test-clock")
+    console.expect(b"\r\n0\r\n")
+    console.expect(PROMPT)
+    # A release with only a static musl build installs and updates: the device runs it, and the
+    # Store asks for it when nothing is built for the device's own target.
+    console.enter("./gz store install github.com/fixture/static && ./gz store updates")
+    console.expect(b"installed dev.gizlet.test-static 1.0.0 (Store Test) from github.com/fixture/static\r\n"
+                   b"dev.gizlet.test-static\t1.0.0 -> 1.0.1\tStatic\r\n")
+    console.expect(PROMPT)
+    console.enter("./gz store upgrade dev.gizlet.test-static && gizlet run dev.gizlet.test-static && gizlet uninstall dev.gizlet.test-static --saves")
+    console.expect(b"updated dev.gizlet.test-static 1.0.0 -> 1.0.1\r\nstore-app 1.0.1\r\n")
+    console.expect(PROMPT)
+    # Two installs at once take turns; neither removes the other's download.
+    console.enter("(./gz store install storetest >one.log 2>&1 &) ; ./gz store install github.com/fixture/store-test >two.log 2>&1; "
+                  "sleep 2; while pgrep -f 'store install' >/dev/null; do sleep 1; done; "
+                  "grep -h '^installed' one.log two.log | sort | uniq -c | sed 's/^ *//'")
+    console.expect(b"\r\n2 installed dev.gizlet.test-store 1.0.0 (Store Test) from github.com/fixture/store-test\r\n")
+    console.expect(PROMPT)
+    console.enter("grep -c '\"repository_id\": 4242' /opt/gizlet/store/origins.json && gizlet run dev.gizlet.test-store && ./gz store updates")
+    console.expect(b"\r\n1\r\nstore-app 1.0.0\r\neverything from the Store is up to date\r\n")
+    console.expect(PROMPT)
+    # Another repository naming the same app ID never replaces it.
+    console.enter("./gz store install github.com/fixture/impostor; echo status-$?")
+    console.expect(b"dev.gizlet.test-store is installed from github.com/fixture/store-test")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    # The repository was renamed and another one took its path: it never replaces the app.
+    console.command("echo 1 > renamed")
+    console.enter("./gz store install storetest; echo status-$?")
+    console.expect(b"github.com/fixture/store-test is no longer the repository dev.gizlet.test-store came from")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    console.command(": > renamed")
+    # A new release, and the connection drops halfway through its download.
+    console.command("echo 1.1.0 > version && echo drop > fault && : > requests.log")
+    console.enter("./gz store updates")
+    console.expect(b"\r\ndev.gizlet.test-store\t1.0.0 -> 1.1.0\tStore Test\r\n")
+    console.expect(PROMPT)
+    console.enter("./gz store upgrade")
+    console.expect(b"updated dev.gizlet.test-store 1.0.0 -> 1.1.0\r\n")
+    console.expect(PROMPT)
+    console.enter("grep -c 'GET dl.gizlet.io/pkg/store-1.1.0.gzl range=-' requests.log; "
+                  "grep -c 'GET dl.gizlet.io/pkg/store-1.1.0.gzl range=bytes=[1-9]' requests.log; "
+                  "gizlet run dev.gizlet.test-store; ls /opt/gizlet/store/downloads | wc -l")
+    console.expect(b"\r\n1\r\n1\r\nstore-app 1.1.0\r\n0\r\n")
+    console.expect(PROMPT)
+    console.enter("./gz store upgrade")
+    console.expect(b"\r\neverything from the Store is up to date\r\n")
+    console.expect(PROMPT)
+    # Uninstalling forgets where it came from.
+    console.enter("gizlet uninstall dev.gizlet.test-store --saves && grep -c test-store /opt/gizlet/store/origins.json")
+    console.expect(b"\r\n0\r\n")
+    console.expect(PROMPT)
+    console.command("pkill -f 'bun serve.js'; sleep 1")
+    console.enter("./gz store search; echo status-$?")
+    console.expect(b"cannot reach gizlet.io; check the network")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    console.command("cd / && rm -rf /tmp/store")
+    print("gizlet store searches, installs apps and services by short link or GitHub repository over HTTPS, "
+          "updates them and resumes a cut download, refuses another repository's app with the same ID, "
+          "serializes concurrent installs, and reports no network")
+
+
 SERVICE = "dev.gizlet.test-service"
 KEEP = "dev.gizlet.test-keep"
 SERVICE_UNIT = f"gizlet-service-{SERVICE}.service"
@@ -893,6 +1135,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
             console.expect(line)
         console.expect(PROMPT)
         check_apps(console)
+        check_store(console)
         check_services(console)
         check_runtime_reload(console)
         console.command("mkdir /opt/gizlet/bin")
