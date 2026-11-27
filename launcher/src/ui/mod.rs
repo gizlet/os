@@ -132,7 +132,6 @@ impl Pop {
 pub struct Ui {
     settings_scroll: f32,
     sidebar_y: f32,
-    button_pop: Pop,
     tile_pop: Pop,
     list_pop: Pop,
     page_key: (Option<Page>, usize),
@@ -155,13 +154,19 @@ impl Ui {
             // The first frame shows at once; later pages fade in.
             self.page_since = if self.page_key.0.is_none() { 1.0 } else { 0.0 };
             self.page_key = key;
+            self.settings_scroll = 0.0;
         } else {
             self.page_since += dt;
         }
 
         chrome::background(p);
+        if app.page() != Page::ButtonTest {
+            chrome::tabs(p, app);
+        }
         match app.page() {
-            Page::Home => home::draw(self, p, app, dt),
+            Page::Apps => home::draw(self, p, app, dt),
+            Page::Services => settings::services(self, p, app, dt),
+            Page::Store => home::store(p, app),
             Page::Settings => settings::draw(self, p, app, dt),
             Page::ButtonTest => test::draw(p, app, pad),
         }
@@ -182,7 +187,6 @@ impl Ui {
 
         before != (self.shelf_x, self.sidebar_y, self.settings_scroll)
             || self.page_since < 0.2
-            || self.button_pop.moving()
             || self.tile_pop.moving()
             || self.list_pop.moving()
     }
