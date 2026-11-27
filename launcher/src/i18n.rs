@@ -29,7 +29,14 @@ strings! {
     Delete => "删除", "Delete";
     Close => "关闭", "Close";
 
-    Library => "程序库", "Library";
+    Apps => "应用", "Apps";
+    Favorites => "收藏", "Favorites";
+    NoFavorites => "还没有收藏", "No favorites yet";
+    NoFavoritesBody => "在应用或服务中按 X 标星，即可添加到首页。", "Press X on an app or service to add it here.";
+    Star => "标星", "Star";
+    Unstar => "取消标星", "Unstar";
+    Open => "打开", "Open";
+    ChangePage => "翻页", "Page";
     Store => "商店", "Store";
     ButtonTest => "按键测试", "Button Test";
     Settings => "设置", "Settings";
@@ -38,7 +45,6 @@ strings! {
     EmptyBody => "用 gizlet install 安装的程序会出现在这里。", "Apps you install with gizlet install appear here.";
     Starting => "正在启动 {}", "Starting {}";
     StoreSoon => "商店还没有开放", "The Store isn't open yet";
-    LibrarySoon => "还没有安装程序", "No apps are installed yet";
 
     PowerTitle => "电源选项", "Power Options";
     Sleep => "睡眠", "Sleep";

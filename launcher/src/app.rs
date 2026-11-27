@@ -21,7 +21,9 @@ pub const TEST_EXIT_SECONDS: f32 = 1.2;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Home,
+    Apps,
     Services,
+    ServiceDetails,
     Settings,
     ButtonTest,
 }
@@ -34,7 +36,7 @@ pub enum HomeRow {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HomeButton {
-    Library,
+    Apps,
     Services,
     Store,
     ButtonTest,
@@ -44,17 +46,33 @@ pub enum HomeButton {
 
 impl HomeButton {
     pub const ALL: [HomeButton; 6] =
-        [HomeButton::Library, HomeButton::Services, HomeButton::Store, HomeButton::ButtonTest, HomeButton::Settings, HomeButton::Power];
+        [HomeButton::Apps, HomeButton::Services, HomeButton::Store, HomeButton::ButtonTest, HomeButton::Settings, HomeButton::Power];
 
     pub fn title(self) -> T {
         match self {
-            HomeButton::Library => T::Library,
+            HomeButton::Apps => T::Apps,
             HomeButton::Services => T::Services,
             HomeButton::Store => T::Store,
             HomeButton::ButtonTest => T::ButtonTest,
             HomeButton::Settings => T::Settings,
             HomeButton::Power => T::Power,
         }
+    }
+}
+
+pub const GRID_COLUMNS: usize = 5;
+pub const GRID_PAGE_SIZE: usize = GRID_COLUMNS * 3;
+
+fn grid_step(index: usize, count: usize, action: Action) -> usize {
+    let last = count - 1;
+    match action {
+        Action::Left if index % GRID_COLUMNS > 0 => index - 1,
+        Action::Right if index % GRID_COLUMNS + 1 < GRID_COLUMNS => (index + 1).min(last),
+        Action::Up if index >= GRID_COLUMNS => index - GRID_COLUMNS,
+        Action::Down if index / GRID_COLUMNS < last / GRID_COLUMNS => (index + GRID_COLUMNS).min(last),
+        Action::L => index.saturating_sub(GRID_PAGE_SIZE),
+        Action::R if index / GRID_PAGE_SIZE < last / GRID_PAGE_SIZE => (index + GRID_PAGE_SIZE).min(last),
+        _ => index,
     }
 }
 
@@ -426,6 +444,7 @@ fn simulated_services() -> Vec<Service> {
 struct Place {
     depth: usize,
     home: (HomeRow, usize, usize),
+    grid: usize,
     settings: (usize, usize, bool),
     dialog: Option<usize>,
     /// The keyboard's key and layout, and how much is typed.
@@ -440,9 +459,11 @@ pub struct App {
     pages: Vec<Page>,
     pub home_row: HomeRow,
     pub home_button: usize,
-    /// Installed apps, as the home shelf shows them, and the focused one.
+    /// Installed apps and the focused favorite on the home shelf.
     pub apps: Vec<apps::App>,
     pub home_tile: usize,
+    pub grid_tile: usize,
+    service_id: Option<String>,
     library: Library,
     apps_stamp: Option<std::time::SystemTime>,
     /// Set when the launcher should quit, as when it hands the screen to an app.
@@ -476,11 +497,17 @@ pub struct App {
 impl App {
     pub fn new(data_dir: PathBuf, release: Option<String>) -> App {
         let settings_path = data_dir.join("settings.ini");
+        let settings = Settings::load(&settings_path);
         let library = Library::open();
         let apps_stamp = library.stamp();
         let apps = library.scan();
+        let home_row = if apps.iter().any(|app| settings.favorites.iter().any(|id| id == app.id())) {
+            HomeRow::Tiles
+        } else {
+            HomeRow::Buttons
+        };
         App {
-            settings: Settings::load(&settings_path),
+            settings,
             settings_path,
             power: Power::load(Power::path()),
             release,
@@ -488,11 +515,12 @@ impl App {
             updates: None,
             services: ServicesUi::new(),
             pages: vec![Page::Home],
-            // The most recently played app has focus; without apps, Settings.
-            home_row: if apps.is_empty() { HomeRow::Buttons } else { HomeRow::Tiles },
+            home_row,
             home_button: HomeButton::ALL.iter().position(|button| *button == HomeButton::Settings).unwrap(),
             apps,
             home_tile: 0,
+            grid_tile: 0,
+            service_id: None,
             library,
             apps_stamp,
             leave: false,
@@ -550,7 +578,7 @@ impl App {
             || self.keyboard.is_some()
             || !self.toasts.is_empty()
             || self.page() == Page::ButtonTest
-            || (self.page() == Page::Services && (self.services.busy() || self.services.list.is_none()))
+            || (matches!(self.page(), Page::Services | Page::ServiceDetails) && self.services.list.is_none())
             || (self.page() == Page::Settings
                 && self.focused_category() == Category::System
                 && self.updates.as_ref().is_some_and(Updates::has_spinner))
@@ -593,6 +621,7 @@ impl App {
         Place {
             depth: self.pages.len(),
             home: (self.home_row, self.home_button, self.home_tile),
+            grid: self.grid_tile,
             settings: (self.focus.category, self.focus.item, self.focus.in_content),
             dialog: self.dialog.as_ref().map(|d| d.focus),
             keyboard: self.keyboard.as_ref().map(|k| (k.row, k.col, k.shift, k.symbols, k.text.chars().count())),
@@ -632,33 +661,87 @@ impl App {
             return;
         }
         self.apps_stamp = stamp;
-        let focused = self.apps.get(self.home_tile).map(|a| a.id().to_string());
+        let focused = self.favorite_at_focus();
+        let grid_id = (self.page() == Page::Apps)
+            .then(|| self.apps.get(self.grid_tile).map(|app| app.id().to_owned()))
+            .flatten();
         self.apps = self.library.scan();
-        // The shelf changes without input: draw it, and let it settle.
         self.revision += 1;
-        self.home_tile = focused.and_then(|id| self.apps.iter().position(|a| a.id() == id)).unwrap_or(0);
-        if self.apps.is_empty() && self.home_row == HomeRow::Tiles {
+        self.refocus_favorites(focused.as_deref());
+        if self.page() == Page::Apps {
+            self.refocus_grid(grid_id.as_deref());
+        }
+    }
+
+    pub fn installed_services(&self) -> &[Service] {
+        match &self.services.list {
+            Some(Ok(list)) => list,
+            _ => &[],
+        }
+    }
+
+    pub fn favorites(&self) -> Vec<&apps::App> {
+        if self.settings.favorites.is_empty() {
+            return Vec::new();
+        }
+        let packages: std::collections::HashMap<_, _> = self.apps.iter()
+            .chain(self.installed_services().iter().map(|service| &service.package))
+            .map(|package| (package.id(), package))
+            .collect();
+        self.settings.favorites.iter().filter_map(|id| packages.get(id.as_str()).copied()).collect()
+    }
+
+    fn favorite_at_focus(&self) -> Option<String> {
+        self.favorites().get(self.home_tile).map(|package| package.id().to_owned())
+    }
+
+    fn refocus_favorites(&mut self, id: Option<&str>) {
+        let favorites = self.favorites();
+        let empty = favorites.is_empty();
+        self.home_tile = id.and_then(|id| favorites.iter().position(|package| package.id() == id))
+            .unwrap_or_else(|| self.home_tile.min(favorites.len().saturating_sub(1)));
+        if empty {
             self.home_row = HomeRow::Buttons;
         }
     }
 
-    /// Starts the app on the shelf at `i`. On Gizlet OS the launcher quits and
+    pub fn starred(&self, id: &str) -> bool {
+        self.settings.favorites.iter().any(|favorite| favorite == id)
+    }
+
+    fn toggle_star(&mut self, id: String) {
+        let focused = self.favorite_at_focus();
+        let previous = self.settings.favorites.clone();
+        if self.starred(&id) {
+            self.settings.favorites.retain(|favorite| favorite != &id);
+        } else {
+            self.settings.favorites.push(id);
+        }
+        if let Err(error) = self.settings.save(&self.settings_path) {
+            self.settings.favorites = previous;
+            self.toast(T::Failed.fmt(self.lang(), &[&error.to_string()]));
+            return;
+        }
+        self.refocus_favorites(focused.as_deref());
+        self.ui_sound(Sfx::Confirm);
+    }
+
+    /// Starts the selected app. On Gizlet OS the launcher quits and
     /// its start script runs the app, then the launcher again; on a computer
     /// the app opens beside it.
-    fn launch(&mut self, i: usize) {
+    fn launch(&mut self, id: &str) {
         if self.installing_update() {
             self.toast(self.t(T::OtaWait));
             return;
         }
-        let Some(app) = self.apps.get(i) else { return };
-        let id = app.id().to_string();
+        let Some(app) = self.apps.iter().find(|app| app.id() == id) else { return };
         let name = app.manifest.name_for(self.lang_code()).to_string();
         let result = if cfg!(feature = "gizlet-os") {
-            apps::request_launch(&id).map(|()| self.leave = true)
+            apps::request_launch(id).map(|()| self.leave = true)
         } else {
             // The desktop executable's run command supervises the app. A
             // thread waits for that process so it leaves no zombie.
-            std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(["run", &id]).spawn()).map(|mut child| {
+            std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(["run", id]).spawn()).map(|mut child| {
                 std::thread::spawn(move || child.wait());
             })
         };
@@ -719,27 +802,26 @@ impl App {
     /// Reads the services while their page is open, and takes in
     /// what the worker finished.
     fn update_services(&mut self) {
-        let open = self.page() == Page::Services;
-        if open && !self.services.busy() && self.time - self.services.asked >= SERVICES_REFRESH {
+        let page = self.page();
+        let needed = matches!(page, Page::Services | Page::ServiceDetails)
+            || (page == Page::Home
+                && self.settings.favorites.iter().any(|id| !self.apps.iter().any(|app| app.id() == id)));
+        if needed && !self.services.busy() && self.time - self.services.asked >= SERVICES_REFRESH {
             self.services.send(ServiceOp::Refresh, self.time);
         }
         if !self.services.busy() {
             return;
         }
-        let focused = if open { self.service_items().get(self.focus.item).map(|item| item.id.clone()) } else { None };
-        if let Some(done) = self.services.poll() {
-            if let Some(e) = done.failed {
-                self.toast(T::Failed.fmt(self.lang(), &[&e]));
-            }
-            self.revision += 1;
-            if open {
-                let items = self.service_items();
-                self.focus.item = focused
-                    .filter(|id| *id != ItemId::None)
-                    .and_then(|id| items.iter().position(|row| row.id == id))
-                    .or_else(|| items.iter().position(|item| item.id != ItemId::None))
-                    .unwrap_or(0);
-            }
+        let favorite = self.favorite_at_focus();
+        let grid_id = if page == Page::Services { self.grid_package().map(|package| package.id().to_owned()) } else { None };
+        let Some(done) = self.services.poll() else { return };
+        if let Some(error) = done.failed {
+            self.toast(T::Failed.fmt(self.lang(), &[&error]));
+        }
+        self.revision += 1;
+        self.refocus_favorites(favorite.as_deref());
+        if page == Page::Services {
+            self.refocus_grid(grid_id.as_deref());
         }
     }
 
@@ -760,14 +842,10 @@ impl App {
             }
         }
         match self.page() {
-            Page::Home => {
-                self.home_input(input);
-                if self.leave {
-                    return false;
-                }
-            }
+            Page::Home => self.home_input(input),
+            Page::Apps | Page::Services => self.grid_input(input),
             Page::Settings => self.settings_input(input),
-            Page::Services => self.services_input(input),
+            Page::ServiceDetails => self.service_details_input(input),
             Page::ButtonTest => {
                 if input.held(Action::B) {
                     self.test_hold += dt;
@@ -780,7 +858,7 @@ impl App {
                 }
             }
         }
-        true
+        !self.leave
     }
 
     fn on_event(&mut self, event: Event) {
@@ -879,7 +957,7 @@ impl App {
 
     pub fn push(&mut self, page: Page) {
         self.pages.push(page);
-        if matches!(page, Page::Settings | Page::Services) {
+        if matches!(page, Page::Settings | Page::ServiceDetails) {
             self.focus = SettingsFocus::default();
         }
         self.test_hold = 0.0;
@@ -908,44 +986,110 @@ impl App {
     }
 
     fn home_input(&mut self, input: &Input) {
+        if input.pressed.is_empty() {
+            return;
+        }
         let n = HomeButton::ALL.len();
-        let tiles = self.apps.len();
+        let tiles = self.favorites().len();
         for &a in &input.pressed {
             match (a, self.home_row) {
                 (Action::Down, HomeRow::Tiles) => self.home_row = HomeRow::Buttons,
-                (Action::Up, HomeRow::Buttons) => self.home_row = HomeRow::Tiles,
+                (Action::Up, HomeRow::Buttons) if tiles > 0 => self.home_row = HomeRow::Tiles,
                 (Action::Left, HomeRow::Tiles) if tiles > 0 => self.home_tile = self.home_tile.saturating_sub(1),
                 (Action::Right, HomeRow::Tiles) if tiles > 0 => self.home_tile = (self.home_tile + 1).min(tiles - 1),
                 (Action::Left, HomeRow::Buttons) => self.home_button = (self.home_button + n - 1) % n,
                 (Action::Right, HomeRow::Buttons) => self.home_button = (self.home_button + 1) % n,
                 (Action::A, HomeRow::Tiles) if tiles > 0 => {
-                    self.launch(self.home_tile);
-                    if self.leave {
-                        return;
+                    if let Some(package) = self.favorites().get(self.home_tile) {
+                        let id = package.id().to_owned();
+                        match package.manifest.kind() {
+                            apps::Kind::App => self.launch(&id),
+                            apps::Kind::Service => self.open_service(id),
+                        }
                     }
+                    return;
                 }
-                (Action::A, HomeRow::Tiles) => self.toast(self.t(T::LibrarySoon)),
-                (Action::A, HomeRow::Buttons) => match HomeButton::ALL[self.home_button] {
-                    HomeButton::Library if tiles > 0 => self.home_row = HomeRow::Tiles,
-                    HomeButton::Library => self.toast(self.t(T::LibrarySoon)),
-                    HomeButton::Services => {
-                        self.services.asked = f64::NEG_INFINITY;
-                        self.push(Page::Services);
-                        self.focus.item = self.service_items().iter().position(|item| item.id != ItemId::None).unwrap_or(0);
-                        return;
+                (Action::A, HomeRow::Buttons) => {
+                    match HomeButton::ALL[self.home_button] {
+                        HomeButton::Apps => {
+                            self.grid_tile = 0;
+                            self.push(Page::Apps);
+                        }
+                        HomeButton::Services => {
+                            self.grid_tile = 0;
+                            self.services.asked = f64::NEG_INFINITY;
+                            self.push(Page::Services);
+                        }
+                        HomeButton::Store => self.toast(self.t(T::StoreSoon)),
+                        HomeButton::ButtonTest => self.push(Page::ButtonTest),
+                        HomeButton::Settings => self.push(Page::Settings),
+                        HomeButton::Power => self.power_dialog(),
                     }
-                    HomeButton::Store => self.toast(self.t(T::StoreSoon)),
-                    HomeButton::ButtonTest => self.push(Page::ButtonTest),
-                    HomeButton::Settings => self.push(Page::Settings),
-                    HomeButton::Power => self.power_dialog(),
-                },
+                    return;
+                }
                 (Action::Start, _) => self.push(Page::Settings),
                 _ => {}
             }
         }
     }
 
-    fn services_input(&mut self, input: &Input) {
+    pub fn grid_packages(&self) -> impl Iterator<Item = &apps::App> {
+        let apps = if self.page() == Page::Apps { self.apps.as_slice() } else { &[] };
+        let services = if self.page() == Page::Services { self.installed_services() } else { &[] };
+        apps.iter().chain(services.iter().map(|service| &service.package))
+    }
+
+    fn grid_package(&self) -> Option<&apps::App> {
+        self.grid_packages().nth(self.grid_tile)
+    }
+
+    fn refocus_grid(&mut self, id: Option<&str>) {
+        let index = id.and_then(|id| self.grid_packages().position(|package| package.id() == id));
+        self.grid_tile = index.unwrap_or_else(|| self.grid_tile.min(self.grid_packages().count().saturating_sub(1)));
+    }
+
+    fn grid_input(&mut self, input: &Input) {
+        if input.pressed.is_empty() {
+            return;
+        }
+        let count = self.grid_packages().count();
+        for &action in &input.pressed {
+            match action {
+                Action::B => {
+                    self.pages.pop();
+                    return;
+                }
+                Action::Left | Action::Right | Action::Up | Action::Down | Action::L | Action::R if count > 0 => {
+                    self.grid_tile = grid_step(self.grid_tile, count, action);
+                }
+                Action::X | Action::A => {
+                    if let Some(package) = self.grid_package() {
+                        let id = package.id().to_owned();
+                        match (action, self.page()) {
+                            (Action::X, _) => self.toggle_star(id),
+                            (_, Page::Apps) => self.launch(&id),
+                            _ => self.open_service(id),
+                        }
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn open_service(&mut self, id: String) {
+        self.service_id = Some(id);
+        self.push(Page::ServiceDetails);
+        self.focus.item = 1;
+    }
+
+    pub fn selected_service(&self) -> Option<&Service> {
+        let id = self.service_id.as_deref()?;
+        self.installed_services().iter().find(|service| service.id() == id)
+    }
+
+    fn service_details_input(&mut self, input: &Input) {
         if input.pressed.is_empty() {
             return;
         }
@@ -954,10 +1098,14 @@ impl App {
             match action {
                 Action::B => {
                     self.pages.pop();
+                    let id = self.service_id.take();
+                    if self.page() == Page::Services {
+                        self.refocus_grid(id.as_deref());
+                    }
                     return;
                 }
                 Action::Up => {
-                    if let Some(index) = (0..self.focus.item).rev().find(|&index| items[index].id != ItemId::None) {
+                    if let Some(index) = (0..self.focus.item.min(items.len())).rev().find(|&index| items[index].id != ItemId::None) {
                         self.focus.item = index;
                     }
                 }
@@ -1588,42 +1736,41 @@ impl App {
         items
     }
 
-    /// Each installed service: whether it runs, whether it starts at boot, and its state.
     pub fn service_items(&self) -> Vec<Item> {
         let l = self.lang();
         let t = |k: T| k.get(l).to_string();
-        let list = match &self.services.list {
-            None => return vec![Item::new(ItemId::None, t(T::ServicesReading), ItemValue::Busy)],
-            Some(Err(e)) => return vec![Item::notice(t(T::ServicesUnavailable), e.clone())],
-            Some(Ok(list)) => list,
+        let Some(service) = self.selected_service() else {
+            return match &self.services.list {
+                None => vec![Item::new(ItemId::None, t(T::ServicesReading), ItemValue::Busy)],
+                Some(Err(error)) => vec![Item::notice(t(T::ServicesUnavailable), error.clone())],
+                Some(Ok(_)) => vec![Item::notice(t(T::ServicesUnavailable), "")],
+            };
         };
         let mut items = Vec::new();
         let switched = |id: &ItemId, now: bool| match &self.services.switching {
             Some((switching, to)) if switching == id => *to,
             _ => now,
         };
-        for service in list {
-            let m = &service.package.manifest;
-            items.push(Item::section(format!("{} · {}", m.name_for(self.lang_code()), m.version)));
-            let running = ItemId::ServiceRunning(m.id.clone());
-            let on = switched(&running, service.state.on());
-            items.push(Item::new(running, t(T::ServiceRunning), ItemValue::Toggle(on)));
-            let boot = ItemId::ServiceBoot(m.id.clone());
-            let at_boot = switched(&boot, service.boot);
-            items.push(Item::new(boot, t(T::ServiceAtBoot), ItemValue::Toggle(at_boot)));
-            let state = match &service.state {
-                _ if matches!(self.services.switching, Some((ItemId::ServiceRunning(ref id), _)) if *id == m.id) => {
-                    if on { t(T::ServiceStarting) } else { t(T::ServiceStopping) }
-                }
-                services::State::Running => t(T::SshRunning),
-                services::State::Starting => t(T::ServiceStarting),
-                services::State::Stopping => t(T::ServiceStopping),
-                services::State::Stopped => t(T::ServiceStopped),
-                services::State::Restarting(why) => T::ServiceRestarting.fmt(l, &[why]),
-                services::State::Failed(why) => T::ServiceFailed.fmt(l, &[why]),
-            };
-            items.push(Item::info(t(T::BatteryState), state));
-        }
+        let manifest = &service.package.manifest;
+        items.push(Item::section(format!("{} · {}", manifest.name_for(self.lang_code()), manifest.version)));
+        let running = ItemId::ServiceRunning(manifest.id.clone());
+        let on = switched(&running, service.state.on());
+        items.push(Item::new(running, t(T::ServiceRunning), ItemValue::Toggle(on)));
+        let boot = ItemId::ServiceBoot(manifest.id.clone());
+        let at_boot = switched(&boot, service.boot);
+        items.push(Item::new(boot, t(T::ServiceAtBoot), ItemValue::Toggle(at_boot)));
+        let state = match &service.state {
+            _ if matches!(self.services.switching, Some((ItemId::ServiceRunning(ref id), _)) if *id == manifest.id) => {
+                if on { t(T::ServiceStarting) } else { t(T::ServiceStopping) }
+            }
+            services::State::Running => t(T::SshRunning),
+            services::State::Starting => t(T::ServiceStarting),
+            services::State::Stopping => t(T::ServiceStopping),
+            services::State::Stopped => t(T::ServiceStopped),
+            services::State::Restarting(why) => T::ServiceRestarting.fmt(l, &[why]),
+            services::State::Failed(why) => T::ServiceFailed.fmt(l, &[why]),
+        };
+        items.push(Item::info(t(T::BatteryState), state));
         items
     }
 
@@ -1755,6 +1902,16 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_movement_respects_rows_and_incomplete_pages() {
+        assert_eq!(grid_step(4, 17, Action::Right), 4);
+        assert_eq!(grid_step(5, 17, Action::Left), 5);
+        assert_eq!(grid_step(14, 17, Action::Down), 16);
+        assert_eq!(grid_step(4, 17, Action::R), 16);
+        assert_eq!(grid_step(16, 17, Action::R), 16);
+        assert_eq!(grid_step(16, 17, Action::L), 1);
+    }
 
     fn installed() -> ota::Installed {
         ota::Installed {
