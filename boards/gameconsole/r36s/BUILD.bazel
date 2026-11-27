@@ -111,7 +111,7 @@ genrule(
     name = "r36s_panel_driver",
     srcs = [_GENERIC_DSI, "kernel/generic-dsi-r36s-profiles.patch"],
     outs = ["parts/panel-generic-dsi.c"],
-    cmd = "patch -s -o $@ $(location %s) $(location kernel/generic-dsi-r36s-profiles.patch)" % _GENERIC_DSI,
+    cmd = "cp $(location %s) $@ && chmod u+w $@ && patch -s $@ < $(location kernel/generic-dsi-r36s-profiles.patch)" % _GENERIC_DSI,
     target_compatible_with = [":r36s"],
 )
 
