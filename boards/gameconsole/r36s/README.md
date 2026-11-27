@@ -10,7 +10,7 @@ The writers list external disks from smallest to largest, offer the smallest as 
 
 A card with Gizlet OS can be updated using `--update` or `GIZLET_MODE=update` on Windows. After confirmation, the writer replaces the boot code, U-Boot and partitions 1 and 2 while keeping partition 3 with installed programs, every profile, Wi-Fi networks and settings. It also keeps `authorized_keys` and an unimported `setup.ini` on the boot partition. The writer checks that partitions 1 and 2 match the image and that partition 3 starts at the expected sector and holds the data filesystem before writing. It writes the partition table last. On the next boot, the system selects the newest compatible Launcher and CLI on the data partition, or uses the factory pair. Gizlet runtime 1 stays on the data partition.
 
-The update mode requires a card with the local profiles layout. Cards made before local profiles require a full image write. The writers can extend the data partition and grow its ext4 filesystem to fill the card offline. A card written with another tool starts with the image's 128 MiB data partition and grows it on first boot.
+The update mode requires a card with the local profiles layout and a V30 NV3051D boot configuration. The writers reject updates of cards configured for other displays before writing. Cards made before local profiles require a full image write. The writers can extend the data partition and grow its ext4 filesystem to fill the card offline. A card written with another tool starts with the image's 128 MiB data partition and grows it on first boot.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.sh | bash

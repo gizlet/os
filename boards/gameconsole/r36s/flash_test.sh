@@ -41,6 +41,8 @@ echo "ok: a failing diskutil fails disk_identity"
 eval "$(sed -n '/^main()/,/^}/p' "${script}")"
 unset GIZLET_IMAGE_URL GIZLET_CHECKSUM_URL GIZLET_RELEASE
 choose_language() { :; }
+say() { :; }
+m() { printf '%s' "$1"; }
 find_disks() { :; }
 choose_disk() { :; }
 choose_mode() { :; }
@@ -59,3 +61,19 @@ for mode in update erase; do
     [ "$actual" = "$expected" ] || { echo "FAIL: unexpected online ${mode} flow: ${actual}"; exit 1; }
     echo "ok: local and online ${mode} reach the writer without a display prompt"
 done
+
+eval "$(sed -n '/^boot_supports_nv3051d()/,/^}/p' "${script}")"
+boot_dir="${stub}/boot"
+mkdir "${boot_dir}"
+printf 'legacy tree' > "${boot_dir}/r36s.dtb"
+printf 'V30 NV3051D overlay' > "${boot_dir}/r36s-v30-panel4.dtbo"
+if boot_supports_nv3051d "${boot_dir}"; then
+    echo "FAIL: accepted a legacy Panel 0 card"
+    exit 1
+fi
+cp "${boot_dir}/r36s-v30-panel4.dtbo" "${boot_dir}/mipi-panel.dtbo"
+boot_supports_nv3051d "${boot_dir}"
+printf '\0I seq=ff52\0' > "${boot_dir}/r36s.dtb"
+printf 'stale overlay' > "${boot_dir}/mipi-panel.dtbo"
+boot_supports_nv3051d "${boot_dir}"
+echo "ok: legacy and built-in NV3051D configurations pass the update guard"
