@@ -1,5 +1,5 @@
 [Unit]
-Description=Gizlet OS data partition (/opt/gizlet and /home)
+Description=Gizlet OS data partition (/data) and the current profile (/run/gizlet/profile and /home)
 DefaultDependencies=no
 After=gizlet-var.service
 Requires=gizlet-var.service

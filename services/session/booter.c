@@ -8,9 +8,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define INSTALL_DIR "/opt/gizlet"
+#define INSTALL_DIR "/data/device"
 #define CONFIG_FILE "boot.ini"
-#define FACTORY_ENTRY "launcher/gizlet-launcher"
 #define RELEASE_MANAGER "/usr/lib/gizlet/launcher-release"
 #define MAX_CONFIG_SIZE 4096
 
@@ -123,11 +122,6 @@ int main(void) {
     if (!entry) {
         fputs("Gizlet OS: invalid boot.ini (expected [boot] and one entry)\n", stderr);
         return 1;
-    }
-    /* The entry written by earlier images still selects the managed Launcher. */
-    if (strcmp(entry, FACTORY_ENTRY) == 0) {
-        close(root);
-        return start_launcher();
     }
     char path[MAX_CONFIG_SIZE + 1];
     strcpy(path, entry);

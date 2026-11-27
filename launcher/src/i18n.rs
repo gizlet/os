@@ -61,6 +61,26 @@ strings! {
     CatLanguage => "语言", "Language";
     CatTime => "日期与时间", "Date & Time";
     CatSystem => "系统", "System";
+    CatProfiles => "档案", "Profiles";
+    ProfileDefault => "默认", "Default";
+    ProfileCurrent => "当前", "Current";
+    ProfileNextBoot => "下次开机", "Next boot";
+    ProfileCreate => "新建档案", "New Profile";
+    ProfileAbout => "每个档案的数据各自独立", "Each profile keeps its own data";
+    ProfileAboutBody => "设置、收藏、存档和服务数据按档案分开，安装的应用和服务所有档案共用。切换档案会先停止当前档案的服务，再重启掌机。", "Settings, favorites, saves and service data are kept per profile; installed apps and services are shared. Switching stops this profile's services, then restarts the handheld.";
+    ProfileSwitch => "切换到此档案", "Switch to This Profile";
+    ProfileRename => "重命名", "Rename";
+    ProfileSwitchConfirm => "切换到 {}？掌机将重新启动", "Switch to {}? The handheld restarts";
+    ProfileSwitchRestart => "切换并重启", "Switch and Restart";
+    ProfileSwitching => "正在切换到 {}…", "Switching to {}…";
+    ProfileSwitched => "已切换到 {}", "Switched to {}";
+    ProfileDeleteConfirm => "删除 {} 及其全部数据？此操作无法撤销", "Delete {} and all its data? This can't be undone";
+    ProfileDeleted => "已删除 {}", "Deleted {}";
+    ProfileCreated => "已创建 {}", "Created {}";
+    ProfileRenamed => "已重命名为 {}", "Renamed to {}";
+    ProfileNameTitle => "档案名称（最多 24 个字符）", "Profile name (up to 24 characters)";
+    ProfileNameTaken => "已有同名档案", "Another profile has this name";
+    ProfileNameInvalid => "名称不能为空，最多 24 个字符，首尾不能是空格", "Use 1 to 24 characters, not starting or ending with a space";
     Services => "服务", "Services";
 
     OtaTitle => "系统更新", "System updates";

@@ -10,7 +10,7 @@
 //! downloads go through `curl`, like system updates. A package is downloaded
 //! beside the library, resumed after a dropped connection, checked against
 //! the sha256 the API named, and installed by [`Library::install`]. The
-//! repository it came from is recorded in `<prefix>/store/origins.json`, and
+//! repository it came from is recorded in `<prefix>/device/store/origins.json`, and
 //! only that repository, with the same app ID, may update it later.
 
 use crate::apps::{self, App, Kind, Library};
@@ -319,7 +319,8 @@ pub enum Progress {
     Installing,
 }
 
-/// The Store of one library: its API and its files under `<prefix>/store`.
+/// The Store of one library: its API and its files under `<prefix>/device/store`,
+/// shared by every profile like the packages.
 pub struct Store {
     api: String,
     dir: PathBuf,
@@ -329,11 +330,11 @@ impl Store {
     /// The Store for `library`; `GIZLET_STORE_API` points it at another API.
     pub fn new(library: &Library) -> Store {
         let api = std::env::var("GIZLET_STORE_API").ok().filter(|a| !a.is_empty()).unwrap_or_else(|| API.into());
-        Store { api: api.trim_end_matches('/').into(), dir: library.prefix().join("store") }
+        Store { api: api.trim_end_matches('/').into(), dir: library.device_dir().join("store") }
     }
 
     pub fn with_api(library: &Library, api: &str) -> Store {
-        Store { api: api.trim_end_matches('/').into(), dir: library.prefix().join("store") }
+        Store { api: api.trim_end_matches('/').into(), dir: library.device_dir().join("store") }
     }
 
     fn query(&self) -> String {
@@ -592,11 +593,10 @@ impl Store {
         self.install_recorded(library, &id, None, || library.install(file).map_err(Error::Other))
     }
 
-    /// Removes an app, its saves only with `saves`, or a service with all it
-    /// keeps, and forgets its origin.
-    pub fn uninstall(&self, library: &Library, id: &str, saves: bool) -> Result<Kind, Error> {
+    /// Removes an app or a service, keeping every profile's data of it, and forgets its origin.
+    pub fn uninstall(&self, library: &Library, id: &str) -> Result<Kind, Error> {
         let _lock = self.lock(library)?;
-        let kind = library.remove(id, saves).map_err(Error::Other)?;
+        let kind = library.remove(id).map_err(Error::Other)?;
         self.set_origin(id, None).map_err(other)?;
         Ok(kind)
     }

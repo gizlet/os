@@ -74,4 +74,4 @@ R36S_PANELS = {
 }
 
 # Filesystem UUID of the data partition, set in sdcard.cfg and checked by rcS.
-R36S_DATA_UUID = "17605036-fda0-4633-a95b-2ed27409a90c"
+R36S_DATA_UUID = "cef58f4f-a7a3-40ac-9cb3-bd8d89aab65f"

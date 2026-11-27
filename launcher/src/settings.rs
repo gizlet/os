@@ -1,4 +1,5 @@
-//! The launcher's own preferences, kept as `key = value` lines in its data folder.
+//! The launcher's own preferences, kept as `key = value` lines in the current
+//! profile's `launcher/settings.ini`, and the device's power settings.
 
 use std::path::{Path, PathBuf};
 
@@ -189,18 +190,13 @@ impl Power {
     /// gizlet-power's default when the file has no value.
     const DEFAULT: u32 = 300;
 
-    /// On Gizlet OS the file is on the data partition; elsewhere it sits with
-    /// the launcher's settings and nothing reads it.
+    /// A device setting, shared by every profile: `/data/device/settings/power.ini`
+    /// on Gizlet OS, which gizlet-power reads.
     pub fn path() -> PathBuf {
-        if cfg!(feature = "gizlet-os") && std::env::var_os("GIZLET_LAUNCHER_DATA").is_none() {
-            PathBuf::from("/run/gizlet-data/system/power.ini")
-        } else {
-            data_dir().join("power.ini")
-        }
+        crate::apps::prefix().join("device/settings/power.ini")
     }
 
-    /// `screen_off`, the key before `sleep_after`, is read when that is absent;
-    /// without `sleep_after_charging` the device never sleeps while charging,
+    /// Without `sleep_after_charging` the device never sleeps while charging,
     /// as in gizlet-power.
     pub fn load(path: PathBuf) -> Power {
         let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -210,7 +206,7 @@ impl Power {
                 (k.trim() == key).then(|| v.trim().parse().ok()).flatten()
             })
         };
-        let sleep_after = value("sleep_after").or_else(|| value("screen_off")).unwrap_or(Power::DEFAULT);
+        let sleep_after = value("sleep_after").unwrap_or(Power::DEFAULT);
         let sleep_after_charging = value("sleep_after_charging").unwrap_or(0);
         Power { path, sleep_after, sleep_after_charging }
     }
@@ -239,14 +235,21 @@ impl Power {
     }
 }
 
-/// Where the launcher keeps its settings: `GIZLET_LAUNCHER_DATA`, the data
-/// partition on Gizlet OS, or the platform's per-user folder.
+/// The launcher's settings in a profile's folder.
+pub fn settings_path(profile: &Path) -> PathBuf {
+    profile.join("launcher/settings.ini")
+}
+
+/// The current profile's Launcher settings.
+pub fn current() -> Settings {
+    crate::profiles::Profiles::open().current_dir().map(|dir| Settings::load(&settings_path(&dir))).unwrap_or_default()
+}
+
+/// The data root without `GIZLET_PREFIX`: the data partition, `/data`, on
+/// Gizlet OS, or the platform's per-user folder.
 pub fn data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("GIZLET_LAUNCHER_DATA") {
-        return PathBuf::from(dir);
-    }
     if cfg!(feature = "gizlet-os") {
-        return PathBuf::from("/opt/gizlet/launcher");
+        return PathBuf::from(crate::profiles::DATA_ROOT);
     }
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     if cfg!(target_os = "macos") {
@@ -285,9 +288,9 @@ mod tests {
         p.save().unwrap();
         assert_eq!(Power::load(path.clone()).sleep_after, 0);
         std::fs::write(&path, "screen_off = 0\n").unwrap();
-        assert_eq!(Power::load(path.clone()).sleep_after, 0, "the old key still counts");
-        std::fs::write(&path, "screen_off = 0\nsleep_after = 600\n").unwrap();
-        assert_eq!(Power::load(path.clone()).sleep_after, 600, "the new key wins");
+        assert_eq!(Power::load(path.clone()).sleep_after, 300, "only sleep_after counts");
+        std::fs::write(&path, "sleep_after = 600\n").unwrap();
+        assert_eq!(Power::load(path.clone()).sleep_after, 600);
         assert_eq!(Power::load(path.clone()).sleep_after_charging, 0, "never while charging when unset");
         let mut p = Power::load(path.clone());
         p.cycle(true, 1);

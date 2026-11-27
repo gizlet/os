@@ -19,13 +19,13 @@
 # device is named after its network adapter's MAC address, gizlet-a1b2 for
 # one ending in a1:b2, and gizlet without an adapter.
 set -eu
-dir=/run/gizlet-data/system/switches
-password_file=/run/gizlet-data/system/ssh/password
+dir=/data/device/settings/switches
+password_file=/data/device/settings/ssh/password
 shadow=/run/gizlet-ssh/shadow
-zone_file=/run/gizlet-data/system/timezone
+zone_file=/data/device/settings/timezone
 localtime=/run/gizlet-localtime
 zoneinfo=/usr/share/zoneinfo
-hostname_file=/run/gizlet-data/system/hostname
+hostname_file=/data/device/settings/hostname
 usage() {
     echo 'usage: gizlet-switch wifi|ssh [on|off] | ssh-password [NEW] | timezone [ZONE] | hostname [NAME] | boot | apply-password | apply-timezone | apply-hostname' >&2
     exit 2

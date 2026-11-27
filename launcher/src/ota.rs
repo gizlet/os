@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const ORIGIN: &str = "https://dl.gizlet.io/releases";
-const STORE: &str = "/opt/gizlet/ota";
+const STORE: &str = "/data/device/ota";
 const SIGNERS: &str = "/usr/lib/gizlet/launcher/allowed_signers";
 const RUNTIME_LIMIT: u64 = 512 * 1024 * 1024;
 const LAUNCHER_LIMIT: u64 = 64 * 1024 * 1024;
@@ -99,7 +99,7 @@ fn tag_from_version(release: &str) -> Option<String> {
 fn launcher_bundle_version(root: &Path) -> Option<String> {
     let manifest = fs::read_to_string(root.join("manifest")).ok()?;
     let mut fields = manifest.split_whitespace();
-    if fields.next()? != "gizlet-launcher-1" {
+    if fields.next()? != "gizlet-launcher-2" {
         return None;
     }
     let release = fields.next()?;
@@ -160,13 +160,13 @@ fn runtime_root() -> PathBuf {
     if let Some(path) = std::env::var_os("GIZLET_RUNNING_RUNTIME") {
         return PathBuf::from(path);
     }
-    ["/run/gizlet-ota-runtime", "/opt/gizlet/runtime/1-current", "/opt/gizlet/runtime/1"]
+    ["/run/gizlet-ota-runtime", "/data/device/runtime/1-current", "/data/device/runtime/1"]
         .into_iter()
         .find_map(|path| {
             let root = Path::new(path);
             root.join("bin/gizlet-run").is_file().then(|| fs::canonicalize(root).ok()).flatten()
         })
-        .unwrap_or_else(|| PathBuf::from("/opt/gizlet/runtime/1"))
+        .unwrap_or_else(|| PathBuf::from("/data/device/runtime/1"))
 }
 
 pub fn installed() -> Installed {
@@ -279,7 +279,7 @@ fn offer(manifest: Manifest, tag: &str, current: &Installed) -> Result<Option<Of
     }
     let Some(ota) = manifest.ota else { return Ok(None) };
     let launcher_version = &tag[1..];
-    if ota.protocol != 1 || ota.arch != "aarch64" || ota.runtime_abi != 1 ||
+    if ota.protocol != 2 || ota.arch != "aarch64" || ota.runtime_abi != 1 ||
         !artifact_valid(&ota.runtime, "runtime/gizlet-runtime-1.sqfs", RUNTIME_LIMIT) ||
         !artifact_valid(&ota.launcher, &format!("launcher/gizlet-launcher-{launcher_version}.gizlet"), LAUNCHER_LIMIT)
     {
@@ -385,7 +385,7 @@ pub fn install(offer: &Offer, mut progress: impl FnMut(Progress)) -> Result<(), 
     )?;
     fs::remove_file(bundle).map_err(error)?;
     fs::create_dir(work.0.join("root")).map_err(error)?;
-    let legacy_runtime = fs::read_link("/opt/gizlet/runtime/1-current").unwrap_or_default();
+    let legacy_runtime = fs::read_link("/data/device/runtime/1-current").unwrap_or_default();
     fs::write(work.0.join("legacy-runtime"), legacy_runtime.as_os_str().as_encoded_bytes()).map_err(error)?;
     run(
         Command::new("/usr/lib/gizlet/gizlet-runtime").arg("trial").arg(&work.0),
@@ -463,7 +463,7 @@ mod tests {
             schema_version: 1,
             tag: "v1.0.10".into(),
             ota: Some(Metadata {
-                protocol: 1,
+                protocol: 2,
                 arch: "aarch64".into(),
                 runtime_abi: 1,
                 runtime: Artifact {
@@ -494,6 +494,8 @@ mod tests {
         fs::write(&runtime_tag, "v2.0.1\n").unwrap();
         assert_eq!(runtime_release_tag(&work.0).as_deref(), Some("v2.0.1"));
         fs::write(work.0.join("manifest"), "gizlet-launcher-1 2.0.2 aarch64-unknown-linux-gnu runtime-1\n").unwrap();
+        assert_eq!(launcher_bundle_version(&work.0), None);
+        fs::write(work.0.join("manifest"), "gizlet-launcher-2 2.0.2 aarch64-unknown-linux-gnu runtime-1\n").unwrap();
         assert_eq!(launcher_bundle_version(&work.0).and_then(|release| tag_from_version(&release)).as_deref(), Some("v2.0.2"));
     }
 
@@ -514,7 +516,10 @@ mod tests {
     }
 
     #[test]
-    fn refuses_unexpected_release_path_architecture_and_abi() {
+    fn refuses_unexpected_release_path_architecture_protocol_and_abi() {
+        let mut wrong = manifest();
+        wrong.ota.as_mut().unwrap().protocol = 1;
+        assert!(offer(wrong, "v1.0.10", &current()).is_err());
         let mut wrong = manifest();
         wrong.ota.as_mut().unwrap().runtime.path = "../gizlet-runtime-1.sqfs".into();
         assert!(offer(wrong, "v1.0.10", &current()).is_err());

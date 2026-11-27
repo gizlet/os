@@ -14,9 +14,9 @@ impl Drop for TestDir {
 }
 
 /// Places a package as `gizlet install` leaves it: a manifest with `extra`
-/// fields and an entry that prints the app's ID.
+/// fields and an entry that prints the app's ID and save folder.
 fn place(root: &std::path::Path, id: &str, extra: serde_json::Value) {
-    let app = root.join("apps").join(id);
+    let app = root.join("device/packages/apps").join(id);
     fs::create_dir_all(&app).unwrap();
     let mut manifest = serde_json::json!({
         "id": id,
@@ -29,7 +29,7 @@ fn place(root: &std::path::Path, id: &str, extra: serde_json::Value) {
     manifest.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
     fs::write(app.join(gizlet_launcher::apps::MANIFEST), manifest.to_string()).unwrap();
     let entry = app.join("hello");
-    fs::write(&entry, "#!/bin/sh\nprintf '%s\\n' \"$GIZLET_APP_ID\"\n").unwrap();
+    fs::write(&entry, "#!/bin/sh\nprintf '%s\\n' \"$GIZLET_APP_ID\" \"$GIZLET_SAVE_DIR\"\n").unwrap();
     fs::set_permissions(&entry, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
@@ -38,9 +38,18 @@ fn run(root: &std::path::Path, id: &str) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_gizlet-launcher"))
         .args(["run", id])
         .env("GIZLET_PREFIX", root)
-        .env("GIZLET_LAUNCHER_DATA", root)
         .output()
         .unwrap()
+}
+
+fn cli(root: &std::path::Path, args: &[&str]) -> String {
+    let child = Command::new(env!("CARGO_BIN_EXE_gizlet-cli")).args(args).env("GIZLET_PREFIX", root).output().unwrap();
+    assert!(child.status.success(), "{args:?}: {child:?}");
+    String::from_utf8(child.stdout).unwrap()
+}
+
+fn current_profile(root: &std::path::Path) -> PathBuf {
+    gizlet_launcher::profiles::Profiles::new(root.to_path_buf()).current_dir().unwrap()
 }
 
 #[test]
@@ -57,8 +66,20 @@ fn shelf_worker_runs_app() {
         place(&root.0, id, extra);
         let child = run(&root.0, id);
         assert!(child.status.success(), "{id}: {child:?}");
-        assert_eq!(String::from_utf8(child.stdout).unwrap().trim(), id);
+        let saves = current_profile(&root.0).join("apps").join(id);
+        assert_eq!(String::from_utf8(child.stdout).unwrap(), format!("{id}\n{}\n", saves.display()));
+        assert!(saves.is_dir());
     }
+    // Another profile runs the same installed app with its own save folder.
+    let first = current_profile(&root.0);
+    cli(&root.0, &["profile", "create", "Ann"]);
+    assert!(cli(&root.0, &["profile", "switch", "Ann"]).contains("switched to Ann"));
+    let ann = current_profile(&root.0);
+    assert_ne!(ann, first);
+    let id = "dev.gizlet.desktop-test";
+    let child = run(&root.0, id);
+    assert_eq!(String::from_utf8(child.stdout).unwrap(), format!("{id}\n{}\n", ann.join("apps").join(id).display()));
+    assert!(cli(&root.0, &["profile", "list"]).lines().any(|l| l.ends_with("\tAnn\tcurrent")));
     // A service is not started as an app.
     let id = "dev.gizlet.desktop-service";
     place(&root.0, id, serde_json::json!({ "schema": 2, "kind": "service" }));
@@ -76,7 +97,7 @@ fn service_exec_runs_the_entry_with_its_folders() {
     fs::create_dir(&root).unwrap();
     let root = TestDir(root);
     let id = "dev.gizlet.desktop-service";
-    let dir = root.0.join("services").join(id);
+    let dir = root.0.join("device/packages/services").join(id);
     fs::create_dir_all(&dir).unwrap();
     let manifest = serde_json::json!({
         "schema": 2,
@@ -103,7 +124,7 @@ fn service_exec_runs_the_entry_with_its_folders() {
             .unwrap();
         assert!(child.status.success(), "{program}: {child:?}");
         let dir = fs::canonicalize(&dir).unwrap();
-        let state = fs::canonicalize(root.0.join("service-data").join(id)).unwrap();
+        let state = fs::canonicalize(current_profile(&root.0).join("services").join(id)).unwrap();
         let runtime = fs::canonicalize(&runtime).unwrap();
         let lines: Vec<PathBuf> = String::from_utf8(child.stdout).unwrap().lines().map(|l| fs::canonicalize(l).unwrap_or_else(|_| PathBuf::from(l))).collect();
         assert_eq!(lines, [PathBuf::from(id), dir.clone(), state.clone(), runtime.clone(), state.clone(), dir], "{program}");

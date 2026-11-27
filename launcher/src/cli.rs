@@ -3,17 +3,19 @@
 //! to the CLI installed alongside the launcher.
 
 use crate::apps::{self, Kind, Library};
+use crate::profiles::{self, Profiles};
 use crate::services::{self, Service};
-use crate::settings::{self, Settings};
+use crate::settings;
 use crate::store::{self, Store};
 use std::path::Path;
 
 const USAGE: &str = "\
 usage: gizlet <command>
 
-  install FILE.gzl       install or update an app or a service
-  uninstall ID [--saves] remove an app, and its saves with --saves; or stop
-                         a service and remove it with all its files
+  install FILE.gzl       install or update an app or a service for every
+                         profile
+  uninstall ID           remove an app, or stop and remove a service; every
+                         profile keeps its data of it
   list                   list installed apps
   run ID [ARGS]          run an app here and wait for it; holding Home
                          for 1 s or Select+Start for 2 s ends it
@@ -37,9 +39,24 @@ usage: gizlet <command>
                          start a service at boot, or not
   service logs ID [-f]   show a service's log
 
-Apps live in <prefix>/apps/<ID>, their saves in <prefix>/saves/<ID>;
-services in <prefix>/services/<ID>, their state in <prefix>/service-data/<ID>.
-The prefix is /opt/gizlet on Gizlet OS, or GIZLET_PREFIX.";
+  profile list           list the profiles: ID, name, and whether it is the
+                         current one or the next boot's
+  profile current        show the current profile's ID and name
+  profile create NAME    create an empty profile
+  profile rename PROFILE NAME
+                         rename a profile
+  profile switch PROFILE stop the current profile's services and restart
+                         into PROFILE
+  profile delete PROFILE --yes
+                         delete a profile other than the current one, with
+                         all its data
+PROFILE is a profile's ID or name.
+
+Apps install in <prefix>/device/packages/apps/<ID> and services in
+<prefix>/device/packages/services/<ID>, for every profile. Each profile keeps
+an app's files in <profile>/apps/<ID> and a service's state in
+<profile>/services/<ID>. The prefix is /data on Gizlet OS, or GIZLET_PREFIX;
+the current profile is mounted at /run/gizlet/profile.";
 
 /// Runs a subcommand and returns its exit status.
 pub fn main(args: &[String]) -> i32 {
@@ -63,10 +80,7 @@ pub fn main(args: &[String]) -> i32 {
             Ok(())
         }
         ("install", [file]) => install(&library, Path::new(file)),
-        ("uninstall" | "remove", [id]) => uninstall(&library, id, false),
-        ("uninstall" | "remove", [id, flag]) | ("uninstall" | "remove", [flag, id]) if flag == "--saves" => {
-            uninstall(&library, id, true)
-        }
+        ("uninstall" | "remove", [id]) => uninstall(&library, id),
         ("list", []) => {
             list(&library);
             Ok(())
@@ -79,6 +93,7 @@ pub fn main(args: &[String]) -> i32 {
         }
         ("service" | "services", rest) => service(&library, rest),
         ("store", rest) => store_command(&library, rest),
+        ("profile" | "profiles", rest) => profile(&library, rest),
         ("install" | "uninstall" | "remove" | "list" | "run" | "start" | "target", _) => {
             Err(format!("wrong arguments for {command}\n{USAGE}"))
         }
@@ -113,16 +128,71 @@ fn install(library: &Library, file: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn uninstall(library: &Library, id: &str, saves: bool) -> Result<(), String> {
-    let kind = Store::new(library).uninstall(library, id, saves).map_err(|e| e.to_string())?;
+fn uninstall(library: &Library, id: &str) -> Result<(), String> {
+    let kind = Store::new(library).uninstall(library, id).map_err(|e| e.to_string())?;
     if kind == Kind::Service {
-        println!("removed the service {id}: stopped, unregistered, and deleted with its state");
-    } else if saves {
-        println!("removed {id} and its saves");
+        println!("removed the service {id}: stopped, unregistered and deleted; each profile keeps its state");
     } else {
-        println!("removed {id}; its saves stay in {}", library.saves(id).display());
+        println!("removed {id}; each profile keeps its files");
     }
     Ok(())
+}
+
+/// `gizlet profile ...`: the local profiles.
+fn profile(library: &Library, args: &[String]) -> Result<(), String> {
+    let profiles = Profiles::open();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    match args.as_slice() {
+        [] | ["list"] => {
+            let current = profiles.current_id()?;
+            let next = profiles.next_id();
+            for p in profiles.list() {
+                let mut marks = Vec::new();
+                if p.id == current {
+                    marks.push("current");
+                }
+                if next.as_deref() == Some(p.id.as_str()) && p.id != current {
+                    marks.push("next boot");
+                }
+                println!("{}\t{}\t{}", p.id, p.label(), marks.join(", "));
+            }
+            Ok(())
+        }
+        ["current"] => {
+            let p = profiles.current()?;
+            println!("{}\t{}", p.id, p.label());
+            Ok(())
+        }
+        ["create", name] => {
+            let p = profiles.create(name)?;
+            println!("created the profile {} ({})", p.label(), p.id);
+            Ok(())
+        }
+        ["rename", key, name] => {
+            let p = profiles.rename(key, name)?;
+            println!("renamed {} to {}", p.id, p.label());
+            Ok(())
+        }
+        ["switch", key] => {
+            let p = profiles::prepare_switch(library, &profiles, key)?;
+            if !profiles::switch_restarts() {
+                println!("switched to {} ({})", p.label(), p.id);
+                return Ok(());
+            }
+            println!("stopped the services; restarting into {} ({})", p.label(), p.id);
+            profiles::restart()
+        }
+        ["delete", key, "--yes"] | ["delete", "--yes", key] => {
+            let p = profiles.delete(key)?;
+            println!("deleted the profile {} ({}) with all its data", p.label(), p.id);
+            Ok(())
+        }
+        ["delete", key] => {
+            let p = profiles.find(key)?;
+            Err(format!("this deletes {} ({}) with its settings, saves, service state and home folder; run `gizlet profile delete {} --yes`", p.label(), p.id, p.id))
+        }
+        _ => Err(format!("wrong arguments for profile\n{USAGE}")),
+    }
 }
 
 fn list(library: &Library) {
@@ -135,7 +205,7 @@ fn list(library: &Library) {
 /// `gizlet store ...`: the Gizlet Store, without signing in.
 fn store_command(library: &Library, args: &[String]) -> Result<(), String> {
     let store = Store::new(library);
-    let lang = Settings::load(&settings::data_dir().join("settings.ini")).language.app_code();
+    let lang = settings::current().language.app_code();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let fail = |e: store::Error| e.to_string();
     match args.as_slice() {
@@ -300,7 +370,7 @@ fn print_status(library: &Library, service: &Service) {
     println!("starts at boot: {}", if service.boot { "yes" } else { "no" });
     println!("unit: {}", services::unit_name(id));
     println!("package: {}", service.package.dir.display());
-    println!("state folder: {}", library.service_data(id).display());
+    println!("state folder: {} (this profile's)", library.service_data(id).display());
     println!("runtime folder: {}", library.service_runtime(id).display());
     println!("log: gizlet service logs {id}");
 }
@@ -309,7 +379,7 @@ fn print_status(library: &Library, service: &Service) {
 fn run(library: &Library, id: &str, args: &[String]) -> Result<(), String> {
     // Held until the app exits, so `gizlet install` and `uninstall` refuse meanwhile.
     let (app, running) = library.open_for_run(id)?;
-    let settings = Settings::load(&settings::data_dir().join("settings.ini"));
+    let settings = settings::current();
     let mut cmd = apps::command(library, &app, settings.language.app_code(), settings.swap_ab, args)
         .map_err(|e| format!("cannot prepare {id}: {e}"))?;
     library.record_played(id);
