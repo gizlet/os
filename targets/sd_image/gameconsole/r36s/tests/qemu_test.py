@@ -495,7 +495,7 @@ Bun.serve({
     if (path === `/api/v1/gizlets/${REPO}`) {
       return json({ ...summary(version), owner: "fixture", device_screenshots: [], controls: [{ button: "a", action: "Jump", actions: {} }], packages: [await pkg(`store-${version}.gzl`)] });
     }
-    const install = /^\/v1\/gizlets\/(.+)\/install$/.exec(path);
+    const install = /^\/api\/v1\/gizlets\/(.+)\/install$/.exec(path);
     if (install && (device || (asked === MUSL && url.searchParams.get("tier") === "lite"))) {
       const repo = install[1];
       if (repo === REPO) return json({ repo, repository_id: (await state("renamed")) ? 9999 : 4242, id: "dev.gizlet.test-store", name: "Store Test", kind: "app", version, tag: `v${version}`, package: await pkg(`store-${version}.gzl`) });
