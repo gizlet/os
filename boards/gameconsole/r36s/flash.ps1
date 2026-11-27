@@ -247,19 +247,6 @@ function Get-BootDrive([int]$number) {
 # public keys, and a setup file not yet imported.
 $GizletBootFiles = 'authorized_keys', 'setup.ini'
 
-function Test-Nv3051dBoot([string]$drive) {
-    $tree = Join-Path $drive 'r36s.dtb'
-    $active = Join-Path $drive 'mipi-panel.dtbo'
-    $profile = Join-Path $drive 'r36s-v30-panel4.dtbo'
-    if ((Test-Path -LiteralPath $tree -PathType Leaf) -and
-        [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($tree)).Contains('I seq=ff52')) { return $true }
-    if ((Test-Path -LiteralPath $active -PathType Leaf) -and
-        (Test-Path -LiteralPath $profile -PathType Leaf)) {
-        return (Get-FileHash -LiteralPath $active).Hash -eq (Get-FileHash -LiteralPath $profile).Hash
-    }
-    return $false
-}
-
 # Updates Gizlet OS on disk $disk from the image $raw: writes everything before
 # the data partition, the boot code, U-Boot and the boot and system
 # partitions, and keeps the data partition and the card's own partition 3
@@ -300,9 +287,6 @@ function Update-Card([string]$raw, $disk) {
         # The user's own files on the boot partition, put back after the write.
         $drive = Get-BootDrive $number
         if ($drive) {
-            if (-not (Test-Nv3051dBoot $drive)) {
-                throw (M 'This update requires the V30 NV3051D boot configuration (Panel 4). Nothing was written.' '此更新要求已有 V30 NV3051D（Panel 4）启动配置。没有写入任何内容。')
-            }
             foreach ($file in $GizletBootFiles) {
                 if (Test-Path -LiteralPath "$drive\$file" -PathType Leaf) {
                     if (-not $kept) { New-Item -ItemType Directory $keep | Out-Null }
@@ -451,9 +435,6 @@ function Update-Card([string]$raw, $disk) {
 
     Write-Host ''
     Write-Host ((M 'Selected:' '已选择：') + " $diskName  $label")
-    if (-not $env:GIZLET_IMAGE -or $managedImage) {
-        Write-Host (M 'This R36S release supports the V30 NV3051D display (Panel 4).' '此 R36S 版本支持 V30 NV3051D 屏幕（Panel 4）。')
-    }
     if ($mode -eq 'update') {
         # --- confirmation 2 of an update: yes. The card is checked again before writing.
         Write-Host (M 'Gizlet OS on this card will be updated. Its boot and system partitions are replaced; the data partition, with installed programs, saves, Wi-Fi networks and settings, is kept.' '将更新这张卡上的 Gizlet OS：替换启动分区和系统分区，保留数据分区，包括已安装的程序、存档、Wi-Fi 网络和设置。')

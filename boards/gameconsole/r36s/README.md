@@ -1,6 +1,6 @@
 # Game Console R36S
 
-This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts` and uses the V30 NV3051D (Panel 4) display configuration. [Board tree](kernel/gizlet-r36s.dts)
+This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts`. [Board tree](kernel/gizlet-r36s.dts)
 
 ## Writing a card
 
@@ -10,7 +10,7 @@ The writers list external disks from smallest to largest, offer the smallest as 
 
 A card with Gizlet OS can be updated using `--update` or `GIZLET_MODE=update` on Windows. After confirmation, the writer replaces the boot code, U-Boot and partitions 1 and 2 while keeping partition 3 with installed programs, every profile, Wi-Fi networks and settings. It also keeps `authorized_keys` and an unimported `setup.ini` on the boot partition. The writer checks that partitions 1 and 2 match the image and that partition 3 starts at the expected sector and holds the data filesystem before writing. It writes the partition table last. On the next boot, the system selects the newest compatible Launcher and CLI on the data partition, or uses the factory pair. Gizlet runtime 1 stays on the data partition.
 
-The update mode requires a card with the local profiles layout and a V30 NV3051D boot configuration. The writers reject updates of cards configured for other displays before writing. Cards made before local profiles require a full image write. The writers can extend the data partition and grow its ext4 filesystem to fill the card offline. A card written with another tool starts with the image's 128 MiB data partition and grows it on first boot.
+The update mode requires a card with the local profiles layout. Cards made before local profiles require a full image write. The writers can extend the data partition and grow its ext4 filesystem to fill the card offline. A card written with another tool starts with the image's 128 MiB data partition and grows it on first boot.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.sh | bash
@@ -28,9 +28,11 @@ Build `:gizlet-os-r36s` to produce `gizlet-os-r36s.img`. Run this board's `flash
 
 ## Display support
 
-The current image supports the V30 NV3051D (Panel 4) configuration. The R36S tree includes the [panel profile](kernel/panels/r36s-v30-panel4.dtsi), which supplies timings and initialization commands to the built-in ROCKNIX generic DSI driver.
+The image includes the [original ST7703 profile](kernel/panels/r36s-panel0.dtsi) and [V30 NV3051D profile](kernel/panels/r36s-v30-panel4.dtsi). The ST7703 timings and initialization sequence come from the pinned ROCKNIX R36S driver.
 
-The driver reads DCS `04`, `DA`, `DB`, and `DC` before initialization and reports the results in `gizlet.log`. These values provide diagnostics. Boot currently uses the single built-in profile. Additional panels need their own profiles and a verified way to select them at boot.
+The kernel reads the display ID with DCS `04` before it advertises the display modes. The ST7703 profile matches both IDs listed in the [ST7703 data sheet](https://files.pine64.org/doc/datasheet/pinephone/ST7703_DS_v01_20160128.pdf), `38 21 1F` in section 6.2.3 and `83 12 F1` in the command table. Boot falls back to the NV3051D profile when no ID matches. The detected ID and selected profile appear in `gizlet.log`. ST7703 auto-detection is unverified on physical hardware.
+
+To add a panel, include its device-tree profile from `gizlet-r36s.dts`. Add a child under `panel-profiles` with one or more three-byte IDs in `gizlet,display-ids` and `panel_description` entries for the link, timing and full initialization sequence. The flash scripts use the same image for every profile.
 
 The legacy U-Boot picks a dtb name from a board-revision ADC reading before it runs `boot.scr`. Each card therefore carries its tree as `r36s.dtb` and under every name U-Boot can choose. [Card facts](card.bzl)
 

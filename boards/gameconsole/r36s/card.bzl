@@ -39,6 +39,8 @@ R36S_CARD = {
         "properties": [
             ["/", "model", "Game Console R36S"],
             ["/dsi@ff450000/panel@0", "compatible", "rocknix,generic-dsi"],
+            ["/dsi@ff450000/panel@0", "gizlet,r36s-display-probe", ""],
+            ["/dsi@ff450000/panel@0/panel-profiles/st7703", "gizlet,display-ids", "56 33 31 131 18 241"],
             ["/aliases", "mmc1", "/mmc@ff370000"],
             ["/mmc@ff370000", "status", "okay"],
             ["/aliases", "serial2", "/serial@ff160000"],

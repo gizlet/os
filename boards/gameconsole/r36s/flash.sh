@@ -61,9 +61,6 @@ main() {
     [ -z "${dry_run}" ] || exit 0
     choose_disk
     choose_mode
-    if [ -z "${image}" ] || [ -n "${GIZLET_IMAGE_URL:-}" ]; then
-        say "$(m 'This R36S release supports the V30 NV3051D display (Panel 4).' '此 R36S 版本支持 V30 NV3051D 屏幕（Panel 4）。')"
-    fi
     work=$(mktemp -d)
     trap 'rm -rf "${work}"' EXIT
     if [ "${mode}" = update ]; then confirm_update; else confirm_erase; fi
@@ -548,29 +545,18 @@ unmount_boot() {
     fi
 }
 
-boot_supports_nv3051d() {
-    LC_ALL=C grep -aqF 'I seq=ff52' "$1/r36s.dtb" 2>/dev/null ||
-        cmp -s "$1/r36s-v30-panel4.dtbo" "$1/mipi-panel.dtbo"
-}
-
 # save_boot_files: copies the boot partition's own files to ${keep}, a
 # directory of its own outside ${work}, which is removed on exit: if a write
 # fails after the boot partition is overwritten, they stay there, and die and
 # restore_boot_files say where. ${boot_backup} names it once the copy is whole.
 save_boot_files() {
     kept='' boot_backup=''
+    keep=$(mktemp -d "${TMPDIR:-/tmp}/gizlet-boot-files.XXXXXX") || die "$(m 'cannot create a temporary directory; nothing was written' '无法创建临时目录，没有写入任何内容')"
     # The update rewrites the boot partition, so its files must be kept first.
     if ! mount_boot ro; then
+        rm -rf "${keep}"
         die "$(m "cannot read the boot partition ${part} to keep its authorized_keys and setup.ini; nothing was written" "无法读取启动分区 ${part}，不能保留上面的 authorized_keys 和 setup.ini；没有写入任何内容")"
     fi
-    if ! boot_supports_nv3051d "${boot_dir}"; then
-        unmount_boot || true
-        die "$(m 'This update requires the V30 NV3051D boot configuration (Panel 4). Nothing was written.' '此更新要求已有 V30 NV3051D（Panel 4）启动配置。没有写入任何内容。')"
-    fi
-    keep=$(mktemp -d "${TMPDIR:-/tmp}/gizlet-boot-files.XXXXXX") || {
-        unmount_boot || true
-        die "$(m 'cannot create a temporary directory; nothing was written' '无法创建临时目录，没有写入任何内容')"
-    }
     for file in ${BOOT_FILES}; do
         if [ -f "${boot_dir}/${file}" ]; then
             if ! cp "${boot_dir}/${file}" "${keep}/${file}"; then

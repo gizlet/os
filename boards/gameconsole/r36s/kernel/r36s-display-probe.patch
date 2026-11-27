@@ -1,0 +1,68 @@
+--- a/drivers/gpu/drm/bridge/synopsys/dw-mipi-dsi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-mipi-dsi.c
+@@ -245,6 +245,7 @@
+ 	struct drm_bridge bridge;
+ 	struct mipi_dsi_host dsi_host;
+ 	struct drm_bridge *panel_bridge;
++	struct mipi_dsi_device *probe_panel;
+ 	struct device *dev;
+ 	void __iomem *base;
+ 
+@@ -339,6 +340,8 @@
+ 
+ 	bridge->pre_enable_prev_first = true;
+ 	dsi->panel_bridge = bridge;
++	if (of_property_read_bool(device->dev.of_node, "gizlet,r36s-display-probe"))
++		dsi->probe_panel = device;
+ 
+ 	drm_bridge_add(&dsi->bridge);
+ 
+@@ -351,6 +354,7 @@
+ 	return 0;
+ 
+ err_remove_bridge:
++	dsi->probe_panel = NULL;
+ 	drm_bridge_remove(&dsi->bridge);
+ 	return ret;
+ }
+@@ -370,6 +374,7 @@
+ 
+ 	drm_of_panel_bridge_remove(host->dev->of_node, 1, 0);
+ 
++	dsi->probe_panel = NULL;
+ 	drm_bridge_remove(&dsi->bridge);
+ 
+ 	return 0;
+@@ -1326,6 +1331,20 @@
+  */
+ int dw_mipi_dsi_bind(struct dw_mipi_dsi *dsi, struct drm_encoder *encoder)
+ {
++	static const struct drm_display_mode probe_mode = {
++		DRM_MODE("640x480", 0, 58870, 640, 940, 1142, 1442, 0,
++			 480, 497, 509, 522, 0, 0),
++	};
++
++	if (dsi->probe_panel && !dsi->master && !dsi->slave) {
++		dw_mipi_dsi_mode_set(dsi, &probe_mode);
++		gizlet_r36s_detect_panel(dsi->probe_panel);
++		dw_mipi_dsi_bridge_post_atomic_disable(&dsi->bridge, NULL);
++		dsi->lanes = dsi->probe_panel->lanes;
++		dsi->format = dsi->probe_panel->format;
++		dsi->mode_flags = dsi->probe_panel->mode_flags;
++	}
++
+ 	return drm_bridge_attach(encoder, &dsi->bridge, NULL, 0);
+ }
+ EXPORT_SYMBOL_GPL(dw_mipi_dsi_bind);
+--- a/include/drm/bridge/dw_mipi_dsi.h
++++ b/include/drm/bridge/dw_mipi_dsi.h
+@@ -20,6 +20,9 @@
+ struct drm_display_mode;
+ struct drm_encoder;
+ struct dw_mipi_dsi;
++struct mipi_dsi_device;
++
++void gizlet_r36s_detect_panel(struct mipi_dsi_device *device);
+ struct mipi_dsi_device;
+ struct platform_device;
+ 
