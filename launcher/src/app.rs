@@ -254,6 +254,12 @@ impl Updates {
         });
     }
 
+    fn has_spinner(&self) -> bool {
+        self.work.is_some()
+            && (self.installed.is_none()
+                || matches!(self.state, UpdateState::Checking | UpdateState::Installing(ota::Progress::Verify)))
+    }
+
     fn poll(&mut self) -> bool {
         let Some(work) = &self.work else { return false };
         let event = match work.try_recv() {
@@ -527,6 +533,9 @@ impl App {
             || !self.toasts.is_empty()
             || self.page() == Page::ButtonTest
             || (self.page() == Page::Services && (self.services.busy() || self.services.list.is_none()))
+            || (self.page() == Page::Settings
+                && self.focused_category() == Category::System
+                && self.updates.as_ref().is_some_and(Updates::has_spinner))
             || self.wifi.scanning
             || self.wifi.connecting.is_some()
             || self.wifi.switching.is_some()
@@ -1528,7 +1537,9 @@ impl App {
             Category::System => {
                 self.update_items(&mut items);
                 items.push(Item::section(t(T::About)));
-                items.push(Item::info(t(T::Version), self.version));
+                if self.updates.is_none() {
+                    items.push(Item::info(t(T::Version), self.version));
+                }
                 let unknown = || t(T::Unknown);
                 items.push(Item::info(t(T::Device), snap.info.model.clone().unwrap_or_else(unknown)));
                 items.push(Item::info(t(T::OperatingSystem), snap.info.os.clone()));
@@ -1726,5 +1737,58 @@ impl App {
         } else if !self.wifi.scanning {
             items.push(Item::new(ItemId::WifiScan, t(T::WifiScan), ItemValue::Button));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn installed() -> ota::Installed {
+        ota::Installed { launcher: "1.2.3".into(), runtime: None, pending: None, failed: None }
+    }
+
+    #[test]
+    fn ota_spinner_keeps_only_system_settings_animating() {
+        let mut app = App::new(std::env::temp_dir(), "0.1.0");
+        let (send, work) = mpsc::channel();
+        app.updates = Some(Updates { installed: None, work: Some(work), state: UpdateState::Idle });
+        assert!(!app.animating());
+
+        app.push(Page::Settings);
+        assert!(!app.animating());
+        app.focus.category = Category::ALL.iter().position(|&category| category == Category::System).unwrap();
+        assert!(app.animating());
+
+        let updates = app.updates.as_mut().unwrap();
+        updates.installed = Some(installed());
+        updates.state = UpdateState::Checking;
+        assert!(app.animating());
+        app.updates.as_mut().unwrap().state = UpdateState::Installing(ota::Progress::Runtime(50));
+        assert!(!app.animating());
+        app.updates.as_mut().unwrap().state = UpdateState::Installing(ota::Progress::Verify);
+        assert!(app.animating());
+
+        send.send(UpdateEvent::Staged(Ok("v1.2.4".into()))).unwrap();
+        assert!(app.updates.as_mut().unwrap().poll());
+        assert!(!app.animating());
+    }
+
+    #[test]
+    fn system_settings_show_one_launcher_version() {
+        let mut app = App::new(std::env::temp_dir(), "0.1.0");
+        app.snapshot = Some(crate::system::probe(std::env::temp_dir()));
+        let version_rows = |app: &App| {
+            app.settings_items(Category::System).into_iter()
+                .filter(|item| item.label == app.t(T::Version) || item.label == app.t(T::OtaLauncher))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(version_rows(&app), vec![Item::info(app.t(T::Version), "0.1.0")]);
+
+        let (_send, work) = mpsc::channel();
+        app.updates = Some(Updates { installed: None, work: Some(work), state: UpdateState::Idle });
+        assert!(version_rows(&app).is_empty());
+        app.updates.as_mut().unwrap().installed = Some(installed());
+        assert_eq!(version_rows(&app), vec![Item::info(app.t(T::OtaLauncher), "1.2.3")]);
     }
 }
