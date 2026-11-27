@@ -1,16 +1,16 @@
 # Game Console R36S
 
-This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts`, which describes the R36S with Panel 0, an ST7703. [Board tree](kernel/gizlet-r36s.dts) [Board and display reference](https://github.com/southoz/dArkOSRE-R36/tree/3f372c85aa53a26b265c3dc0c2661ec0fae5faf0/files/BOOT/dtb/r36s/R36S-V12%202023-08-18%20Panel%200)
+This board builds on ROCKNIX's `rk3326-gameconsole-r36s.dts`. [Board tree](kernel/gizlet-r36s.dts)
 
 ## Writing a card
 
-Each release publishes one R36S image, `gizlet-os-r36s.img.gz`. The writers ask for a language (English or 中文) and the target disk, then download the image and verify it against `SHA256SUMS` before writing. They read the display configuration from the card when possible and prompt when needed. The writer uses that setting to configure the boot partition. [Display variants](#display-variants) · [macOS and Linux writer](flash.sh) · [Windows writer](flash.ps1)
+Each release publishes one R36S image, `gizlet-os-r36s.img.gz`. The writers ask for a language (English or 中文) and the target disk, then download the image and verify it against `SHA256SUMS` before writing. The image contains the display configuration and works on a blank card. [Display support](#display-support) · [macOS and Linux writer](flash.sh) · [Windows writer](flash.ps1)
 
 The writers list external disks from smallest to largest, offer the smallest as the default, and flag disks over 256 GB. A full write erases all data after you select the disk, answer `y`, and type its name. Keep the stock card as a backup.
 
-A card with Gizlet OS can be updated using `--update` or `GIZLET_MODE=update` on Windows. After confirmation, the writer replaces the boot code, U-Boot and partitions 1 and 2 while keeping partition 3 with installed programs, saves, Wi-Fi networks and settings. It also keeps `authorized_keys` and an unimported `setup.ini` on the boot partition. The writer checks that partitions 1 and 2 match the image and that partition 3 starts at the expected sector and holds the data filesystem before writing. It writes the partition table last. On the next boot, the system selects the newest compatible Launcher and CLI on the data partition, or uses the factory pair. Gizlet runtime 1 stays on the data partition.
+A card with Gizlet OS can be updated using `--update` or `GIZLET_MODE=update` on Windows. After confirmation, the writer replaces the boot code, U-Boot and partitions 1 and 2 while keeping partition 3 with installed programs, every profile, Wi-Fi networks and settings. It also keeps `authorized_keys` and an unimported `setup.ini` on the boot partition. The writer checks that partitions 1 and 2 match the image and that partition 3 starts at the expected sector and holds the data filesystem before writing. It writes the partition table last. On the next boot, the system selects the newest compatible Launcher and CLI on the data partition, or uses the factory pair. Gizlet runtime 1 stays on the data partition.
 
-The writers can extend the data partition and grow its ext4 filesystem to fill the card offline. A card written with another tool starts with the image's 128 MiB data partition and grows it on first boot.
+The update mode requires a card with the local profiles layout. Cards made before local profiles require a full image write. The writers can extend the data partition and grow its ext4 filesystem to fill the card offline. A card written with another tool starts with the image's 128 MiB data partition and grows it on first boot.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/flash.sh | bash
@@ -24,22 +24,15 @@ irm https://raw.githubusercontent.com/gizlet/os/main/boards/gameconsole/r36s/fla
 
 ## Local images and display validation
 
-Build the standard `:gizlet-os-r36s` target to produce `gizlet-os-r36s.img`. Run this board's `flash.sh --image FILE` to write a local `.img` or `.img.gz`, or set `GIZLET_IMAGE` for `flash.ps1`. The local image path uses the boot configuration already in the image. To use a different display configuration, set `mipi-panel.dtbo` on the boot partition as described in [Display variants](#display-variants).
+Build `:gizlet-os-r36s` to produce `gizlet-os-r36s.img`. Run this board's `flash.sh --image FILE` to write a local `.img` or `.img.gz`, or set `GIZLET_IMAGE` for `flash.ps1`. To validate the display, write the standard image to a blank TF1 card and cold boot to the Launcher.
 
-For bench testing a card with the overlay already selected, Bazel provides an optional preconfigured image and its card test.
+## Display support
 
-```sh
-bazel build --config=r36s //targets/sd_image/gameconsole/r36s:gizlet-os-r36s-v30-panel4
-bazel test --config=r36s --test_output=errors //targets/sd_image/gameconsole/r36s:image_test_r36s_v30_panel4
-```
+The image includes the [original ST7703 profile](kernel/panels/r36s-panel0.dtsi) and [V30 NV3051D profile](kernel/panels/r36s-v30-panel4.dtsi). The ST7703 timings and initialization sequence come from the pinned ROCKNIX R36S driver.
 
-## Display variants
+The kernel reads the display ID with DCS `04` before it advertises the display modes. The ST7703 profile matches both IDs listed in the [ST7703 data sheet](https://files.pine64.org/doc/datasheet/pinephone/ST7703_DS_v01_20160128.pdf), `38 21 1F` in section 6.2.3 and `83 12 F1` in the command table. Boot falls back to the NV3051D profile when no ID matches. The detected ID and selected profile appear in `gizlet.log`. ST7703 auto-detection is unverified on physical hardware.
 
-R36S units ship with different LCD panels. The stock firmware numbers them; the two Gizlet OS supports have different controllers. Panel 0, on early V12 boards, is a Sitronix ST7703, and Panel 4, on later V12 boards and on V21, V22 and V30 boards, is a NewVision NV3051D. As in ROCKNIX, the device tree describes Panel 0 and `boot.scr` applies `mipi-panel.dtbo` from the FAT boot partition when it is present. Each card carries the known panel overlays beside the tree; copy the one for your unit to `mipi-panel.dtbo`, or flash a card that already has it. `r36s-v30-panel4.dtbo` drives Panel 4 through ROCKNIX's generic DSI driver, with the init sequence converted from the stock V30 dtb; the V21 and V22 dtbs tune the same controller differently, as the Y02 dtb tunes an ST7703, and are untested. A wrong panel boots with the backlight on and a blank screen. `uboot.log` records which overlay was applied.
-
-The writers tell the panel from the card being written. A stock card's `boot.ini` loads the kernel dtb that describes the unit, and the first command of its panel's init sequence names the controller: ST7703's `B9 F1 12 83` or NV3051D's page select `FF 30`, `FF 52`, `FF 01`. That answer is taken without a question. The R36S Plus's ST7703 sequence starts otherwise and is not matched. A Gizlet OS card offers the panel it was written for as the default, since it may be the wrong one being corrected. Any other card, or a card that cannot be read, leaves the choice to the user, and `--panel` (`GIZLET_PANEL` for `flash.ps1`) skips it.
-
-The Panel 4 overlay first asks the panel for its identification, DCS `04` and the ID registers `DA`, `DB` and `DC`, and the driver logs the answers in order as `read[N]` lines in dmesg, and so in `gizlet.log`. Initialization goes on whether or not the panel answers. Those reads decide whether a later kernel can tell the panels apart at boot. [V30 Panel 4](kernel/panels/r36s-v30-panel4.dtso)
+To add a panel, include its device-tree profile from `gizlet-r36s.dts`. Add a child under `panel-profiles` with one or more three-byte IDs in `gizlet,display-ids` and `panel_description` entries for the link, timing and full initialization sequence. The flash scripts use the same image for every profile.
 
 The legacy U-Boot picks a dtb name from a board-revision ADC reading before it runs `boot.scr`. Each card therefore carries its tree as `r36s.dtb` and under every name U-Boot can choose. [Card facts](card.bzl)
 
@@ -56,7 +49,7 @@ The 464 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes.
 | 163840 | Partition 2, 256 MiB allocation | `root=PARTUUID=36335030-02`, the read-only Debian base (SquashFS) |
 | 688128 | Partition 3, ext4, `GIZLETDATA`: 128 MiB in the image, extended to the end of the card, filesystem included, by the card writers, or on first boot | Writable installation and user storage, with Gizlet runtime 1 |
 
-`gizlet-data.service` identifies the mounted root device through `/proc/self/mountinfo` and sysfs. It mounts ext4 partition 3 of that same disk, with the image's filesystem UUID `17605036-fda0-4633-a95b-2ed27409a90c`. Its `gizlet/` and `home/` directories are bind-mounted at `/opt/gizlet` and `/home`. Both live on the card, and `system/` keeps the ssh host key, iwd's networks and BlueZ's pairings. `/run` and `/tmp` live in RAM, and `/var` is the image's `/var` with a RAM overlay. Boot-time setup only mounts existing filesystems. Formatting and creation of the two data directories happen while building the image. The filesystem uses `meta_bg` without `resize_inode` ([sdcard.cfg](sdcard.cfg)), so growing it only adds metadata in the new groups and never moves a block. An unmountable, read-only, mismatched or incomplete data partition results in local recovery. `gizlet.log` lists the seconds since boot at each step of the data mount (`gizlet-mount-data steps:`). [Data mounts](../../../rootfs/usr/lib/gizlet/gizlet-mount-data) · [Units](../../../rootfs/usr/lib/systemd/system)
+`gizlet-data.service` identifies the mounted root device through `/proc/self/mountinfo` and sysfs. It mounts ext4 partition 3 of that same disk, with the image's filesystem UUID `cef58f4f-a7a3-40ac-9cb3-bd8d89aab65f`, at `/data`. Its `device/` directory holds what every local profile shares: installed packages, runtimes, Launcher releases, and in `settings/` the ssh host key, iwd's networks, BlueZ's pairings and the other device settings. `profiles/` holds one directory per [profile](../../../launcher/README.md#profiles). The profile named in `device/boot-profile`, the oldest one without it, or a new one on a fresh card, is bind-mounted at `/run/gizlet/profile`, and its `home/` at `/home`. `/run` and `/tmp` live in RAM, and `/var` is the image's `/var` with a RAM overlay. Boot-time setup only mounts existing filesystems. Formatting and creation of `device/` and `profiles/` happen while building the image; the first boot creates the first profile. The filesystem uses `meta_bg` without `resize_inode` ([sdcard.cfg](sdcard.cfg)), so growing it only adds metadata in the new groups and never moves a block. An unmountable, read-only, mismatched or incomplete data partition results in local recovery. `gizlet.log` lists the seconds since boot at each step of the data mount (`gizlet-mount-data steps:`). [Data mounts](../../../rootfs/usr/lib/gizlet/gizlet-mount-data) · [Units](../../../rootfs/usr/lib/systemd/system)
 
 ## TF2 card
 
@@ -76,23 +69,23 @@ Hold FN for a second, or Select and Start for two, to end any app and return to 
 
 ## Installing an entry
 
-On the third partition install a trusted executable at, for example, `gizlet/bin/launcher`. Give it executable mode. Write `gizlet/boot.ini` in the following format. From the running OS the same file is `/opt/gizlet/boot.ini`.
+On the third partition install a trusted executable at, for example, `device/bin/launcher`. Give it executable mode. Write `device/boot.ini` in the following format. From the running OS the same file is `/data/device/boot.ini`. The entry belongs to the device, so every profile boots it.
 
 ```ini
 [boot]
 entry=bin/launcher
 ```
 
-The file limit is 4096 bytes. The grammar accepts one `[boot]` section with one `entry=` assignment, empty lines and full-line `#` comments. Each path component accepts ASCII letters, digits, `.`, `_`, `+` and `-`. Use a relative path and real directories under `/opt/gizlet`. The Booter rejects absolute paths, `.` and `..` components, symlinks, nonregular files and files without executable mode. It executes the selected file directly with `/opt/gizlet` as the working directory. A static AArch64 Linux executable or a `#!/bin/sh` script works with this base system. Installed code runs with local root privileges. Restrict write access to the installation tree and trust the card and installed programs.
+The file limit is 4096 bytes. The grammar accepts one `[boot]` section with one `entry=` assignment, empty lines and full-line `#` comments. Each path component accepts ASCII letters, digits, `.`, `_`, `+` and `-`. Use a relative path and real directories under `/data/device`. The Booter rejects absolute paths, `.` and `..` components, symlinks, nonregular files and files without executable mode. It executes the selected file directly with `/data/device` as the working directory. A static AArch64 Linux executable or a `#!/bin/sh` script works with this base system. Installed code runs with local root privileges. Restrict write access to the installation tree and trust the card and installed programs.
 
 The following example installs a local smoke-test program from the recovery shell. A fresh card has no `boot.ini`, so it starts the factory Launcher from the read-only rootfs. Installing a signed [Launcher release](../../../launcher/README.md#updating-the-launcher-and-cli) makes it available at the next boot. `/usr/bin/gizlet` uses the CLI from the release selected at boot, including when `boot.ini` selects a custom entry. The launcher runs against Gizlet runtime 1 and draws on the LCD with OpenGL ES 3.0 on the GPU (Panfrost) through DRM: a home screen, settings for Wi-Fi, ssh, brightness, volume, battery, the A/B swap and the language, and a button test. Power → Quit the Launcher opens the recovery shell. Deleting `boot.ini` restores the managed Launcher as the boot entry. `/usr/lib/gizlet/launcher-release start --probe` prints what the selected Launcher detects. [Launcher](../../../launcher)
 
 ```sh
-mkdir -p /opt/gizlet/bin
-printf '%s\n' '#!/bin/sh' 'echo hello-from-card' > /opt/gizlet/bin/hello
-chmod 755 /opt/gizlet/bin/hello
-printf '%s\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini.new
-mv /opt/gizlet/boot.ini.new /opt/gizlet/boot.ini
+mkdir -p /data/device/bin
+printf '%s\n' '#!/bin/sh' 'echo hello-from-card' > /data/device/bin/hello
+chmod 755 /data/device/bin/hello
+printf '%s\n' '[boot]' 'entry=bin/hello' > /data/device/boot.ini.new
+mv /data/device/boot.ini.new /data/device/boot.ini
 sync
 exit
 ```
@@ -105,7 +98,7 @@ The OTG port is a USB host with VBUS on from boot, as in the stock firmware. V30
 
 ## Bluetooth
 
-The R36S has no Bluetooth radio of its own. A standard USB Bluetooth controller (class E0/01/01) on the OTG port works with the kernel's `btusb` driver: the kernel builds in the Bluetooth core with LE (`CONFIG_BT`, `CONFIG_BT_LE`), `CONFIG_BT_HCIBTUSB`, and `CONFIG_UHID` for BlueZ's HID-over-GATT keyboards and gamepads. Plugging one in creates `hci0`; udev then pulls in `bluetooth.target`, which starts BlueZ's `bluetoothd`. Without a controller it does not run. `bluetoothctl` and `btmgmt` drive it from the recovery shell or ssh, and its pairings live in `system/bluetooth` on the data partition. The base carries no Bluetooth firmware, so dongles that load vendor firmware from `/lib/firmware`, as most Realtek, Intel and MediaTek ones do, are not covered. An ESP32-S3 running the `gizlet/otg-device` `ble` firmware (303a:40e0, LE only) is the controller this targets. [Linux configuration](kernel/kernel.config) · [Packages](../../../rootfs/packages.json)
+The R36S has no Bluetooth radio of its own. A standard USB Bluetooth controller (class E0/01/01) on the OTG port works with the kernel's `btusb` driver: the kernel builds in the Bluetooth core with LE (`CONFIG_BT`, `CONFIG_BT_LE`), `CONFIG_BT_HCIBTUSB`, and `CONFIG_UHID` for BlueZ's HID-over-GATT keyboards and gamepads. Plugging one in creates `hci0`; udev then pulls in `bluetooth.target`, which starts BlueZ's `bluetoothd`. Without a controller it does not run. `bluetoothctl` and `btmgmt` drive it from the recovery shell or ssh, and its pairings live in `device/settings/bluetooth` on the data partition. The base carries no Bluetooth firmware, so dongles that load vendor firmware from `/lib/firmware`, as most Realtek, Intel and MediaTek ones do, are not covered. An ESP32-S3 running the `gizlet/otg-device` `ble` firmware (303a:40e0, LE only) is the controller this targets. [Linux configuration](kernel/kernel.config) · [Packages](../../../rootfs/packages.json)
 
 ## Audio
 

@@ -14,15 +14,19 @@
 //!
 //! | Path | Holds |
 //! | --- | --- |
-//! | `<prefix>/services/<id>/` | The package |
-//! | `<prefix>/services/.boot-<id>` | Present while it starts at boot |
-//! | `<prefix>/service-data/<id>/` | Its state and configuration (`GIZLET_STATE_DIR`), kept across updates |
+//! | `<prefix>/device/packages/services/<id>/` | The package, shared by every profile |
+//! | `<profile>/services/<id>/` | Its state and configuration in the current profile (`GIZLET_STATE_DIR`), kept across updates and uninstalls |
+//! | `<profile>/enabled-services` | The services the profile starts at boot, one ID a line |
 //! | `/run/gizlet-services/<id>/` | Its sockets and other runtime files (`GIZLET_RUNTIME_DIR`), removed when it stops |
 //!
-//! Uninstalling stops it and every process it started, unregisters the unit
-//! and deletes all of these.
+//! Only the profile mounted at boot runs services: boot starts the ones it
+//! enables, and switching to another profile stops them all first (see
+//! [`crate::profiles`]). Uninstalling stops the service and every process it
+//! started, unregisters the unit and deletes the package and its runtime
+//! folder; each profile's state stays.
 
 use crate::apps::{self, App, Kind, Library, Manifest};
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -320,12 +324,12 @@ fn cli_path() -> Result<PathBuf, String> {
 
 impl Library {
     pub fn services_dir(&self) -> PathBuf {
-        self.prefix().join("services")
+        self.device_dir().join("packages/services")
     }
 
-    /// The service's state and configuration, kept across updates and deleted on uninstall.
+    /// The service's state and configuration in the current profile, kept across updates and uninstalls.
     pub fn service_data(&self, id: &str) -> PathBuf {
-        self.prefix().join("service-data").join(id)
+        self.profile().join("services").join(id)
     }
 
     /// The service's runtime folder, which systemd creates as it starts and removes once it stops.
@@ -333,8 +337,37 @@ impl Library {
         self.run_dir().join(id)
     }
 
-    fn boot_flag(&self, id: &str) -> PathBuf {
-        self.services_dir().join(format!(".boot-{id}"))
+    fn enabled_path(&self) -> PathBuf {
+        self.profile().join("enabled-services")
+    }
+
+    /// The services the current profile starts at boot.
+    pub fn enabled(&self) -> BTreeSet<String> {
+        fs::read_to_string(self.enabled_path())
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|id| apps::is_valid_id(id))
+            .map(String::from)
+            .collect()
+    }
+
+    /// Adds `id` to the current profile's services started at boot, or takes it out.
+    fn set_enabled(&self, id: &str, on: bool) -> Result<(), String> {
+        let mut enabled = self.enabled();
+        let changed = if on { enabled.insert(id.to_string()) } else { enabled.remove(id) };
+        if !changed {
+            return Ok(());
+        }
+        let path = self.enabled_path();
+        let text: String = enabled.iter().map(|id| format!("{id}\n")).collect();
+        let tmp = path.with_extension("new");
+        path.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| fs::write(&tmp, text)).and_then(|()| fs::rename(&tmp, &path)).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("{}: {e}", path.display())
+        })?;
+        apps::sync();
+        Ok(())
     }
 
     /// The package of a service being uninstalled: renamed here once it is
@@ -448,7 +481,7 @@ impl Library {
     }
 
     fn status(&self, package: App, unit: &UnitState) -> Service {
-        let boot = self.boot_flag(package.id()).exists();
+        let boot = self.enabled().contains(package.id());
         Service { boot, state: State::of(unit), pid: (unit.pid != 0).then_some(unit.pid), package }
     }
 
@@ -607,8 +640,7 @@ impl Library {
         apps::sync();
         let started = self.register(id).and_then(|()| {
             if previous.is_none() {
-                fs::write(self.boot_flag(id), "").map_err(|e| format!("{}: {e}", self.boot_flag(id).display()))?;
-                apps::sync();
+                self.set_enabled(id, true)?;
             }
             if previous.is_none() || was_running {
                 self.start_checked(id)?;
@@ -673,20 +705,15 @@ impl Library {
         })
     }
 
-    /// Uninstalls the service with the library locked: it no longer starts
-    /// at boot, it and every process it started stop, its unit is
-    /// unregistered, and its package, state and runtime folder are deleted.
-    /// Each failure says what is left and what to do.
+    /// Uninstalls the service with the library locked: the current profile
+    /// no longer starts it at boot, it and every process it started stop, its
+    /// unit is unregistered, and its package and runtime folder are deleted.
+    /// Each profile's state stays. Each failure says what is left and what to do.
     pub(crate) fn remove_service(&self, id: &str) -> Result<(), String> {
         let root = self.services_dir();
         let unit = unit_name(id);
         let again = format!("then run `gizlet uninstall {id}` again");
-        let flag = self.boot_flag(id);
-        match fs::remove_file(&flag) {
-            Ok(()) => apps::sync(),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("cannot turn off {id} at boot: {}: {e}; nothing was removed", flag.display())),
-        }
+        self.set_enabled(id, false).map_err(|e| format!("cannot turn off {id} at boot: {e}; nothing was removed"))?;
         let running = self.stop_verified(id).map_err(|e| {
             format!("cannot stop {id}: {e}. Nothing was removed, and it no longer starts at boot: restart the device, {again}")
         })?;
@@ -706,8 +733,8 @@ impl Library {
     }
 
     /// Deletes what an uninstall leaves once the service is stopped and
-    /// unregistered: its state, runtime folder and lock, then its package.
-    /// `running` is its running lock if the caller holds it.
+    /// unregistered: its runtime folder and lock, then its package. The
+    /// profiles' state stays. `running` is its running lock if the caller holds it.
     pub(crate) fn finish_uninstall(&self, id: &str, running: Option<File>) -> Result<(), String> {
         let again = format!("then run `gizlet uninstall {id}` again");
         let root = self.services_dir();
@@ -715,15 +742,11 @@ impl Library {
             Some(lock) => lock,
             None => self.not_running_settled(id).map_err(|_| format!("{id} is still running, as `gizlet service exec {id}`; stop it, {again}"))?,
         };
-        let mut folders = vec![self.service_data(id)];
         // The runtime folder is shared by name; another prefix may run its own service of this ID by now.
         if self.owns(&unit_name(id)).is_ok() {
-            folders.push(self.service_runtime(id));
-        }
-        for dir in folders {
+            let dir = self.service_runtime(id);
             remove_tree(&dir).map_err(|e| format!("{id} is stopped and unregistered, but {} cannot be deleted: {e}; {again}", dir.display()))?;
         }
-        let _ = fs::remove_file(self.boot_flag(id));
         drop(running);
         let _ = fs::remove_file(self.running_in(&root, id));
         let package = self.uninstalling(id);
@@ -773,8 +796,7 @@ impl Library {
     }
 
     /// After a crash in the middle of an uninstall, with the library locked:
-    /// deletes the boot flags, running locks and state of services that are
-    /// no longer installed.
+    /// deletes the running locks of services that are no longer installed.
     pub(crate) fn sweep_services(&self) {
         let root = self.services_dir();
         // A backup that recovery could not yet put back still holds the service.
@@ -794,9 +816,7 @@ impl Library {
         }
         for e in fs::read_dir(&root).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if let Some(id) = name.strip_prefix(".boot-").filter(|id| !installed(id)) {
-                let _ = fs::remove_file(self.boot_flag(id));
-            } else if let Some(id) = name.strip_prefix(".running-").filter(|id| !installed(id)) {
+            if let Some(id) = name.strip_prefix(".running-").filter(|id| !installed(id)) {
                 if let Ok(lock) = self.not_running(&root, id) {
                     let _ = fs::remove_file(e.path());
                     drop(lock);
@@ -806,12 +826,6 @@ impl Library {
         // Runtime folders are left alone: systemd removes each as its service
         // stops, /run is empty after a power loss, and another prefix's
         // services may share the folder.
-        for e in fs::read_dir(self.prefix().join("service-data")).into_iter().flatten().flatten() {
-            let id = e.file_name().to_string_lossy().into_owned();
-            if apps::is_valid_id(&id) && !installed(&id) {
-                let _ = remove_tree(&e.path());
-            }
-        }
     }
 
     /// Starts the service, registering its unit first if needed.
@@ -840,16 +854,44 @@ impl Library {
         self.start_service(id)
     }
 
-    /// Chooses whether the service starts at boot; it does not start or stop it now.
+    /// Chooses whether the current profile starts the service at boot; it does not start or stop it now.
     pub fn set_service_boot(&self, id: &str, on: bool) -> Result<Service, String> {
         let _lock = self.lock_waiting()?;
         self.recover();
         self.find_service(id)?;
-        let flag = self.boot_flag(id);
-        let changed = if on { fs::write(&flag, "") } else { fs::remove_file(&flag).or_else(|e| if e.kind() == io::ErrorKind::NotFound { Ok(()) } else { Err(e) }) };
-        changed.map_err(|e| format!("{}: {e}", flag.display()))?;
-        apps::sync();
+        self.set_enabled(id, on)?;
         self.service(id)
+    }
+
+    /// Stops every running service and waits until each has exited, as a
+    /// switch to another profile does before the restart. Returns the
+    /// services stopped; any that cannot be stopped make it fail.
+    pub fn stop_services(&self) -> Result<Vec<String>, String> {
+        let _lock = self.lock_waiting()?;
+        self.recover();
+        let packages = self.service_packages();
+        if packages.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.manager().available()?;
+        let mut stopped = Vec::new();
+        let mut errors = Vec::new();
+        for package in &packages {
+            let id = package.id();
+            match self.unit_state(id) {
+                Ok(state) if !state.running() => {}
+                Ok(_) => match self.stop_verified(id) {
+                    Ok(_running) => stopped.push(id.to_string()),
+                    Err(e) => errors.push(format!("cannot stop {id}: {e}")),
+                },
+                Err(e) => errors.push(format!("cannot read the state of {id}: {e}")),
+            }
+        }
+        if errors.is_empty() {
+            Ok(stopped)
+        } else {
+            Err(errors.join("; "))
+        }
     }
 
     /// At boot: registers every installed service, unregisters units of
@@ -893,7 +935,8 @@ impl Library {
         }
         let mut started = Vec::new();
         // Only units written for this prefix: another prefix's unit of the same ID is not ours to start.
-        for package in registered.into_iter().filter(|p| self.boot_flag(p.id()).exists()) {
+        let enabled = self.enabled();
+        for package in registered.into_iter().filter(|p| enabled.contains(p.id())) {
             match self.manager().start(&unit_name(package.id()), false) {
                 Ok(()) => started.push(package.id().to_string()),
                 Err(e) => errors.push(format!("cannot start {}: {e}", package.id())),
@@ -1131,7 +1174,7 @@ pub(crate) mod tests {
     pub(crate) fn library(dir: &Path) -> (Library, Arc<Mutex<Units>>) {
         let prefix = dir.join("prefix");
         let units = Arc::new(Mutex::new(Units::default()));
-        let fake = Fake { services: std::path::absolute(prefix.join("services")).unwrap(), units: units.clone() };
+        let fake = Fake { services: std::path::absolute(prefix.join("device/packages/services")).unwrap(), units: units.clone() };
         (Library::with_manager(prefix, Box::new(fake), dir.join("run")), units)
     }
 
@@ -1320,14 +1363,7 @@ pub(crate) mod tests {
         let u = units.lock().unwrap();
         assert!(!u.text.contains_key(&unit(id)) && !u.active.contains(&unit(id)), "{id} is unregistered and stopped");
         assert!(!u.held.contains_key(&unit(id)), "no process of {id} remains");
-        for path in [
-            lib.services_dir().join(id),
-            lib.boot_flag(id),
-            lib.running_in(&lib.services_dir(), id),
-            lib.service_data(id),
-            lib.service_runtime(id),
-            lib.restart_flag(id),
-        ] {
+        for path in [lib.services_dir().join(id), lib.running_in(&lib.services_dir(), id), lib.service_runtime(id), lib.restart_flag(id)] {
             assert!(!path.exists(), "{} remains", path.display());
         }
         assert_eq!(leftovers(lib), 0);
@@ -1353,8 +1389,10 @@ pub(crate) mod tests {
             fs::write(dir.join("sub/file"), "x").unwrap();
         }
         fs::create_dir_all(lib.service_data(B)).unwrap();
-        assert_eq!(lib.remove(A, false).unwrap(), Kind::Service);
+        assert_eq!(lib.remove(A).unwrap(), Kind::Service);
         assert_nothing_left(&lib, &units, A);
+        assert_eq!(fs::read_to_string(lib.service_data(A).join("sub/file")).unwrap(), "x", "the profile keeps its state");
+        assert!(!lib.enabled().contains(A), "the profile no longer starts it at boot");
         // Unrelated services and apps stay.
         assert_eq!(lib.service(B).unwrap().state, State::Running);
         assert!(lib.service_data(B).is_dir());
@@ -1375,7 +1413,7 @@ pub(crate) mod tests {
         let (lib, units) = library(&dir);
         lib.install(&service(&dir, A, "0.1.0")).unwrap();
         units.lock().unwrap().stuck.insert(unit(A));
-        let err = lib.remove(A, false).unwrap_err();
+        let err = lib.remove(A).unwrap_err();
         assert!(err.contains("cannot stop") && err.contains("restart the device") && err.contains(&format!("gizlet uninstall {A}")), "{err}");
         assert!(lib.services_dir().join(A).is_dir(), "nothing was removed");
         assert!(!lib.service(A).unwrap().boot, "it no longer starts at boot");
@@ -1383,34 +1421,34 @@ pub(crate) mod tests {
         drop((lib, units));
         let (lib, units) = library(&dir);
         assert!(lib.boot_services().unwrap().is_empty());
-        lib.remove(A, false).unwrap();
+        lib.remove(A).unwrap();
         assert_nothing_left(&lib, &units, A);
 
         // A copy started by hand, outside its unit, is reported too.
         lib.install(&service(&dir, A, "0.1.0")).unwrap();
         lib.stop_service(A).unwrap();
         let by_hand = lib.hold_running(&lib.services_dir(), A).unwrap();
-        let err = lib.remove(A, false).unwrap_err();
+        let err = lib.remove(A).unwrap_err();
         assert!(err.contains("outside") && err.contains(&format!("gizlet service exec {A}")), "{err}");
         drop(by_hand);
-        lib.remove(A, false).unwrap();
+        lib.remove(A).unwrap();
 
-        // A state folder that cannot be deleted keeps the package, so uninstalling again finishes.
+        // A runtime folder that cannot be deleted keeps the package, so uninstalling again finishes.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             lib.install(&service(&dir, A, "0.1.0")).unwrap();
-            let locked = lib.service_data(A).join("locked");
+            let locked = lib.service_runtime(A).join("locked");
             fs::create_dir_all(locked.join("inner")).unwrap();
             fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
-            let err = lib.remove(A, false).unwrap_err();
+            let err = lib.remove(A).unwrap_err();
             assert!(err.contains("stopped and unregistered") && err.contains("cannot be deleted"), "{err}");
             // It is no longer installed, and the uninstall stays marked until it finishes.
             assert!(lib.uninstalling(A).is_dir() && lib.services().unwrap().is_empty());
             assert!(lib.install(&service(&dir, A, "0.1.0")).unwrap_err().contains("did not finish"));
-            assert!(lib.remove(A, false).unwrap_err().contains("cannot be deleted"), "uninstalling again says why it still cannot");
+            assert!(lib.remove(A).unwrap_err().contains("cannot be deleted"), "uninstalling again says why it still cannot");
             fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
-            assert_eq!(lib.remove(A, false).unwrap(), Kind::Service);
+            assert_eq!(lib.remove(A).unwrap(), Kind::Service);
             assert_nothing_left(&lib, &units, A);
         }
         let _ = fs::remove_dir_all(&dir);
@@ -1431,8 +1469,9 @@ pub(crate) mod tests {
         units.lock().unwrap().text.insert(unit(A), text);
         assert!(lib.boot_services().unwrap().is_empty(), "it does not start again");
         assert_nothing_left(&lib, &units, A);
+        assert!(lib.service_data(A).join("deep").is_dir(), "the profile keeps its state");
         // Uninstalling it again once recovery has finished says it is gone.
-        assert!(lib.remove(A, false).unwrap_err().contains("not installed"));
+        assert!(lib.remove(A).unwrap_err().contains("not installed"));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1538,7 +1577,7 @@ pub(crate) mod tests {
         fs::write(lib.service_runtime(A).join("control.sock"), "").unwrap();
         // A second library, as with GIZLET_PREFIX, shares the runtime folder and the service manager.
         let other_prefix = std::path::absolute(dir.join("other")).unwrap();
-        let fake = Fake { services: other_prefix.join("services"), units: _units.clone() };
+        let fake = Fake { services: other_prefix.join("device/packages/services"), units: _units.clone() };
         let other = Library::with_manager(other_prefix, Box::new(fake), dir.join("run"));
         other.install(&app(&dir, "dev.example.game")).unwrap();
         assert!(other.boot_services().unwrap().is_empty());
@@ -1559,9 +1598,9 @@ pub(crate) mod tests {
         drop((lib, other, _units));
         let shared: Arc<Mutex<Units>> = Default::default();
         let prefix = std::path::absolute(dir.join("prefix")).unwrap();
-        let lib = Library::with_manager(prefix.clone(), Box::new(Fake { services: prefix.join("services"), units: shared.clone() }), dir.join("run"));
+        let lib = Library::with_manager(prefix.clone(), Box::new(Fake { services: prefix.join("device/packages/services"), units: shared.clone() }), dir.join("run"));
         let other_prefix = std::path::absolute(dir.join("other")).unwrap();
-        let other = Library::with_manager(other_prefix.clone(), Box::new(Fake { services: other_prefix.join("services"), units: shared.clone() }), dir.join("run"));
+        let other = Library::with_manager(other_prefix.clone(), Box::new(Fake { services: other_prefix.join("device/packages/services"), units: shared.clone() }), dir.join("run"));
         other.install(&service(&dir, A, "0.2.0")).unwrap();
         other.stop_service(A).unwrap();
         assert!(lib.boot_services().unwrap_err().contains("it is left alone"));
@@ -1576,7 +1615,7 @@ pub(crate) mod tests {
         lib.install(&app(&dir, A)).unwrap();
         assert!(lib.install(&service(&dir, A, "0.1.0")).unwrap_err().contains("installed as an app"));
         assert!(lib.start_service(A).unwrap_err().contains("is an app, not a service"));
-        lib.remove(A, false).unwrap();
+        lib.remove(A).unwrap();
         lib.install(&service(&dir, A, "0.1.0")).unwrap();
         assert!(lib.install(&app(&dir, A)).unwrap_err().contains("installed as a service"));
         assert_eq!(leftovers(&lib), 0);
@@ -1596,22 +1635,14 @@ pub(crate) mod tests {
         // What an uninstall cut short leaves of a service no longer installed.
         let gone = "dev.example.gone";
         fs::create_dir_all(lib.service_data(gone)).unwrap();
-        fs::write(lib.boot_flag(gone), "").unwrap();
         fs::write(lib.running_in(&lib.services_dir(), gone), "").unwrap();
         fs::create_dir_all(lib.services_dir().join(format!(".remove-{gone}-1"))).unwrap();
         let text = lib.unit_text(gone).unwrap();
         units.lock().unwrap().text.insert(unit(gone), text);
         lib.boot_services().unwrap();
         assert_nothing_left(&lib, &units, gone);
+        assert!(lib.service_data(gone).is_dir(), "the profile keeps the state of a service no longer installed");
         assert!(lib.services_dir().join(A).is_dir());
-        // A backup that cannot be put back yet keeps the service's state and boot choice.
-        let held = "dev.example.held";
-        let backup = lib.backup_in(&lib.services_dir(), held);
-        fs::create_dir_all(&backup).unwrap();
-        fs::create_dir_all(lib.service_data(held)).unwrap();
-        fs::write(lib.boot_flag(held), "").unwrap();
-        lib.sweep_services();
-        assert!(lib.service_data(held).is_dir() && lib.boot_flag(held).exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

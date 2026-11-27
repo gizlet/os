@@ -162,6 +162,7 @@ pub enum Note {
 
 pub struct Storefront {
     store: Store,
+    prefix: PathBuf,
     send: Sender<Done>,
     work: Receiver<Done>,
     pub home: Load<Featured>,
@@ -188,14 +189,16 @@ pub struct Storefront {
 }
 
 impl Storefront {
-    pub fn new(library: &Library) -> Storefront {
-        Storefront::with_store(Store::new(library))
+    /// The Store of the library at `prefix`, which its workers open again.
+    pub fn new(library: &Library, prefix: PathBuf) -> Storefront {
+        Storefront::with_store(Store::new(library), prefix)
     }
 
-    pub fn with_store(store: Store) -> Storefront {
+    pub fn with_store(store: Store, prefix: PathBuf) -> Storefront {
         let (send, work) = mpsc::channel();
         Storefront {
             store,
+            prefix,
             send,
             work,
             home: Load::Loading,
@@ -254,7 +257,8 @@ impl Storefront {
     }
 
     fn check_updates(&self) {
-        self.spawn(|store| Done::Updates(store.updates(&Library::open())));
+        let prefix = self.prefix.clone();
+        self.spawn(move |store| Done::Updates(store.updates(&Library::new(prefix))));
     }
 
     pub fn loading(&self) -> bool {
@@ -332,6 +336,7 @@ impl Storefront {
                 }
                 Done::Job(result) => {
                     let Some(job) = self.job.take() else { continue };
+                    let done = result.is_ok();
                     notes.push(match (result, &job.kind) {
                         (Ok(_), JobKind::Remove(_)) => Note::Removed(job.name),
                         (Ok((_, kind, _)), JobKind::Upgrade(_)) => Note::Installed { name: job.name, kind, updated: true },
@@ -339,7 +344,10 @@ impl Storefront {
                         (Err(error), _) => Note::Failed(error),
                     });
                     self.origins = self.store.origins();
-                    self.updates.retain(|u| u.id != job.id);
+                    // A failed update stays offered, to try again.
+                    if done {
+                        self.updates.retain(|u| u.id != job.id);
+                    }
                     self.rebuild();
                     if self.queue.is_empty() {
                         self.check_updates();
@@ -637,8 +645,9 @@ impl Storefront {
         let expected = job.id.clone();
         self.job = Some(job);
         let send = self.send.clone();
+        let prefix = self.prefix.clone();
         self.spawn(move |store| {
-            let library = Library::open();
+            let library = Library::new(prefix);
             let mut progress = |p: Progress| {
                 let _ = send.send(Done::Progress(p));
             };
@@ -646,7 +655,7 @@ impl Storefront {
                 JobKind::Install(repo, kind) => store.install_expecting(&library, &repo, &expected, kind, &mut progress),
                 JobKind::Upgrade(update) => store.upgrade(&library, &update, &mut progress),
                 JobKind::Remove(id) => {
-                    return Done::Job(store.uninstall(&library, &id, false).map(|kind| (id, kind, String::new())));
+                    return Done::Job(store.uninstall(&library, &id).map(|kind| (id, kind, String::new())));
                 }
             };
             Done::Job(finished.map(|app| (app.manifest.id.clone(), app.manifest.kind(), app.manifest.version.clone())))
@@ -685,7 +694,7 @@ mod tests {
     fn front() -> Storefront {
         let dir = std::env::temp_dir().join(format!("gizlet-storefront-{}", std::process::id()));
         // Nothing listens there: the pages' requests fail without reaching gizlet.io.
-        Storefront::with_store(Store::with_api(&Library::new(dir), "http://127.0.0.1:9"))
+        Storefront::with_store(Store::with_api(&Library::new(dir.clone()), "http://127.0.0.1:9"), dir)
     }
 
     #[test]

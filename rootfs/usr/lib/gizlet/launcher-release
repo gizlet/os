@@ -3,13 +3,14 @@
 set -eu
 export LC_ALL=C
 umask 077
-base=/opt/gizlet/launcher
-releases=$base/releases
+# Each installed release is a version folder here. The device setting
+# allowed_signers trusts another signing key.
+releases=/data/device/launcher-releases
 factory=/usr/lib/gizlet/launcher
 active=/run/gizlet-launcher-release
 ready=/run/gizlet-data.ready
-runtime=/opt/gizlet/runtime
-trusted=$base/allowed_signers
+runtime=/data/device/runtime
+trusted=/data/device/settings/allowed_signers
 namespace=gizlet-launcher
 max_bytes=67108864
 
@@ -18,7 +19,7 @@ valid_version() {
     case $1 in ''|*[!0-9.]*) return 1 ;; esac
     printf '%s\n' "$1" | grep -Exq '(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8})){2}'
 }
-manifest() { printf 'gizlet-launcher-1 %s aarch64-unknown-linux-gnu runtime-1\n' "$1"; }
+manifest() { printf 'gizlet-launcher-2 %s aarch64-unknown-linux-gnu runtime-1\n' "$1"; }
 regular() { [ -f "$1" ] && [ ! -L "$1" ]; }
 release_ready() {
     [ -d "$1" ] && [ ! -L "$1" ] && [ -d "$1/bin" ] && [ ! -L "$1/bin" ] || return 1
@@ -201,7 +202,7 @@ else
     case ${1-} in
         select)
             select_release
-            if [ -L /opt/gizlet/ota/current ]; then
+            if [ -L /data/device/ota/current ]; then
                 exec /usr/lib/gizlet/gizlet-ota-boot restore "$(legacy_version)"
             fi
             ;;
@@ -212,7 +213,7 @@ else
         start)
             shift
             if [ "$#" -eq 0 ]; then
-                if [ -d /opt/gizlet/ota ]; then
+                if [ -d /data/device/ota ]; then
                     exec /usr/lib/gizlet/gizlet-ota-boot run "$(legacy_dir)" "$(legacy_version)"
                 fi
                 dir=$(legacy_dir)

@@ -7,7 +7,7 @@ exports_files([
     "gizlet-session.service",
 ])
 
-# The Booter starts the managed Launcher or the entry in /opt/gizlet/boot.ini. It runs from
+# The Booter starts the managed Launcher or the entry in /data/device/boot.ini. It runs from
 # boot-session (rootfs/usr/lib/gizlet), which opens the recovery shell after it.
 # Built with the build VM's Debian GCC as a static AArch64 glibc executable.
 debian_cc_binary(

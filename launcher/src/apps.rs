@@ -3,10 +3,12 @@
 //! A `.gzl` is the package of the Gizlet store contract: a zip with
 //! `manifest.json` at its root and `CHECKSUMS`, the SHA-256 of every other file
 //! (`<64 hex>  <path>` per line). Installing extracts it into
-//! `<prefix>/apps/<id>/`, where the prefix is `/opt/gizlet` on Gizlet OS. Each
-//! app keeps its own files in `<prefix>/saves/<id>/`, which outlive updates.
-//! A service package installs into `<prefix>/services/<id>/` instead and runs
-//! in the background (see [`crate::services`]).
+//! `<prefix>/device/packages/apps/<id>/`, where the prefix is `/data` on
+//! Gizlet OS, once for every profile. Each app keeps its own files in the
+//! current profile's `apps/<id>/` (see [`crate::profiles`]), which outlive
+//! updates and uninstalls. A service package installs into
+//! `<prefix>/device/packages/services/<id>/` instead and runs in the
+//! background (see [`crate::services`]).
 //!
 //! The reader accepts only what the store accepts: stored or deflated entries
 //! with canonical relative names, no symlinks, devices, encryption or ZIP64,
@@ -49,16 +51,12 @@ pub fn request_launch(id: &str) -> std::io::Result<()> {
     result
 }
 
-/// `/opt/gizlet` on Gizlet OS, the launcher's data folder elsewhere, or `GIZLET_PREFIX`.
+/// The data root: `/data` on Gizlet OS, the launcher's data folder elsewhere, or `GIZLET_PREFIX`.
 pub fn prefix() -> PathBuf {
     if let Some(dir) = std::env::var_os("GIZLET_PREFIX") {
         return PathBuf::from(dir);
     }
-    if cfg!(feature = "gizlet-os") {
-        PathBuf::from("/opt/gizlet")
-    } else {
-        crate::settings::data_dir()
-    }
+    crate::settings::data_dir()
 }
 
 /// The target triple packages are built for here, or `GIZLET_TARGET`.
@@ -274,9 +272,12 @@ impl App {
     }
 }
 
-/// The apps under `<prefix>/apps` and the services under `<prefix>/services`.
+/// The apps under `<prefix>/device/packages/apps` and the services under
+/// `<prefix>/device/packages/services`, shared by every profile, with the
+/// current profile's data.
 pub struct Library {
     prefix: PathBuf,
+    profile: PathBuf,
     manager: Box<dyn crate::services::Manager>,
     run_dir: PathBuf,
 }
@@ -290,7 +291,11 @@ impl Library {
     /// A library whose services run under `manager`, with their runtime folders in `run_dir`.
     pub fn with_manager(prefix: PathBuf, manager: Box<dyn crate::services::Manager>, run_dir: PathBuf) -> Library {
         let prefix = std::path::absolute(&prefix).unwrap_or(prefix);
-        Library { prefix, manager, run_dir }
+        let profile = crate::profiles::Profiles::new(prefix.clone()).current_dir().unwrap_or_else(|e| {
+            eprintln!("gizlet: {e}");
+            PathBuf::from(crate::profiles::MOUNT)
+        });
+        Library { prefix, profile, manager, run_dir }
     }
 
     pub fn open() -> Library {
@@ -299,6 +304,16 @@ impl Library {
 
     pub(crate) fn prefix(&self) -> &Path {
         &self.prefix
+    }
+
+    /// The current profile's folder: `/run/gizlet/profile` on Gizlet OS.
+    pub fn profile(&self) -> &Path {
+        &self.profile
+    }
+
+    /// `<prefix>/device`: what every profile shares.
+    pub fn device_dir(&self) -> PathBuf {
+        self.prefix.join("device")
     }
 
     pub(crate) fn manager(&self) -> &dyn crate::services::Manager {
@@ -310,15 +325,17 @@ impl Library {
     }
 
     pub fn apps_dir(&self) -> PathBuf {
-        self.prefix.join("apps")
+        self.device_dir().join("packages/apps")
     }
 
+    /// The app's own files in the current profile (`GIZLET_SAVE_DIR`).
     pub fn saves(&self, id: &str) -> PathBuf {
-        self.prefix.join("saves").join(id)
+        self.profile.join("apps").join(id)
     }
 
+    /// When each app last ran in the current profile, for the shelf's order.
     fn played_path(&self) -> PathBuf {
-        self.prefix.join("saves/.played")
+        self.profile.join("launcher/recent.ini")
     }
 
     /// Changes when an app is installed or removed.
@@ -426,7 +443,7 @@ impl Library {
         self.lock(true).ok_or_else(|| format!("cannot lock {}", apps.display()))
     }
 
-    /// Holds an exclusive lock on `<prefix>/apps/.lock` until dropped
+    /// Holds an exclusive lock on `<prefix>/device/packages/apps/.lock` until dropped
     /// (`flock` on Unix, `LockFileEx` on Windows): installs, removals and
     /// recovery each take it, for services too, so none sees another half
     /// done. Without `wait`, `None` when another process holds it.
@@ -575,9 +592,10 @@ impl Library {
         self.load(&dest)
     }
 
-    /// Removes the app, and its saves only with `saves`; or uninstalls the
-    /// service, with everything it keeps. Returns what was removed.
-    pub fn remove(&self, id: &str, saves: bool) -> Result<Kind, String> {
+    /// Removes the installed app or service. What each profile keeps of it,
+    /// its saves or a service's state, stays for when it is installed again.
+    /// Returns what was removed.
+    pub fn remove(&self, id: &str) -> Result<Kind, String> {
         let _lock = self.lock(true);
         // An earlier uninstall that stopped short: recovery finishes it, or this says why it cannot.
         let unfinished = is_valid_id(id) && self.uninstalling(id).exists();
@@ -594,16 +612,6 @@ impl Library {
         fs::rename(&app.dir, &trash).map_err(|e| format!("{}: {e}", app.dir.display()))?;
         fs::remove_dir_all(&trash).map_err(|e| format!("{}: {e}", trash.display()))?;
         drop(not_running);
-        if saves {
-            let dir = self.saves(id);
-            if dir.exists() {
-                fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-            }
-        }
-        let mut played = self.played();
-        if played.remove(id).is_some() {
-            let _ = self.write_played(&played);
-        }
         sync();
         Ok(Kind::App)
     }
@@ -991,13 +999,13 @@ pub fn command(library: &Library, app: &App, lang: &str, swap_ab: bool, args: &[
 pub(crate) fn entry_command(library: &Library, entry: &Path) -> io::Result<std::process::Command> {
     let mut cmd = std::process::Command::new(entry);
     if cfg!(target_os = "linux") && needs_loader(entry) {
+        let runtime = library.device_dir().join("runtime");
         let loader = if cfg!(feature = "gizlet-os") {
-            let runtime = Path::new("/opt/gizlet/runtime");
             fs::canonicalize("/run/gizlet-ota-runtime/bin/gizlet-run")
                 .or_else(|_| fs::canonicalize(runtime.join("1-current/bin/gizlet-run")))
                 .unwrap_or_else(|_| runtime.join("1/bin/gizlet-run"))
         } else {
-            library.prefix.join("runtime/1/bin/gizlet-run")
+            runtime.join("1/bin/gizlet-run")
         };
         if loader.is_file() {
             cmd = std::process::Command::new(loader);
@@ -1149,10 +1157,10 @@ pub(crate) mod tests {
         assert_eq!(app.manifest.rgb(), Some([0x7b, 0x4d, 0xff]));
         assert_eq!(app.icon(), Some(app.dir.join("icon.png")));
         assert_eq!(leftovers(&lib), 0, "no staging folders are left");
-        lib.remove("dev.example.hello", false).unwrap();
+        lib.remove("dev.example.hello").unwrap();
         assert!(lib.scan().is_empty());
         assert!(lib.saves("dev.example.hello").is_dir());
-        assert!(lib.remove("dev.example.hello", false).is_err());
+        assert!(lib.remove("dev.example.hello").is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1269,7 +1277,7 @@ pub(crate) mod tests {
         assert_eq!(installed.manifest.kind(), Kind::Service);
         assert!(!lib.apps_dir().join(id).exists());
         assert!(lib.scan().is_empty());
-        assert_eq!(lib.remove(id, false).unwrap(), Kind::Service);
+        assert_eq!(lib.remove(id).unwrap(), Kind::Service);
         assert_eq!(leftovers(&lib), 0);
         // One placed among the apps by hand is neither shown on the shelf nor started, but can be removed.
         let placed = lib.apps_dir().join(id);
@@ -1279,7 +1287,7 @@ pub(crate) mod tests {
         assert!(lib.scan().is_empty());
         assert!(lib.open_for_run(id).unwrap_err().contains("is a service, not an app"));
         assert_eq!(lib.get(id).unwrap().manifest.kind(), Kind::Service);
-        lib.remove(id, false).unwrap();
+        lib.remove(id).unwrap();
         assert!(!placed.exists());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1334,8 +1342,8 @@ pub(crate) mod tests {
 
     #[test]
     fn relative_prefix_is_absolute() {
-        let lib = Library::new(PathBuf::from("./data"));
-        assert!(lib.apps_dir().is_absolute());
+        let lib = Library::new(PathBuf::from("./target/test-relative-prefix"));
+        assert!(lib.apps_dir().is_absolute() && lib.profile().is_absolute());
     }
 
     #[test]
@@ -1376,12 +1384,12 @@ pub(crate) mod tests {
         // Starting holds the lock before reading the app, then until it exits.
         let (app, running) = lib.open_for_run("dev.example.hello").unwrap();
         assert!(lib.install(&pkg).unwrap_err().contains("is running"));
-        assert!(lib.remove("dev.example.hello", false).unwrap_err().contains("is running"));
+        assert!(lib.remove("dev.example.hello").unwrap_err().contains("is running"));
         assert!(app.entry().is_file(), "the running copy stays in place");
         assert_eq!(leftovers(&lib), 0);
         drop(running);
         lib.install(&pkg).unwrap();
-        lib.remove("dev.example.hello", false).unwrap();
+        lib.remove("dev.example.hello").unwrap();
         assert!(lib.open_for_run("dev.example.hello").unwrap_err().contains("not installed"));
         // The lock file outlives removal, so a run already waiting on it locks
         // the file the next install checks.

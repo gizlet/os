@@ -1,0 +1,185 @@
+--- a/panel-generic-dsi.c
++++ b/panel-generic-dsi.c
+@@ -25,6 +25,7 @@
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0))
+ #include <drm/drm_of.h>
+ #endif
++#include <drm/bridge/dw_mipi_dsi.h>
+ #include <drm/drm_mipi_dsi.h>
+ #include <drm/drm_modes.h>
+ #include <drm/drm_panel.h>
+@@ -81,6 +82,8 @@
+ 
+     enum drm_panel_orientation orientation;
+     bool prepared;
++    struct device_node *profile;
++    bool profile_selected;
+ };
+ 
+ 
+@@ -298,18 +301,19 @@
+         //ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
+         const char *line;
+         char * buf;
+-        size_t linescnt, i;
+-
+-        linescnt = of_property_count_strings(dev->of_node, "panel_description");
++        struct device_node *node = ctx->profile ?: dev->of_node;
++        int linescnt, i;
++
++        linescnt = of_property_count_strings(node, "panel_description");
+         if (linescnt < 1) {
+-            dev_err(dev, "failed to read panel_description from device tree %ld\n", linescnt);
++            dev_err(dev, "failed to read panel_description in %pOF: %d\n", node, linescnt);
+             return -1;
+         }
+ 
+         for (i = 0; i < linescnt; i++) {
+-            ret = of_property_read_string_index(dev->of_node, "panel_description", i, &line);
++            ret = of_property_read_string_index(node, "panel_description", i, &line);
+             if (ret < 0) {
+-                dev_err(dev, "failed to read panel_description[%ld] from device tree %d\n", i, ret);
++                dev_err(dev, "failed to read panel_description[%d] in %pOF: %d\n", i, node, ret);
+                 return -1;
+             }
+             buf = kstrdup(line, GFP_KERNEL);
+@@ -318,7 +322,7 @@
+                 return -1;
+             }
+ 
+-            dev_dbg(dev, "desc[%ld]: %s", i, line);
++            dev_dbg(dev, "desc[%d]: %s", i, line);
+             handle_line(buf, dsi, ctx);
+             kfree(buf);
+         }
+@@ -407,6 +411,8 @@
+     if (ret < 0)
+         dev_err(ctx->dev, "failed to enter sleep mode: %d\n", ret);
+ 
++    if (ctx->profile_selected)
++        msleep(120);
+     if (ctx->enable_gpio) { gpiod_set_value_cansleep(ctx->enable_gpio, 0); }
+     gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+ 
+@@ -455,16 +461,18 @@
+         goto disable_iovcc;
+     }
+ 
+-    ret = mipi_dsi_dcs_set_display_on(dsi);
+-    if (ret < 0) {
+-        dev_err(ctx->dev, "Failed to set display on: %d\n", ret);
+-        goto disable_iovcc;
+-    }
+-
+-    ret = mipi_dsi_dcs_exit_sleep_mode(dsi);
+-    if (ret < 0) {
+-        dev_err(ctx->dev, "Failed to exit sleep mode: %d\n", ret);
+-        goto disable_iovcc;
++    if (!ctx->profile_selected) {
++        ret = mipi_dsi_dcs_set_display_on(dsi);
++        if (ret < 0) {
++            dev_err(ctx->dev, "Failed to set display on: %d\n", ret);
++            goto disable_iovcc;
++        }
++
++        ret = mipi_dsi_dcs_exit_sleep_mode(dsi);
++        if (ret < 0) {
++            dev_err(ctx->dev, "Failed to exit sleep mode: %d\n", ret);
++            goto disable_iovcc;
++        }
+     }
+ 
+     msleep(ctx->delays.enable);
+@@ -480,6 +488,92 @@
+ disable_vdd:
+     regulator_disable(ctx->vdd);
+     return ret;
++}
++
++static void gizlet_select_panel_profile(struct mipi_dsi_device *dsi, const u8 *id, size_t len)
++{
++    struct generic_panel *ctx = mipi_dsi_get_drvdata(dsi);
++    struct device_node *profiles __free(device_node) =
++        of_get_child_by_name(dsi->dev.of_node, "panel-profiles");
++
++    if (!profiles)
++        return;
++
++    for_each_available_child_of_node_scoped(profiles, profile) {
++        struct generic_panel alternate = { .profile = profile };
++        unsigned long mode_flags = dsi->mode_flags;
++        enum mipi_dsi_pixel_format format = dsi->format;
++        unsigned int lanes = dsi->lanes;
++        const u8 *match;
++        int match_len;
++
++        match = of_get_property(profile, "gizlet,display-ids", &match_len);
++        if (!match || match_len < len || match_len % len)
++            continue;
++        while (match_len && memcmp(id, match, len)) {
++            match += len;
++            match_len -= len;
++        }
++        if (!match_len)
++            continue;
++
++        if (load_panel_description(dsi, &alternate) || !alternate.modes || !alternate.iseq) {
++            dsi->mode_flags = mode_flags;
++            dsi->format = format;
++            dsi->lanes = lanes;
++            dev_warn(ctx->dev, "invalid panel profile %pOF\n", profile);
++            return;
++        }
++
++        ctx->profile_selected = true;
++        ctx->modes = alternate.modes;
++        ctx->iseq = alternate.iseq;
++        ctx->size = alternate.size;
++        ctx->delays = alternate.delays;
++        dev_info(ctx->dev, "display ID %*ph matched %pOFn\n", (int)len, id, profile);
++        return;
++    }
++}
++
++void gizlet_r36s_detect_panel(struct mipi_dsi_device *dsi)
++{
++    struct generic_panel *ctx = mipi_dsi_get_drvdata(dsi);
++    u8 id[3] = {};
++    int ret;
++
++    if (*descfile || ctx->profile_selected)
++        return;
++
++    gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++    ret = regulator_enable(ctx->vdd);
++    if (ret)
++        return;
++    ret = regulator_enable(ctx->iovcc);
++    if (ret)
++        goto disable_vdd;
++
++    if (ctx->enable_gpio)
++        gpiod_set_value_cansleep(ctx->enable_gpio, 1);
++    msleep(20);
++    gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++    msleep(20);
++
++    ret = mipi_dsi_set_maximum_return_packet_size(dsi, sizeof(id));
++    if (!ret)
++        ret = mipi_dsi_dcs_read(dsi, MIPI_DCS_GET_DISPLAY_ID, id, sizeof(id));
++
++    gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++    if (ctx->enable_gpio)
++        gpiod_set_value_cansleep(ctx->enable_gpio, 0);
++    regulator_disable(ctx->iovcc);
++
++    if (ret == sizeof(id))
++        gizlet_select_panel_profile(dsi, id, sizeof(id));
++    if (!ctx->profile_selected)
++        dev_info(ctx->dev, "display ID %3ph (%d), using default profile\n", id, ret);
++
++disable_vdd:
++    regulator_disable(ctx->vdd);
+ }
+ 
+ /* drm_display_mode template without clock as it is variable */

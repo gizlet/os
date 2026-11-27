@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
-/*
- * Gizlet OS on the Game Console R36S. ROCKNIX's device tree describes the
- * board with the original ST7703 panel; other panels are device tree
- * overlays applied by boot.scr (see r36s-v30-panel4.dtso).
- */
 #include "rk3326-gameconsole-r36s.dts"
+#include "r36s-panel0.dtsi"
+#include "r36s-v30-panel4.dtsi"
+
+&internal_display {
+	gizlet,r36s-display-probe;
+};
 
 /*
  * ROCKNIX runs the performance governor and drops the low CPU and GPU steps,

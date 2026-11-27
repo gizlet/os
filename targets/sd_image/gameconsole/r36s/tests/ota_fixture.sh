@@ -20,7 +20,7 @@ for version in 2.0.0 2.0.1; do
     mkdir -p "$dir/runtime" "$dir/launcher"
     runtime=$dir/runtime/gizlet-runtime-1.sqfs
     bundle=$dir/launcher/gizlet-launcher-$version.gizlet
-    cp /opt/gizlet/runtime/1.sqfs "$runtime"
+    cp /data/device/runtime/1.sqfs "$runtime"
     printf '%s\n' "$version" >> "$runtime"
     if [ "$version" = 2.0.0 ]; then
         cat > start.sh <<'EOF'
@@ -37,7 +37,7 @@ EOF
     runtime_sha=$(sha256sum "$runtime")
     bundle_sha=$(sha256sum "$bundle")
     cat > "$dir/manifest.json" <<EOF
-{"schema_version":1,"tag":"v$version","ota":{"protocol":1,"arch":"aarch64","runtime_abi":1,
+{"schema_version":1,"tag":"v$version","ota":{"protocol":2,"arch":"aarch64","runtime_abi":1,
 "runtime":{"path":"runtime/gizlet-runtime-1.sqfs","bytes":$(stat -c %s "$runtime"),"sha256":"${runtime_sha%% *}"},
 "launcher":{"path":"launcher/gizlet-launcher-$version.gizlet","bytes":$(stat -c %s "$bundle"),"sha256":"${bundle_sha%% *}"}}}
 EOF

@@ -8,7 +8,7 @@ ROOTFS_DEBS = "@debian_trixie_arm64_base//:debs"
 ROOTFS_SUITE = "trixie"
 
 # Mount points on the read-only root: the data partition, and the TF2 card.
-ROOTFS_DIRECTORIES = ["opt/gizlet", "media/tf2"]
+ROOTFS_DIRECTORIES = ["data", "media/tf2"]
 
 ROOTFS_FILES = {
     "//rootfs:etc/hostname": "etc/hostname",

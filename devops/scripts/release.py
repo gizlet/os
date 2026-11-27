@@ -74,7 +74,7 @@ def assemble(tag, commit, build, output, signing_key):
             check=True,
         )
         manifest["ota"] = {
-            "protocol": 1,
+            "protocol": 2,
             "arch": "aarch64",
             "runtime_abi": 1,
             "runtime": artifact(output, runtime),

@@ -40,6 +40,8 @@ pub enum Purpose {
     StoreSearch,
     /// A short link or GitHub address to open in the Store.
     StoreLink,
+    /// A profile's name: of the profile with this ID, or of a new one.
+    ProfileName(Option<String>),
 }
 
 pub enum Outcome {
@@ -105,6 +107,14 @@ impl Keyboard {
         let mut kb = Keyboard::ssh_password(title, current);
         kb.purpose = Purpose::Hostname;
         kb.max_len = 63;
+        kb
+    }
+
+    /// A profile's name, starting from `current`.
+    pub fn profile_name(title: String, profile: Option<String>, current: &str) -> Keyboard {
+        let mut kb = Keyboard::ssh_password(title, current);
+        kb.purpose = Purpose::ProfileName(profile);
+        kb.max_len = gizlet_launcher::profiles::MAX_NAME_CHARS;
         kb
     }
 

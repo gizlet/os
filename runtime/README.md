@@ -6,7 +6,7 @@ Runtime 1 holds Debian trixie's own builds of glibc, Mesa 25.0, libdrm and their
 
 The runtime provides raylib 6.0 as `libraylib.so.600`, built for DRM with OpenGL ES 3.0 through EGL and GBM. It uses the launcher's vendored raylib-sys sources and presents frames by flipping scanout buffers. Apps can link against the runtime library with `-l:libraylib.so.600` and run through `gizlet-run`. [raylib build](build_raylib.sh)
 
-A card carries it as `/opt/gizlet/runtime/1.sqfs` on the data partition, a read-only SquashFS image. `gizlet-mount-data` mounts every `runtime/*.sqfs` beside its file, so runtime 1 appears at `/opt/gizlet/runtime/1`:
+A card carries it as `/data/device/runtime/1.sqfs` on the data partition, a read-only SquashFS image that every profile shares. `gizlet-mount-data` mounts every `runtime/*.sqfs` beside its file, so runtime 1 appears at `/data/device/runtime/1`:
 
 | Path | Contents |
 | --- | --- |
@@ -18,7 +18,7 @@ A card carries it as `/opt/gizlet/runtime/1.sqfs` on the data partition, a read-
 | `bin/gizlet-gl-info` | Prints the OpenGL ES renderer and checks an off-screen render |
 | `release-tag` | The Git release tag, present in published Runtime images |
 
-Fresh cards include the runtime built with the image. The card writer's `--update` mode preserves the existing runtime on the data partition. Existing cards use the ES 3.0 raylib build once their `1.sqfs` has also been updated.
+Fresh cards include the runtime built with the image. The card writer's `--update` mode preserves the existing runtime on the data partition.
 
 ## Activating a new build
 
@@ -35,7 +35,7 @@ This command accepts local images and requires a compatible runtime 1 build. Ins
 ## Graphics probe
 
 ```sh
-/opt/gizlet/runtime/1/bin/gizlet-run /opt/gizlet/runtime/1/bin/gizlet-gl-info
+/data/device/runtime/1/bin/gizlet-run /data/device/runtime/1/bin/gizlet-gl-info
 ```
 
 The probe requests an OpenGL ES 3.0 context. The R36S should report `Mali-G31 (Panfrost)` on `/dev/dri/renderD128`. QEMU, without a render node, reports llvmpipe on EGL's surfaceless platform. [Build](build_runtime.sh) · [Probe](gl-info.c)

@@ -22,7 +22,7 @@ work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 trap 'exit 1' HUP INT TERM
 mkdir -p "$work/bin"
-printf 'gizlet-launcher-1 %s aarch64-unknown-linux-gnu runtime-1\n' "$version" > "$work/manifest"
+printf 'gizlet-launcher-2 %s aarch64-unknown-linux-gnu runtime-1\n' "$version" > "$work/manifest"
 install -m 0755 "$here/start.sh" "$work/start"
 install -m 0755 "$launcher" "$work/bin/gizlet-launcher"
 install -m 0755 "$cli" "$work/bin/cli"

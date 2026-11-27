@@ -42,6 +42,8 @@ _ROCKNIX_DTS = "@rocknix//:projects/ROCKNIX/devices/RK3326/linux/dts/rockchip/"
 
 _ROCKNIX_UBOOT = "@rocknix//:projects/ROCKNIX/devices/RK3326/packages/u-boot-legacy/"
 
+_GENERIC_DSI = "@rocknix//:projects/ROCKNIX/packages/linux-drivers/generic-dsi/sources/panel-generic-dsi.c"
+
 # The RK3326 kernel patch set of ROCKNIX for Linux 7.1.2, in the order its
 # build applies it: package patch dirs "mainline", "mainline-rockchip" and "7.0"
 # (PKG_PATCH_DIRS order), then the device's own patches; files sorted within
@@ -89,6 +91,7 @@ filegroup(
         _ROCKNIX_RK3326 + "036-px30-dmc-devfreq.patch",
         _ROCKNIX_RK3326 + "037-px30-dmc-pass-dram-settings-to-bl31.patch",
         _ROCKNIX_RK3326 + "039-drm-rockchip-vop-add-afbc-support-for-px30.patch",
+        "kernel/r36s-display-probe.patch",
     ],
 )
 
@@ -104,6 +107,14 @@ filegroup(
     ],
 )
 
+genrule(
+    name = "r36s_panel_driver",
+    srcs = [_GENERIC_DSI, "kernel/generic-dsi-r36s-profiles.patch"],
+    outs = ["parts/panel-generic-dsi.c"],
+    cmd = "cp $(location %s) $@ && chmod u+w $@ && patch -s $@ < $(location kernel/generic-dsi-r36s-profiles.patch)" % _GENERIC_DSI,
+    target_compatible_with = [":r36s"],
+)
+
 rockchip_linux_kernel(
     name = "kernel",
     archive = "@linux//:linux-7.1.2.tar.xz",
@@ -112,7 +123,7 @@ rockchip_linux_kernel(
     # device tree, the joypad driver of the upstream R36S tree, and the
     # firmware of the on-board RTL8188EU WiFi (and the RTL8188FU of other units).
     builtin_sources = {
-        "@rocknix//:projects/ROCKNIX/packages/linux-drivers/generic-dsi/sources/panel-generic-dsi.c": "drivers/gpu/drm/panel/panel-generic-dsi.c",
+        ":r36s_panel_driver": "drivers/gpu/drm/panel/panel-generic-dsi.c",
         "@rocknix_joypad//:rocknix-singleadc-joypad.c": "drivers/input/joystick/rocknix-singleadc-joypad.c",
         "@rocknix_joypad//:rocknix-joypad.h": "drivers/input/joystick/rocknix-joypad.h",
         "@linux_firmware//:rtl8188eufw.bin": "firmware/rtlwifi/rtl8188eufw.bin",
@@ -124,10 +135,9 @@ rockchip_linux_kernel(
     dts_dirs = {":rocknix_dts": "rockchip"},
     dts_files = {
         "kernel/gizlet-r36s.dts": "rockchip/gizlet-r36s.dts",
-        "kernel/panels/r36s-v30-panel4.dtso": "rockchip/r36s-v30-panel4.dtso",
+        "kernel/panels/r36s-panel0.dtsi": "rockchip/r36s-panel0.dtsi",
+        "kernel/panels/r36s-v30-panel4.dtsi": "rockchip/r36s-v30-panel4.dtsi",
     },
-    extra_dtb_targets = ["rockchip/r36s-v30-panel4.dtbo"],
-    extra_dtbs = ["r36s-v30-panel4.dtbo"],
     image = "Image",
     # ROCKNIX applies this set with plain `patch -p1`, whose default fuzz is 2.
     patch_fuzz = 2,
@@ -159,7 +169,7 @@ rockchip_legacy_uboot(
         "boot/rk3326_trust.patch",
     ],
     script = "boot.scr",
-    script_name = "Gizlet R36S Panel 0",
+    script_name = "Gizlet R36S",
     source_date_epoch = _EPOCH,
     target_compatible_with = [":r36s"],
     trust = "trust.img",
