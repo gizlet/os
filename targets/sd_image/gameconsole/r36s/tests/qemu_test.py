@@ -29,6 +29,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 import card  # noqa: E402
 
 PROMPT = b"recovery# "
+# Downloading, verifying and staging a Runtime and Launcher under QEMU's
+# emulated CPU takes minutes on GitHub-hosted ARM runners.
+OTA_INSTALL_SECONDS = 600
 
 
 class Console:
@@ -37,9 +40,9 @@ class Console:
         self.serial = serial
         self.pending = bytearray()
 
-    def expect(self, marker):
-        """Waits for MARKER and returns what came before it."""
-        deadline = time.monotonic() + 120
+    def expect(self, marker, timeout=120):
+        """Waits up to TIMEOUT seconds for MARKER and returns what came before it."""
+        deadline = time.monotonic() + timeout
         while marker not in self.pending:
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not self.serial.select(remaining):
@@ -709,7 +712,7 @@ def stage_ota_updates(console, pack_release, ota_fixture):
         console.expect(PROMPT)
     console.enter(": > fault; gizlet system ota check && gizlet system ota install v2.0.0")
     console.expect(b"Available: v2.0.0 (Runtime: true, Launcher: true")
-    console.expect(b"Restart to finish installing v2.0.0")
+    console.expect(b"Restart to finish installing v2.0.0", timeout=OTA_INSTALL_SECONDS)
     console.expect(PROMPT)
     console.enter("gizlet system ota status")
     console.expect(b"\r\nLauncher: factory\r\n")
@@ -730,7 +733,7 @@ def check_ota_after_boot(console, pack_release, ota_fixture):
     console.expect(PROMPT)
     start_ota_fixture(console, pack_release, ota_fixture, "v2.0.1")
     console.enter("gizlet system ota install v2.0.1")
-    output = console.expect(PROMPT)
+    output = console.expect(PROMPT, timeout=OTA_INSTALL_SECONDS)
     assert b"\r\nRestart to finish installing v2.0.1\r\n" in output, output.decode(errors="replace")
 
 
