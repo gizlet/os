@@ -110,7 +110,7 @@ jobs:
           RELEASE_COMMIT: ${{ needs.verify.outputs.commit }}
         run: |
           directory="$RUNNER_TEMP/os-manifest"
-          base="https://dl.gizlet.io/releases/$GITHUB_REF_NAME"
+          base="https://gizlet.io/assets/releases/$GITHUB_REF_NAME"
           mkdir -p "$directory"
           for asset in manifest.json manifest.json.sig; do
             curl --fail --silent --show-error --location --retry 3 --max-time 30 \
@@ -140,5 +140,5 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" "$directory/manifest.json" "$directory/manifest.json.sig" \
               --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" \
-              --notes "Artifact paths in the signed manifest are relative to https://dl.gizlet.io/releases/$GITHUB_REF_NAME/."
+              --notes "Artifact paths in the signed manifest are relative to https://gizlet.io/assets/releases/$GITHUB_REF_NAME/."
           fi

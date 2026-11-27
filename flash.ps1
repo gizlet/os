@@ -18,9 +18,13 @@ param(
             default { throw 'Answer 1 or 2 / 请输入 1 或 2' }
         }
     }
-    if (-not $Release) { $Release = 'https://dl.gizlet.io/releases/@RELEASE_TAG@' }
+    if (-not $Release) { $Release = 'https://gizlet.io/assets/releases/@RELEASE_TAG@' }
     $Release = $Release.TrimEnd('/')
-    if ($Release.EndsWith('/@RELEASE_TAG@')) { throw 'Use -Release with a published version directory URL.' }
+    if ($Release -ceq 'https://gizlet.io/assets/releases/@RELEASE_TAG@') {
+        $latest = Invoke-RestMethod -Uri 'https://gizlet.io/api/v1/os/releases/latest' -MaximumRedirection 0
+        if ($latest.tag -cnotmatch '\Av(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8})){2}\z') { throw 'Invalid Gizlet OS release tag.' }
+        $Release = "https://gizlet.io/assets/releases/$($latest.tag)"
+    }
     if ($Release -cnotmatch '^https://[^/]+/') { throw 'The release URL must use HTTPS.' }
     $manifest = Invoke-RestMethod -Uri "$Release/manifest.json" -MaximumRedirection 0
     if ($manifest.schema_version -ne 1) { throw 'Unsupported release manifest.' }

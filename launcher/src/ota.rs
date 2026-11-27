@@ -5,7 +5,8 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const ORIGIN: &str = "https://dl.gizlet.io/releases";
+const ORIGIN: &str = "https://gizlet.io/assets/releases";
+const LATEST: &str = "https://gizlet.io/api/v1/os/releases/latest";
 const STORE: &str = "/data/device/ota";
 const SIGNERS: &str = "/usr/lib/gizlet/launcher/allowed_signers";
 const RUNTIME_LIMIT: u64 = 512 * 1024 * 1024;
@@ -36,6 +37,13 @@ struct Manifest {
     schema_version: u32,
     tag: String,
     ota: Option<Metadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LatestRelease {
+    tag: String,
+    manifest_url: String,
+    signature_url: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -223,16 +231,12 @@ fn download(
     url: &str,
     destination: &Path,
     max_bytes: u64,
-    redirect: bool,
     progress: Option<&mut dyn FnMut(u8)>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let mut curl = Command::new("curl");
     curl.args(["-q", "-fsS", "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "15",
         "--max-time", if max_bytes <= 64 * 1024 { "30" } else { "1200" }, "--speed-limit", "1024", "--speed-time", "30",
-        "--max-filesize", &max_bytes.to_string(), "--write-out", "%{url_effective}"]);
-    if redirect {
-        curl.args(["--location", "--max-redirs", "1"]);
-    }
+        "--max-filesize", &max_bytes.to_string()]);
     curl.arg("--output").arg(destination).arg("--").arg(url);
     let output = if let Some(progress) = progress {
         let mut child = curl.stdout(std::process::Stdio::piped()).spawn().map_err(error)?;
@@ -254,7 +258,7 @@ fn download(
         eprintln!("Gizlet OTA: {}", String::from_utf8_lossy(&output.stderr).trim());
         return Err("Download failed".into());
     }
-    String::from_utf8(output.stdout).map_err(error)
+    Ok(())
 }
 
 fn verify_manifest(manifest: &Path, signature: &Path) -> Result<(), String> {
@@ -303,14 +307,23 @@ fn offer(manifest: Manifest, tag: &str, current: &Installed) -> Result<Option<Of
 
 pub fn check(current: &Installed) -> Result<Option<Offer>, String> {
     let work = Temp::new(Path::new("/tmp/gizlet-ota.XXXXXX"))?;
+    let latest_file = work.0.join("latest.json");
+    download(LATEST, &latest_file, 4096, None)?;
+    let release: LatestRelease = serde_json::from_reader(File::open(&latest_file).map_err(error)?).map_err(error)?;
+    let tag = release.tag.as_str();
+    if !valid_tag(tag) || release.manifest_url != format!("{ORIGIN}/{tag}/manifest.json") {
+        return Err("Invalid release URL".into());
+    }
     let manifest_file = work.0.join("manifest.json");
-    let effective = download(&format!("{ORIGIN}/latest/manifest.json"), &manifest_file, 64 * 1024, true, None)?;
-    let tag = effective.strip_prefix(&format!("{ORIGIN}/")).and_then(|path| path.strip_suffix("/manifest.json"))
-        .filter(|tag| valid_tag(tag)).ok_or("Invalid release URL")?;
+    download(&release.manifest_url, &manifest_file, 64 * 1024, None)?;
     let manifest: Manifest = serde_json::from_reader(File::open(&manifest_file).map_err(error)?).map_err(error)?;
     if manifest.ota.is_some() {
+        let signature_url = format!("{ORIGIN}/{tag}/manifest.json.sig");
+        if release.signature_url.as_deref() != Some(signature_url.as_str()) {
+            return Err("Invalid release signature URL".into());
+        }
         let signature = work.0.join("manifest.json.sig");
-        download(&format!("{ORIGIN}/{tag}/manifest.json.sig"), &signature, 4096, false, None)?;
+        download(&signature_url, &signature, 4096, None)?;
         verify_manifest(&manifest_file, &signature)?;
     }
     offer(manifest, tag, current)
@@ -326,7 +339,7 @@ fn verify_file(artifact: &Artifact, path: &Path) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn fetch_artifact(tag: &str, artifact: &Artifact, path: &Path, mut progress: impl FnMut(u8)) -> Result<(), String> {
-    download(&format!("{ORIGIN}/{tag}/{}", artifact.path), path, artifact.bytes, false, Some(&mut progress))?;
+    download(&format!("{ORIGIN}/{tag}/{}", artifact.path), path, artifact.bytes, Some(&mut progress))?;
     verify_file(artifact, path)
 }
 
