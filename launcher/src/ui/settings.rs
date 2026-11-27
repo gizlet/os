@@ -1,6 +1,6 @@
 //! Settings: categories in a sidebar, the focused category's rows beside it.
 
-use super::chrome::{self, BOTTOM_H, MARGIN, TABS_BOTTOM};
+use super::chrome::{self, BOTTOM_H, MARGIN, TOP_H};
 use super::home::{focus_color, focus_ring};
 use super::{approach, Ui};
 use crate::app::{App, Category, Item, ItemId, ItemValue, Page};
@@ -49,20 +49,22 @@ fn category_icon(p: &Painter, cat: Category, cx: f32, cy: f32, s: f32, c: Color,
 pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     let pal = p.pal;
     let focus = app.focus.clone();
-    let in_content = focus.in_content && !app.tab_focused;
+    let in_content = focus.in_content;
 
     // Sidebar.
     let side_bg = if pal.dark { alpha(rgb(0x000000), 0.16) } else { alpha(rgb(0xffffff), 0.5) };
-    p.rect(0.0, TABS_BOTTOM, SIDEBAR_W, p.h - BOTTOM_H - TABS_BOTTOM, 0.0, side_bg);
+    p.rect(0.0, 0.0, SIDEBAR_W, p.h - BOTTOM_H, 0.0, side_bg);
+    chrome::page_title(p, app.t(T::Settings));
+    chrome::status(p, app);
 
-    let list_top = TABS_BOTTOM + 14.0;
+    let list_top = TOP_H + 14.0;
     // Every category fits above the hints, closer together on a short screen.
     let cat_h = CAT_H.min((p.h - BOTTOM_H - 6.0 - list_top) / Category::ALL.len() as f32);
     let target_y = list_top + focus.category as f32 * cat_h;
     ui.sidebar_y = if ui.sidebar_y == 0.0 { target_y } else { approach(ui.sidebar_y, target_y, 22.0, dt) };
     let hl_x = MARGIN * 0.5;
     let hl_w = SIDEBAR_W - MARGIN * 0.5 - 18.0;
-    if in_content || app.tab_focused {
+    if in_content {
         p.rect(hl_x, ui.sidebar_y + 4.0, hl_w, cat_h - 8.0, 12.0, alpha(pal.surface_hi, 0.6));
     } else {
         p.rect(hl_x, ui.sidebar_y + 4.0, hl_w, cat_h - 8.0, 12.0, pal.surface_hi);
@@ -86,12 +88,9 @@ pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     let cat = app.focused_category();
     let items = app.settings_items(cat);
     let sel = focus.item.min(items.len().saturating_sub(1));
-    rows(ui, p, app, &items, SIDEBAR_W + 40.0, in_content.then_some(sel), dt);
+    rows(ui, p, app, &items, in_content.then_some(sel), dt);
 
-    let mut hints: Vec<(&str, &str)> = vec![];
-    if !app.tab_focused {
-        hints.push(("B", app.t(T::Back)));
-    }
+    let mut hints: Vec<(&str, &str)> = vec![("B", app.t(T::Back))];
     if in_content {
         match items.get(sel).map(|i| (&i.id, &i.value)) {
             Some((_, ItemValue::Slider(_))) | Some((ItemId::Theme | ItemId::SleepAfter, _)) => hints.push(("←→", app.t(T::Change))),
@@ -108,26 +107,33 @@ pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     } else {
         hints.push(("A", app.t(T::Select)));
     }
-    chrome::tab_hints(p, app, &hints);
+    chrome::hints(p, app, &hints);
 }
 
 pub fn services(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
+    chrome::page_title(p, app.t(T::Services));
+    chrome::status(p, app);
     let items = app.service_items();
-    let selected = (!app.tab_focused).then_some(app.service_item);
-    rows(ui, p, app, &items, MARGIN, selected, dt);
-    let mut hints = Vec::new();
-    if selected.is_some() {
-        hints.push(("B", app.t(T::Back)));
+    let mut hints = vec![("B", app.t(T::Back))];
+    if items.is_empty() {
+        super::home::empty_services(p, app);
+    } else {
+        let focused = items.get(app.focus.item).filter(|item| item.id != ItemId::None);
+        rows(ui, p, app, &items, focused.map(|_| app.focus.item), dt);
+        if focused.is_some() {
+            hints.push(("A", app.t(T::Select)));
+        }
     }
-    if items.iter().any(|item| item.id != ItemId::None) {
-        hints.push(("A", app.t(T::Select)));
-    }
-    chrome::tab_hints(p, app, &hints);
+    chrome::hints(p, app, &hints);
 }
 
-fn rows(ui: &mut Ui, p: &mut Painter, app: &App, items: &[Item], left: f32, selected: Option<usize>, dt: f32) {
-    let width = p.w - MARGIN - left;
-    let top = TABS_BOTTOM + 10.0;
+fn rows(ui: &mut Ui, p: &mut Painter, app: &App, items: &[Item], selected: Option<usize>, dt: f32) {
+    let services = app.page() == Page::Services;
+    let clip_left = if services { 0.0 } else { SIDEBAR_W };
+    let left = if services { MARGIN } else { SIDEBAR_W + 40.0 };
+    let right = p.w - MARGIN;
+    let width = right - left;
+    let top = TOP_H + 10.0;
     let bottom = p.h - BOTTOM_H - 6.0;
 
     let mut ys = Vec::with_capacity(items.len());
@@ -140,7 +146,7 @@ fn rows(ui: &mut Ui, p: &mut Painter, app: &App, items: &[Item], left: f32, sele
     let mut target = 0.0;
     if let Some(sel) = selected.filter(|&index| index < items.len()) {
         target = ui.settings_scroll;
-        let (fy, fb) = if app.page() == Page::Services {
+        let (fy, fb) = if services {
             let heading = items[..sel].iter().rposition(|item| item.value == ItemValue::Section).unwrap_or(sel);
             let next_heading = (sel + 1..items.len()).find(|&index| items[index].value == ItemValue::Section);
             (ys[heading], next_heading.map_or(total, |index| ys[index]))
@@ -158,10 +164,10 @@ fn rows(ui: &mut Ui, p: &mut Painter, app: &App, items: &[Item], left: f32, sele
         target = target.clamp(0.0, (total - view).max(0.0));
     }
     ui.settings_scroll = approach(ui.settings_scroll, target, 18.0, dt);
-    let list_key = if app.page() == Page::Services { 3 } else { 4 + app.focus.category as u8 };
-    let pop = ui.list_pop.update((list_key, selected.unwrap_or(usize::MAX)), dt);
+    let key = if services { 3 } else { 4 + app.focus.category as u8 };
+    let pop = ui.list_pop.update((key, selected.unwrap_or(usize::MAX)), dt);
 
-    p.clip(left - 24.0, top - 6.0, width + 48.0, bottom - top + 12.0);
+    p.clip(clip_left, top - 6.0, p.w - clip_left, bottom - top + 12.0);
     for (i, item) in items.iter().enumerate() {
         let y = top + ys[i] - ui.settings_scroll;
         let h = row_height(p, item, width);

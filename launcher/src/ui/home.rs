@@ -1,8 +1,8 @@
-//! The Apps shelf and the Store placeholder.
+//! Home: the shelf of installed apps above the system buttons.
 
 use super::chrome::{self, MARGIN};
 use super::{approach, Ui};
-use crate::app::App;
+use crate::app::{App, HomeButton, HomeRow};
 use crate::fonts::Weight;
 use crate::i18n::T;
 use crate::icons;
@@ -13,7 +13,9 @@ use raylib_sys::Color;
 const TILE: f32 = 256.0;
 const CORNER: f32 = 0.11;
 const GAP: f32 = 22.0;
-const TILES_Y: f32 = 244.0;
+const TILES_Y: f32 = 182.0;
+const BUTTON_D: f32 = 76.0;
+const BUTTON_GAP: f32 = 30.0;
 
 /// The pulsing focus color; it settles midway as the pulse fades.
 pub fn focus_color(p: &Painter) -> Color {
@@ -43,7 +45,10 @@ pub fn focus_ring(p: &Painter, x: f32, y: f32, w: f32, h: f32, radius: f32, pop:
 }
 
 pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
-    let on_tiles = !app.tab_focused;
+    let pal = p.pal;
+    chrome::brand(p, app);
+    chrome::status(p, app);
+    let on_tiles = app.home_row == HomeRow::Tiles;
 
     // The library changed: free the icons of apps that are gone or renamed them.
     let paths: Vec<_> = app.apps.iter().filter_map(|a| a.manifest.icon.as_ref().map(|i| a.dir.join(i))).collect();
@@ -52,40 +57,72 @@ pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
         ui.icon_paths = paths;
     }
     if app.apps.is_empty() {
-        empty_shelf(p, app);
+        empty_shelf(p, app, on_tiles);
     } else {
         shelf(ui, p, app, on_tiles, dt);
     }
 
-    let hints = if app.apps.is_empty() { vec![] } else if on_tiles {
-        vec![("B", app.t(T::Back)), ("A", app.t(T::OpenApp))]
-    } else {
-        vec![("A", app.t(T::Select))]
-    };
-    chrome::tab_hints(p, app, &hints);
+    // System buttons, centered.
+    let n = HomeButton::ALL.len() as f32;
+    let row_w = n * BUTTON_D + (n - 1.0) * BUTTON_GAP;
+    let cy = TILES_Y + TILE + 94.0;
+    let pop = ui.button_pop.update((1, app.home_button), dt);
+    for (i, b) in HomeButton::ALL.iter().enumerate() {
+        let cx = p.w / 2.0 - row_w / 2.0 + BUTTON_D / 2.0 + i as f32 * (BUTTON_D + BUTTON_GAP);
+        let focused = !on_tiles && app.home_button == i;
+        let r = BUTTON_D / 2.0;
+        p.shadow(cx - r, cy - r, BUTTON_D, BUTTON_D, r, 8.0, 0.5);
+        p.circle(cx, cy, r, pal.surface);
+        let (hole, s) = (pal.surface, 38.0);
+        match b {
+            HomeButton::Library => icons::grid(p, cx, cy, s * 0.9, pal.accent),
+            HomeButton::Services => icons::chip(p, cx, cy, s * 0.9, pal.dim, hole),
+            HomeButton::Store => icons::bag(p, cx, cy, s, pal.warm, hole),
+            HomeButton::ButtonTest => icons::gamepad(p, cx, cy, s * 1.05, pal.success, hole),
+            HomeButton::Settings => icons::gear(p, cx, cy, s, pal.dim, hole),
+            HomeButton::Power => icons::power(p, cx, cy, s * 0.95, pal.dim),
+        }
+        if focused {
+            let g = 5.0 + pop * 3.0;
+            let c = focus_color(p);
+            p.ring(cx, cy, r + g, r + g + 5.0, 0.0, 360.0, c);
+            p.ring(cx, cy, r + g + 5.0, r + g + 10.0, 0.0, 360.0, alpha(c, 0.18));
+            p.text_center(app.t(b.title()), cx, cy + r + 34.0, 20.0, Weight::Regular, pal.text);
+        }
+    }
+
+    chrome::hints(p, app, &[("A", app.t(T::Ok))]);
 }
 
-pub fn store(p: &mut Painter, app: &App) {
-    let pal = p.pal;
-    let cy = TILES_Y + TILE * 0.45;
-    icons::bag(p, p.w / 2.0, cy, 84.0, pal.warm, pal.bg_bottom);
-    p.text_center(app.t(T::StoreSoon), p.w / 2.0, cy + 80.0, 24.0, Weight::Display, pal.text);
-    chrome::tab_hints(p, app, &[]);
+/// The shelf without apps: one wide card that says how to get some.
+fn empty_shelf(p: &mut Painter, app: &App, on_tiles: bool) {
+    if on_tiles {
+        let width = (TILE * 2.0 + GAP).min(p.w - MARGIN * 2.0);
+        p.text_mid(app.t(T::Library), (p.w - width) / 2.0, TILES_Y - 32.0, 28.0, Weight::Display, focus_color(p));
+    }
+    empty_card(p, app, T::EmptyTitle, T::EmptyBody, icons::gamepad, on_tiles);
 }
 
-fn empty_shelf(p: &mut Painter, app: &App) {
+fn empty_card(p: &mut Painter, app: &App, title: T, body: T, icon: fn(&Painter, f32, f32, f32, Color, Color), focused: bool) {
     let pal = p.pal;
     let w = (TILE * 2.0 + GAP).min(p.w - MARGIN * 2.0);
     let x = (p.w - w) / 2.0;
     let y = TILES_Y;
     p.rect(x, y, w, TILE, TILE * CORNER, alpha(pal.surface, 0.7));
     p.outline(x, y, w, TILE, TILE * CORNER, 2.0, alpha(pal.line, 0.8));
-    icons::gamepad(p, x + w / 2.0, y + TILE * 0.33, 84.0, alpha(pal.dim, 0.8), pal.surface);
-    p.text_center(app.t(T::EmptyTitle), x + w / 2.0, y + TILE * 0.6, 24.0, Weight::Display, pal.text);
-    let lines = p.wrap(app.t(T::EmptyBody), w - 60.0, 18.0, Weight::Regular);
+    icon(p, x + w / 2.0, y + TILE * 0.33, 84.0, alpha(pal.dim, 0.8), pal.surface);
+    p.text_center(app.t(title), x + w / 2.0, y + TILE * 0.6, 24.0, Weight::Display, pal.text);
+    let lines = p.wrap(app.t(body), w - 60.0, 18.0, Weight::Regular);
     for (i, line) in lines.iter().take(2).enumerate() {
         p.text_center(line, x + w / 2.0, y + TILE * 0.74 + i as f32 * 26.0, 18.0, Weight::Regular, pal.dim);
     }
+    if focused {
+        focus_ring(p, x, y, w, TILE, TILE * CORNER, 0.0);
+    }
+}
+
+pub fn empty_services(p: &mut Painter, app: &App) {
+    empty_card(p, app, T::NoServices, T::NoServicesBody, icons::chip, false);
 }
 
 /// Installed apps as square tiles in one row, scrolled to keep focus in view.
@@ -107,6 +144,7 @@ fn shelf(ui: &mut Ui, p: &mut Painter, app: &App, on_tiles: bool, dt: f32) {
     let pop = ui.tile_pop.update((2, app.home_tile), dt);
     let lang = app.lang_code();
 
+    p.text_mid(app.t(T::Library), MARGIN, y - 32.0, 28.0, Weight::Display, if on_tiles { focus_color(p) } else { pal.dim });
     for (i, a) in app.apps.iter().enumerate() {
         let x = ui.shelf_x + i as f32 * step;
         if x + TILE < 0.0 || x > p.w {
