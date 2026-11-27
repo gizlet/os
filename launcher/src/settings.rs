@@ -83,6 +83,7 @@ pub struct Settings {
     pub battery_percent: bool,
     /// Short sounds as the focus moves, a page opens or closes and a setting changes.
     pub ui_sounds: bool,
+    pub favorites: Vec<String>,
 }
 
 impl Default for Settings {
@@ -94,6 +95,7 @@ impl Default for Settings {
             clock_24h: true,
             battery_percent: true,
             ui_sounds: true,
+            favorites: Vec::new(),
         }
     }
 }
@@ -128,6 +130,9 @@ impl Settings {
                 "clock_24h" => s.clock_24h = parse_bool(v).unwrap_or(s.clock_24h),
                 "battery_percent" => s.battery_percent = parse_bool(v).unwrap_or(s.battery_percent),
                 "ui_sounds" => s.ui_sounds = parse_bool(v).unwrap_or(s.ui_sounds),
+                "favorite" if crate::apps::is_valid_id(v) && !s.favorites.iter().any(|id| id == v) => {
+                    s.favorites.push(v.to_owned());
+                }
                 _ => {}
             }
         }
@@ -139,7 +144,7 @@ impl Settings {
             Theme::Dark => "dark",
             Theme::Light => "light",
         };
-        format!(
+        let mut text = format!(
             "language = {}\ntheme = {}\nswap_ab = {}\nclock_24h = {}\nbattery_percent = {}\nui_sounds = {}\n",
             self.language.key(),
             theme,
@@ -147,7 +152,11 @@ impl Settings {
             self.clock_24h,
             self.battery_percent,
             self.ui_sounds
-        )
+        );
+        for id in &self.favorites {
+            text.push_str(&format!("favorite = {id}\n"));
+        }
+        text
     }
 
     pub fn load(path: &Path) -> Settings {
@@ -298,5 +307,13 @@ mod tests {
         assert!(!partial.swap_ab);
         assert!(partial.clock_24h);
         assert!(partial.ui_sounds, "sounds are on by default");
+    }
+
+    #[test]
+    fn favorites_round_trip_in_the_order_starred() {
+        let settings = Settings::parse("favorite = io.gizlet.tailscale\nfavorite = ../bad\nfavorite = io.gizlet.overeaten\nfavorite = io.gizlet.tailscale\n");
+        assert_eq!(settings.favorites, ["io.gizlet.tailscale", "io.gizlet.overeaten"]);
+        assert_eq!(Settings::parse(&settings.render()), settings);
+        assert!(Settings::parse("theme = light\n").favorites.is_empty());
     }
 }

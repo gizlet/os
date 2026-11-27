@@ -211,6 +211,45 @@ pub fn chip(p: &Painter, cx: f32, cy: f32, s: f32, c: Color, hole: Color) {
     p.rect(cx - w * 0.25, cy - w * 0.25, w * 0.5, w * 0.5, s * 0.04, hole);
 }
 
+/// A five-pointed star with softly rounded tips.
+pub fn star(p: &Painter, cx: f32, cy: f32, radius: f32, color: Color) {
+    use std::f32::consts::{FRAC_PI_2, PI, TAU};
+    let inner = radius * 0.5;
+    let round = radius * 0.16;
+    let step = TAU / 10.0;
+    let tip = (radius, 0.0);
+    let valley = (inner * step.cos(), inner * step.sin());
+    let (ex, ey) = (valley.0 - tip.0, valley.1 - tip.1);
+    let half = (ey.abs() / (ex * ex + ey * ey).sqrt()).asin();
+    let center = radius - round / half.sin();
+    let sweep = FRAC_PI_2 - half;
+    let arc = 4;
+    let mut points = Vec::with_capacity(5 * (arc + 2));
+    for index in 0..5 {
+        let angle = index as f32 * TAU / 5.0 - FRAC_PI_2;
+        let (ox, oy) = (cx + angle.cos() * center, cy + angle.sin() * center);
+        for k in 0..=arc {
+            let theta = angle - sweep + 2.0 * sweep * k as f32 / arc as f32;
+            points.push((ox + theta.cos() * round, oy + theta.sin() * round));
+        }
+        let between = angle + PI / 5.0;
+        points.push((cx + between.cos() * inner, cy + between.sin() * inner));
+    }
+    for index in 0..points.len() {
+        p.triangle((cx, cy), points[index], points[(index + 1) % points.len()], color);
+    }
+}
+
+/// A favorite badge: a gold disc with a soft shadow, a thin dark edge and a white star.
+pub fn star_badge(p: &Painter, cx: f32, cy: f32, r: f32) {
+    let white = Color { r: 255, g: 255, b: 255, a: 255 };
+    let black = Color { r: 0, g: 0, b: 0, a: 255 };
+    p.circle(cx, cy + r * 0.14, r * 1.12, alpha(black, 0.22));
+    p.circle(cx, cy, r + 1.0, alpha(black, 0.35));
+    p.circle_gradient(cx, cy, r, crate::theme::rgb(0xffd45c), crate::theme::rgb(0xffa21f));
+    star(p, cx, cy + r * 0.04, r * 0.68, white);
+}
+
 pub fn cross_circle(p: &Painter, cx: f32, cy: f32, s: f32, c: Color) {
     let t = s * 0.09;
     p.ring(cx, cy, s * 0.42 - t, s * 0.42, 0.0, 360.0, c);

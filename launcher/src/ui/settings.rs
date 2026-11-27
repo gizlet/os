@@ -110,25 +110,21 @@ pub fn draw(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     chrome::hints(p, app, &hints);
 }
 
-pub fn services(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
+pub fn service_details(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     chrome::page_title(p, app.t(T::Services));
     chrome::status(p, app);
     let items = app.service_items();
     let mut hints = vec![("B", app.t(T::Back))];
-    if items.is_empty() {
-        super::home::empty_services(p, app);
-    } else {
-        let focused = items.get(app.focus.item).filter(|item| item.id != ItemId::None);
-        rows(ui, p, app, &items, focused.map(|_| app.focus.item), dt);
-        if focused.is_some() {
-            hints.push(("A", app.t(T::Select)));
-        }
+    let focused = items.get(app.focus.item).filter(|item| item.id != ItemId::None);
+    rows(ui, p, app, &items, focused.map(|_| app.focus.item), dt);
+    if focused.is_some() {
+        hints.push(("A", app.t(T::Select)));
     }
     chrome::hints(p, app, &hints);
 }
 
 fn rows(ui: &mut Ui, p: &mut Painter, app: &App, items: &[Item], selected: Option<usize>, dt: f32) {
-    let services = app.page() == Page::Services;
+    let services = app.page() == Page::ServiceDetails;
     let clip_left = if services { 0.0 } else { SIDEBAR_W };
     let left = if services { MARGIN } else { SIDEBAR_W + 40.0 };
     let right = p.w - MARGIN;
@@ -146,14 +142,9 @@ fn rows(ui: &mut Ui, p: &mut Painter, app: &App, items: &[Item], selected: Optio
     let mut target = 0.0;
     if let Some(sel) = selected.filter(|&index| index < items.len()) {
         target = ui.settings_scroll;
-        let (fy, fb) = if services {
-            let heading = items[..sel].iter().rposition(|item| item.value == ItemValue::Section).unwrap_or(sel);
-            let next_heading = (sel + 1..items.len()).find(|&index| items[index].value == ItemValue::Section);
-            (ys[heading], next_heading.map_or(total, |index| ys[index]))
-        } else {
-            let heading = if sel > 0 && items[sel - 1].value == ItemValue::Section { sel - 1 } else { sel };
-            (ys[heading], ys.get(sel + 1).copied().unwrap_or(total))
-        };
+        let heading = if sel > 0 && items[sel - 1].value == ItemValue::Section { sel - 1 } else { sel };
+        let fy = ys[heading];
+        let fb = ys.get(sel + 1).copied().unwrap_or(total);
         let view = bottom - top;
         if fy - target < 0.0 {
             target = fy;

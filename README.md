@@ -8,18 +8,20 @@ The base includes Bun at `/usr/bin/bun`. Run `bun /home/hello.js` from SSH or th
 
 - **Gamepad-first Launcher.** Browse the app shelf, test buttons and sticks, and adjust brightness, volume, theme, language, and A/B mapping from the handheld.
 - **Wi-Fi and SSH from Settings.** Scan for networks, enter a Wi-Fi password with the on-screen keyboard, and see the SSH login commands for the device's `.local` name and IP address.
-- **Apps and background services.** Install `.gzl` packages with `gizlet` and open games and apps from the shelf. Manage services such as Tailscale with separate controls for running now and starting at boot.
+- **Apps and background services.** Install `.gzl` packages with `gizlet` and browse them in Apps and Services. Star a package with X to add it to Home. Manage a service such as Tailscale by opening it and using the Running and Start at boot controls.
 - **Handheld power controls.** See battery charge and estimated time remaining, set separate idle sleep timers for battery and charging, and suspend from the Power menu.
 - **Two-card storage.** The read-only system runs from TF1, and the data partition keeps installed apps, saves, and settings. TF2 mounts at `/media/tf2` for user files such as games.
 - **Signed Launcher and Runtime updates.** Install updates from Settings and restart to try the new pair. If the new Launcher fails to start, the system restores the previous pair.
 
 ## Screenshots
 
-![Gizlet Launcher home with Services selected in the bottom icon row](docs/screenshots/launcher-home.png)
+![Gizlet Launcher home with three starred apps above the bottom icon row](docs/screenshots/launcher-home.png)
 
-**Library** focuses the app shelf. The icon row below it also opens **Services**, **Button Test**, **Settings**, and **Power**. **Store** is a placeholder.
+The bottom row opens **Apps**, **Services**, **Button Test**, **Settings**, and **Power**. **Store** is a placeholder. Use X in the Apps or Services grid to add or remove a shortcut on Home.
 
-![Services showing the Running and Start at boot controls for Tailscale](docs/screenshots/launcher-services.png)
+| Apps | Services |
+| --- | --- |
+| ![Apps arranged in a grid](docs/screenshots/launcher-apps.png) | ![Services arranged in a grid with Tailscale starred](docs/screenshots/launcher-services.png) |
 
 ### Settings
 

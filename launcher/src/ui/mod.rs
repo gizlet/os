@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 
+const TILE_RADIUS_RATIO: f32 = 0.11;
+
 /// Which version of a file an icon was loaded from: an update or a
 /// reinstall writes a new file, with another time or size.
 type FileId = Option<(std::time::SystemTime, u64)>;
@@ -63,17 +65,89 @@ impl Icons {
 }
 
 fn load(path: &Path) -> ffi::Texture2D {
+    let empty = ffi::Texture2D { id: 0, width: 0, height: 0, mipmaps: 0, format: 0 };
     let Ok(c) = CString::new(path.to_string_lossy().as_bytes()) else {
-        return ffi::Texture2D { id: 0, width: 0, height: 0, mipmaps: 0, format: 0 };
+        return empty;
     };
     unsafe {
-        let mut tex = ffi::LoadTexture(c.as_ptr());
+        let mut image = ffi::LoadImage(c.as_ptr());
+        if !ffi::IsImageValid(image) {
+            ffi::UnloadImage(image);
+            return empty;
+        }
+        let side = image.width.min(image.height);
+        if image.width != image.height {
+            let crop = ffi::Rectangle {
+                x: ((image.width - side) / 2) as f32,
+                y: ((image.height - side) / 2) as f32,
+                width: side as f32,
+                height: side as f32,
+            };
+            ffi::ImageCrop(&mut image, crop);
+        }
+        let size = side.clamp(128, 512);
+        if image.width != size || image.height != size {
+            ffi::ImageResize(&mut image, size, size);
+        }
+        let rgba = ffi::PixelFormat::PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 as i32;
+        ffi::ImageFormat(&mut image, rgba);
+        if !ffi::IsImageValid(image) || image.format != rgba || image.width != size || image.height != size {
+            ffi::UnloadImage(image);
+            return empty;
+        }
+        let size = size as usize;
+        let pixels = std::slice::from_raw_parts_mut(image.data.cast::<ffi::Color>(), size * size);
+        round_corners(pixels, size);
+        let mut tex = ffi::LoadTextureFromImage(image);
+        ffi::UnloadImage(image);
         if tex.id != 0 {
             // Icons are drawn far smaller than they are stored.
             ffi::GenTextureMipmaps(&mut tex);
             ffi::SetTextureFilter(tex, ffi::TextureFilter::TEXTURE_FILTER_TRILINEAR as i32);
         }
         tex
+    }
+}
+
+fn round_corners(pixels: &mut [ffi::Color], size: usize) {
+    let radius = size as f32 * TILE_RADIUS_RATIO;
+    let corner = radius.ceil() as usize;
+    for row in 0..corner {
+        for column in 0..corner {
+            let dx = radius - column as f32 - 0.5;
+            let dy = radius - row as f32 - 0.5;
+            let coverage = (radius + 0.5 - dx.hypot(dy)).clamp(0.0, 1.0);
+            let opposite_row = size - 1 - row;
+            let opposite_column = size - 1 - column;
+            for index in [
+                row * size + column,
+                row * size + opposite_column,
+                opposite_row * size + column,
+                opposite_row * size + opposite_column,
+            ] {
+                pixels[index].a = (pixels[index].a as f32 * coverage).round() as u8;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tile_mask_softens_corners_and_preserves_the_source_alpha() {
+        let size = 128;
+        let mut pixels = vec![ffi::Color { r: 48, g: 89, b: 150, a: 180 }; size * size];
+        round_corners(&mut pixels, size);
+        for index in [0, size - 1, size * (size - 1), size * size - 1] {
+            assert_eq!(pixels[index].a, 0);
+        }
+        for index in [size / 2, size * (size / 2), size * (size / 2) + size / 2] {
+            assert_eq!(pixels[index].a, 180);
+        }
+        assert!(pixels.iter().any(|pixel| (1..180).contains(&pixel.a)));
+        assert!(pixels.iter().all(|pixel| (pixel.r, pixel.g, pixel.b) == (48, 89, 150)));
     }
 }
 
@@ -150,6 +224,14 @@ impl Ui {
     pub fn draw(&mut self, p: &mut Painter, app: &App, pad: &RawPad, dt: f32) -> bool {
         let before = (self.shelf_x, self.sidebar_y, self.settings_scroll);
         p.pal = theme::palette(app.settings.theme);
+        let paths: Vec<_> = app.apps.iter()
+            .chain(app.installed_services().iter().map(|service| &service.package))
+            .filter_map(|package| package.manifest.icon.as_ref().map(|icon| package.dir.join(icon)))
+            .collect();
+        if paths != self.icon_paths {
+            self.icons.keep_only(&paths);
+            self.icon_paths = paths;
+        }
         let key = (Some(app.page()), app.depth());
         if key != self.page_key {
             // The first frame shows at once; later pages fade in.
@@ -163,7 +245,8 @@ impl Ui {
         chrome::background(p);
         match app.page() {
             Page::Home => home::draw(self, p, app, dt),
-            Page::Services => settings::services(self, p, app, dt),
+            Page::Apps | Page::Services => home::grid(self, p, app, dt),
+            Page::ServiceDetails => settings::service_details(self, p, app, dt),
             Page::Settings => settings::draw(self, p, app, dt),
             Page::ButtonTest => test::draw(p, app, pad),
         }

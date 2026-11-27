@@ -6,10 +6,13 @@ Pages are laid out in logical units: the screen is 720 units tall and at least 9
 
 | Page | What it does |
 | --- | --- |
-| Home | The shelf of installed apps (A starts one), with Library, Services, Store, Button Test, Settings and Power icons below |
-| Services | Installed `.gzl` background services, with status, running and start-at-boot controls |
+| Home | Starred apps and services, with Apps, Services, Store, Button Test, Settings and Power icons below |
+| Apps | A grid of installed apps. Press A to launch the selected app. |
+| Services | A grid of installed `.gzl` background services. Press A to see the selected service's status, running and start-at-boot controls. |
 | Settings | Wi-Fi, SSH, display, sound, battery, controls, language, date and time, system information and updates |
 | Button test | A handheld drawn from primitives that lights up with every button, stick and trigger; hold Back to leave |
+
+Use the direction buttons to move through either grid and L/R to change pages. Press X to star or unstar the selected package. The Launcher remembers these choices across restarts. A starred service opens its controls from Home.
 
 On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A, BTN_SOUTH is B), and the volume keys change the volume. Wi-Fi and ssh are switched and the time zone and hostname are set with `gizlet-switch`, which keeps the choice across reboots; the clock redraws in a new zone at once. Missing hardware or drivers are shown as such, as for the R36S's battery and sound today. [System](src/system/linux.rs) · [Controls](src/evdev.rs)
 
@@ -47,7 +50,7 @@ Developers write `gizlet.toml` at the repository root. The store reads that file
 | --- | --- | --- |
 | `1`, or left out | Left out, or `app` | An app: every package built before schema 2 |
 | `2` | `app` | An app, exactly like schema 1 |
-| `2` | `service` | A service: a background program that systemd runs. It is never shown on the shelf or started by `gizlet run` or `gizlet start`. See [Services](#services) |
+| `2` | `service` | A background program that systemd runs. Its Launcher shortcut opens the service's controls. See [Services](#services) |
 
 Any other schema, a schema 2 manifest without `kind`, and a schema 1 manifest whose `kind` is not `app` are refused. [Manifest contract](https://github.com/gizlet/gizlet/blob/main/docs/gizlet-toml.md#manifestjson)
 
@@ -157,7 +160,7 @@ cd launcher
 GIZLET_FAKE_DEVICES=1 cargo run --release
 ```
 
-Apps installed into the launcher's data folder (`GIZLET_PREFIX` to choose another) appear on its shelf; `GIZLET_TARGET=aarch64-unknown-linux-gnu` lets a Mac install a handheld package to see its tile.
+Apps installed into the launcher's data folder (`GIZLET_PREFIX` to choose another) appear in Apps. `GIZLET_TARGET=aarch64-unknown-linux-gnu` lets a Mac install a handheld package to see its tile.
 
 Keys: arrows, Enter or K (A), Escape or J (B), I (X), U (Y), Q/E (L/R), = (Start), - (Select). `GIZLET_WINDOW=640x480` sets the window size, `GIZLET_FAKE_DEVICES=1` simulates the battery, backlight, volume, Wi-Fi and ssh, and `GIZLET_SCRIPT` drives it from a script (see [script.rs](src/script.rs)).
 
