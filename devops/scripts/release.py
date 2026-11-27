@@ -43,7 +43,8 @@ def assemble(tag, commit, build, output, signing_key):
         (output / filename).write_text(contents, encoding=encoding)
     windows_script = output / board_scripts["windows"]
     windows_script.write_text(windows_script.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
-    (output / checksum).write_text(f"{artifact(output, image)['sha256']}  {image.name}\n")
+    packed = artifact(output, image)
+    (output / checksum).write_text(f"{packed['sha256']}  {image.name}\n")
 
     manifest = {
         "schema_version": 1,
@@ -52,7 +53,8 @@ def assemble(tag, commit, build, output, signing_key):
         "boards": {
             "gameconsole": {
                 "r36s": {
-                    "image": {"path": image.as_posix(), "checksum": checksum.as_posix()},
+                    "image": {"path": image.as_posix(), "checksum": checksum.as_posix(),
+                              "sha256": packed["sha256"], "bytes": packed["bytes"]},
                     "flash_scripts": {platform: path.as_posix() for platform, path in board_scripts.items()},
                 },
             },
