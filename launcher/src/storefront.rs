@@ -307,22 +307,18 @@ impl Storefront {
                         }
                     }
                 }
-                Done::Resolved(result) => {
-                    self.resolving = false;
+                // Only the link still waited for: opening another page meanwhile drops it.
+                Done::Resolved(result) if std::mem::take(&mut self.resolving) => {
                     notes.push(match result {
                         Ok(repo) => Note::Open(repo),
                         Err(error) => Note::Failed(error),
                     });
                 }
+                Done::Resolved(_) => {}
                 Done::Art(url, result) => {
                     self.art_running -= 1;
-                    let saved = result.is_ok();
+                    // Art this evicted from the disk cache is fetched again when a page next asks for it.
                     self.art.insert(url, result.map_or(Art::Failed, Art::Ready));
-                    // Saving it may have evicted older art from the disk cache: fetch what is shown again.
-                    if saved && self.art.values().any(|a| matches!(a, Art::Ready(path) if !path.exists())) {
-                        self.art.retain(|_, a| !matches!(a, Art::Ready(path) if !path.exists()));
-                        self.want_shown();
-                    }
                 }
                 Done::Progress(progress) => {
                     if let Some(job) = self.job.as_mut() {
@@ -487,6 +483,7 @@ impl Storefront {
 
     /// Opens a gizlet's page; `preview` is what a list showed of it.
     pub fn open(&mut self, repo: &str, preview: Option<Summary>) {
+        self.resolving = false;
         self.detail = Some(DetailView { repo: repo.to_string(), preview, data: Load::Loading, focus: DetailFocus::Actions(0), viewer: None });
         self.want_detail_art();
         let repo = repo.to_string();
@@ -730,6 +727,17 @@ mod tests {
         }
         assert!(s.art.values().all(|a| matches!(a, Art::Loading)));
         assert_eq!(s.art_queue, ["u/failed", "u/evicted"]);
+    }
+
+    #[test]
+    fn a_link_resolved_after_another_page_opened_is_dropped() {
+        let mut s = front();
+        s.resolving = true;
+        s.open("github.com/o/a", Some(card("a")));
+        s.send.send(Done::Resolved(Ok("github.com/o/b".into()))).unwrap();
+        let (notes, _) = s.poll();
+        assert!(notes.is_empty());
+        assert_eq!(s.detail.as_ref().unwrap().repo, "github.com/o/a");
     }
 
     #[test]

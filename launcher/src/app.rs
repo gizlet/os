@@ -1156,10 +1156,12 @@ impl App {
                     self.toast(T::StoreRemoved.fmt(l, &[&name]));
                 }
                 Note::Failed(error) => self.toast(store_error(l, &error)),
-                Note::Open(repo) => {
+                // A link opens its page from where it was entered: the Store or its search.
+                Note::Open(repo) if matches!(self.page(), Page::Store | Page::StoreSearch) => {
                     self.store.open(&repo, None);
                     self.push(Page::StoreDetail);
                 }
+                Note::Open(_) => {}
             }
         }
     }
