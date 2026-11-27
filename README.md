@@ -17,7 +17,7 @@ The base includes Bun at `/usr/bin/bun`. Run `bun /home/hello.js` from SSH or th
 
 ![Gizlet Launcher home with three starred apps above the bottom icon row](docs/screenshots/launcher-home.png)
 
-The bottom row opens **Apps**, **Services**, **Button Test**, **Settings**, and **Power**. **Store** is a placeholder. Use X in the Apps or Services grid to add or remove a shortcut on Home.
+The bottom row opens **Apps**, **Services**, **Button Test**, **Settings**, and **Power**. **Store** browses, searches, installs and updates apps from gizlet.io without an account. Use X in the Apps or Services grid to add or remove a shortcut on Home.
 
 | Apps | Services |
 | --- | --- |

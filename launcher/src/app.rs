@@ -7,6 +7,7 @@ use crate::input::{Action, Input, TextEvent};
 use crate::keyboard::{self, Keyboard};
 use crate::settings::{Language, Power, Settings, Theme};
 use crate::sound::Sfx;
+use crate::storefront::{self, DetailFocus, Note, Offer, Storefront};
 use crate::system::{valid_hostname, Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
 use crate::zones::{Zone, ZONES};
 use gizlet_launcher::ota;
@@ -24,6 +25,11 @@ pub enum Page {
     Apps,
     Services,
     ServiceDetails,
+    /// The Store's home: featured lists and updates.
+    Store,
+    /// One gizlet's page in the Store.
+    StoreDetail,
+    StoreSearch,
     Settings,
     ButtonTest,
 }
@@ -211,6 +217,9 @@ pub enum DialogAction {
     WifiDisconnect,
     WifiForget(String),
     InstallUpdate,
+    /// Install a service from the Store, after saying what a service may do.
+    StoreInstall { repo: String, id: String, name: String },
+    StoreRemove { repo: String, id: String, name: String },
     Close,
 }
 
@@ -449,6 +458,7 @@ struct Place {
     dialog: Option<usize>,
     /// The keyboard's key and layout, and how much is typed.
     keyboard: Option<(usize, usize, bool, bool, usize)>,
+    store: (usize, usize, Option<DetailFocus>, Option<usize>, usize),
 }
 
 pub struct App {
@@ -473,6 +483,7 @@ pub struct App {
     system: System,
     updates: Option<Updates>,
     pub services: ServicesUi,
+    pub store: Storefront,
     pub wifi: WifiUi,
     pub ssh_switching: Option<bool>,
     /// The time zone being set, until the device reports it.
@@ -499,6 +510,7 @@ impl App {
         let settings_path = data_dir.join("settings.ini");
         let settings = Settings::load(&settings_path);
         let library = Library::open();
+        let store = Storefront::new(&library);
         let apps_stamp = library.stamp();
         let apps = library.scan();
         let home_row = if apps.iter().any(|app| settings.favorites.iter().any(|id| id == app.id())) {
@@ -514,6 +526,7 @@ impl App {
             system: System::start(data_dir),
             updates: None,
             services: ServicesUi::new(),
+            store,
             pages: vec![Page::Home],
             home_row,
             home_button: HomeButton::ALL.iter().position(|button| *button == HomeButton::Settings).unwrap(),
@@ -579,6 +592,7 @@ impl App {
             || !self.toasts.is_empty()
             || self.page() == Page::ButtonTest
             || (matches!(self.page(), Page::Services | Page::ServiceDetails) && self.services.list.is_none())
+            || (matches!(self.page(), Page::Store | Page::StoreDetail | Page::StoreSearch) && self.store.loading())
             || (self.page() == Page::Settings
                 && self.focused_category() == Category::System
                 && self.updates.as_ref().is_some_and(Updates::has_spinner))
@@ -625,6 +639,13 @@ impl App {
             settings: (self.focus.category, self.focus.item, self.focus.in_content),
             dialog: self.dialog.as_ref().map(|d| d.focus),
             keyboard: self.keyboard.as_ref().map(|k| (k.row, k.col, k.shift, k.symbols, k.text.chars().count())),
+            store: (
+                self.store.row,
+                self.store.cols.get(self.store.row).copied().unwrap_or(0),
+                self.store.detail.as_ref().map(|d| d.focus),
+                self.store.detail.as_ref().and_then(|d| d.viewer),
+                self.store.search.as_ref().map_or(0, |s| s.focus),
+            ),
         }
     }
 
@@ -783,6 +804,7 @@ impl App {
             }
         }
         self.update_services();
+        self.update_store();
         if !events.is_empty() {
             let focused = self.focused_item();
             for event in events {
@@ -803,7 +825,7 @@ impl App {
     /// what the worker finished.
     fn update_services(&mut self) {
         let page = self.page();
-        let needed = matches!(page, Page::Services | Page::ServiceDetails)
+        let needed = matches!(page, Page::Services | Page::ServiceDetails | Page::Store | Page::StoreDetail | Page::StoreSearch)
             || (page == Page::Home
                 && self.settings.favorites.iter().any(|id| !self.apps.iter().any(|app| app.id() == id)));
         if needed && !self.services.busy() && self.time - self.services.asked >= SERVICES_REFRESH {
@@ -846,6 +868,9 @@ impl App {
             Page::Apps | Page::Services => self.grid_input(input),
             Page::Settings => self.settings_input(input),
             Page::ServiceDetails => self.service_details_input(input),
+            Page::Store => self.store_input(input),
+            Page::StoreDetail => self.store_detail_input(input),
+            Page::StoreSearch => self.store_search_input(input),
             Page::ButtonTest => {
                 if input.held(Action::B) {
                     self.test_hold += dt;
@@ -1020,7 +1045,7 @@ impl App {
                             self.services.asked = f64::NEG_INFINITY;
                             self.push(Page::Services);
                         }
-                        HomeButton::Store => self.toast(self.t(T::StoreSoon)),
+                        HomeButton::Store => self.open_store(),
                         HomeButton::ButtonTest => self.push(Page::ButtonTest),
                         HomeButton::Settings => self.push(Page::Settings),
                         HomeButton::Power => self.power_dialog(),
@@ -1071,6 +1096,220 @@ impl App {
                             _ => self.open_service(id),
                         }
                         return;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn open_store(&mut self) {
+        self.store.enter(self.time);
+        self.services.asked = f64::NEG_INFINITY;
+        self.push(Page::Store);
+    }
+
+    /// What kind of gizlet with this ID is installed, if any.
+    pub fn installed_kind(&self, id: &str) -> Option<apps::Kind> {
+        if self.apps.iter().any(|app| app.id() == id) {
+            Some(apps::Kind::App)
+        } else if self.installed_services().iter().any(|service| service.id() == id) {
+            Some(apps::Kind::Service)
+        } else {
+            None
+        }
+    }
+
+    /// What the open Store page offers for its gizlet.
+    pub fn store_offers(&self) -> Vec<Offer> {
+        let id = self.store.detail.as_ref().and_then(|d| d.summary()).map(|s| s.id.clone());
+        self.store.offers(id.and_then(|id| self.installed_kind(&id)))
+    }
+
+    /// Takes in what the Store's workers finished.
+    fn update_store(&mut self) {
+        let (notes, changed) = self.store.poll();
+        if changed {
+            self.revision += 1;
+        }
+        let offers = self.store_offers().len();
+        self.store.clamp_detail(offers);
+        let l = self.lang();
+        for note in notes {
+            match note {
+                Note::Installed { name, kind, updated } => {
+                    self.services.asked = f64::NEG_INFINITY;
+                    let text = match (updated, kind) {
+                        (true, _) => T::StoreUpdated.fmt(l, &[&name]),
+                        (false, apps::Kind::Service) => T::StoreServiceInstalled.fmt(l, &[&name]),
+                        (false, apps::Kind::App) => T::StoreInstalled.fmt(l, &[&name]),
+                    };
+                    self.toast(text);
+                }
+                Note::Removed(name) => {
+                    self.services.asked = f64::NEG_INFINITY;
+                    self.toast(T::StoreRemoved.fmt(l, &[&name]));
+                }
+                Note::Failed(error) => self.toast(store_error(l, &error)),
+                Note::Open(repo) => {
+                    self.store.open(&repo, None);
+                    self.push(Page::StoreDetail);
+                }
+            }
+        }
+    }
+
+    fn store_keyboard(&mut self, purpose: keyboard::Purpose) {
+        let (title, current) = match purpose {
+            keyboard::Purpose::StoreSearch => (T::StoreSearchTitle, self.store.search.as_ref().map(|s| s.query.clone()).unwrap_or_default()),
+            _ => (T::StoreLinkTitle, String::new()),
+        };
+        self.keyboard = Some(Keyboard::text(self.t(title).into(), purpose, &current));
+    }
+
+    fn open_store_card(&mut self, card: gizlet_launcher::store::Summary) {
+        self.store.open(&card.repo.clone(), Some(card));
+        self.push(Page::StoreDetail);
+    }
+
+    fn store_input(&mut self, input: &Input) {
+        for &action in &input.pressed {
+            match action {
+                Action::B => {
+                    self.pages.pop();
+                    return;
+                }
+                Action::Y => return self.store_keyboard(keyboard::Purpose::StoreSearch),
+                Action::X => return self.store_keyboard(keyboard::Purpose::StoreLink),
+                Action::Up | Action::Down | Action::Left | Action::Right | Action::L | Action::R => self.store.move_home(action),
+                Action::A if self.store.update_all_focused() => {
+                    let queued = self.store.upgrade_all(self.lang_code());
+                    if queued == 1 {
+                        self.toast(self.t(T::StoreUpdateQueued).to_string());
+                    } else if queued > 1 {
+                        self.toast(T::StoreUpdatesQueued.fmt(self.lang(), &[&queued.to_string()]));
+                    }
+                    return;
+                }
+                Action::A => {
+                    if let Some(card) = self.store.focused().cloned() {
+                        return self.open_store_card(card);
+                    }
+                    if self.store.rows.is_empty() {
+                        match &self.store.home {
+                            storefront::Load::Failed(gizlet_launcher::store::Error::Offline) => self.open_wifi_settings(),
+                            storefront::Load::Failed(_) => self.store.reload(self.time),
+                            _ => {}
+                        }
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn open_wifi_settings(&mut self) {
+        self.push(Page::Settings);
+        self.focus.category = Category::ALL.iter().position(|c| *c == Category::Network).unwrap_or(0);
+    }
+
+    fn store_detail_input(&mut self, input: &Input) {
+        let offers = self.store_offers();
+        for &action in &input.pressed {
+            let Some(detail) = self.store.detail.as_mut() else { return };
+            if let Some(shot) = detail.viewer {
+                let shots = detail.data.ready().map_or(0, |d| d.device_screenshots.len());
+                match action {
+                    Action::Left | Action::L => detail.viewer = Some(shot.saturating_sub(1)),
+                    Action::Right | Action::R => detail.viewer = Some((shot + 1).min(shots.saturating_sub(1))),
+                    Action::A | Action::B => detail.viewer = None,
+                    _ => {}
+                }
+                if let Some(shot) = detail.viewer {
+                    detail.focus = DetailFocus::Shots(shot);
+                }
+                continue;
+            }
+            match action {
+                Action::B => {
+                    self.pages.pop();
+                    if self.page() != Page::StoreDetail {
+                        self.store.detail = None;
+                    }
+                    return;
+                }
+                Action::Up | Action::Down | Action::Left | Action::Right => self.store.move_detail(action, offers.len()),
+                Action::A => match detail.focus {
+                    DetailFocus::Shots(i) => detail.viewer = Some(i),
+                    DetailFocus::Actions(i) => {
+                        if let Some(offer) = offers.get(i).cloned() {
+                            self.store_offer(offer);
+                        }
+                        return;
+                    }
+                    DetailFocus::About => {}
+                },
+                _ => {}
+            }
+        }
+    }
+
+    /// Does what the open Store page offers.
+    fn store_offer(&mut self, offer: Offer) {
+        let Some(detail) = &self.store.detail else { return };
+        let Some(summary) = detail.summary() else { return };
+        let (repo, id) = (detail.repo.clone(), summary.id.clone());
+        let name = summary.name_for(self.lang_code()).to_string();
+        let service = self.installed_kind(&id).map_or(summary.is_service(), |kind| kind == apps::Kind::Service);
+        let l = self.lang();
+        match offer {
+            Offer::Install if service => {
+                let buttons = vec![
+                    (self.t(T::StoreInstall).into(), DialogAction::StoreInstall { repo, id, name: name.clone() }),
+                    (self.t(T::Cancel).into(), DialogAction::Close),
+                ];
+                self.dialog = Some(Dialog { title: T::StoreServiceConfirm.fmt(l, &[&name]), buttons, focus: 1, opened: self.time });
+            }
+            Offer::Install => self.store.install(&repo, &id, &name),
+            Offer::Update(_) => {
+                if let Some(update) = self.store.update_for(&id).cloned() {
+                    self.store.upgrade(&update, &name);
+                }
+            }
+            Offer::Open => self.launch(&id),
+            Offer::Manage => self.open_service(id),
+            Offer::Uninstall => {
+                let title = if service { T::StoreUninstallServiceConfirm } else { T::StoreUninstallConfirm };
+                let buttons = vec![
+                    (self.t(T::StoreUninstall).into(), DialogAction::StoreRemove { repo, id, name: name.clone() }),
+                    (self.t(T::Cancel).into(), DialogAction::Close),
+                ];
+                self.dialog = Some(Dialog { title: title.fmt(l, &[&name]), buttons, focus: 1, opened: self.time });
+            }
+            Offer::Busy(_) | Offer::Queued => {}
+        }
+    }
+
+    fn store_search_input(&mut self, input: &Input) {
+        let count = self.store.search.as_ref().and_then(|s| s.results.as_ref()).and_then(storefront::Load::ready).map_or(0, Vec::len);
+        for &action in &input.pressed {
+            match action {
+                Action::B => {
+                    self.pages.pop();
+                    return;
+                }
+                Action::Y => return self.store_keyboard(keyboard::Purpose::StoreSearch),
+                Action::X => return self.store_keyboard(keyboard::Purpose::StoreLink),
+                Action::Left | Action::Right | Action::Up | Action::Down | Action::L | Action::R if count > 0 => {
+                    if let Some(search) = self.store.search.as_mut() {
+                        search.focus = grid_step(search.focus, count, action);
+                    }
+                }
+                Action::A => {
+                    let card = self.store.search.as_ref().and_then(|s| s.results.as_ref()?.ready()?.get(s.focus).cloned());
+                    if let Some(card) = card {
+                        return self.open_store_card(card);
                     }
                 }
                 _ => {}
@@ -1455,6 +1694,8 @@ impl App {
                         DialogAction::InstallUpdate => {
                             if let Some(updates) = &mut self.updates { updates.install(); }
                         }
+                        DialogAction::StoreInstall { repo, id, name } => self.store.install(&repo, &id, &name),
+                        DialogAction::StoreRemove { repo, id, name } => self.store.remove(&repo, &id, &name),
                         DialogAction::Close => {}
                     }
                     return true;
@@ -1487,7 +1728,7 @@ impl App {
                 Action::B if kb.text.is_empty() => cancel = true,
                 Action::B => kb.backspace(),
                 Action::Y => kb.type_char(' '),
-                Action::X => kb.masked = !kb.masked,
+                Action::X if kb.hideable() => kb.masked = !kb.masked,
                 Action::Start => submit = Some(kb.text.clone()),
                 _ => {}
             }
@@ -1515,6 +1756,17 @@ impl App {
                     self.toast(saved);
                 }
                 keyboard::Purpose::WifiPassphrase(ssid) => self.connect(&ssid, Some(text)),
+                keyboard::Purpose::StoreSearch => {
+                    self.store.search(text);
+                    if self.page() != Page::StoreSearch {
+                        self.push(Page::StoreSearch);
+                    }
+                }
+                keyboard::Purpose::StoreLink if text.trim().is_empty() => {}
+                keyboard::Purpose::StoreLink => {
+                    self.store.resolve(text);
+                    self.toast(self.t(T::StoreOpening));
+                }
                 keyboard::Purpose::SshPassword if text.is_empty() => {}
                 keyboard::Purpose::SshPassword => {
                     self.system.send(Request::SshPassword(text));
@@ -1896,6 +2148,14 @@ impl App {
         } else if !self.wifi.scanning {
             items.push(Item::new(ItemId::WifiScan, t(T::WifiScan), ItemValue::Button));
         }
+    }
+}
+
+/// What went wrong with the Store, as the launcher says it.
+pub fn store_error(lang: Language, error: &gizlet_launcher::store::Error) -> String {
+    match error {
+        gizlet_launcher::store::Error::Offline => T::StoreOffline.get(lang).to_string(),
+        error => T::Failed.fmt(lang, &[&error.to_string()]),
     }
 }
 

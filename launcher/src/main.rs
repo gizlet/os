@@ -24,6 +24,7 @@ mod keyboard;
 mod painter;
 mod script;
 mod sound;
+mod storefront;
 mod system;
 mod theme;
 mod ui;
