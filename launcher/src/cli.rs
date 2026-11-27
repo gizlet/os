@@ -100,10 +100,9 @@ fn install(library: &Library, file: &Path) -> Result<(), String> {
     if file.extension().is_none_or(|e| e != "gzl") {
         return Err(format!("{} is not a .gzl package", file.display()));
     }
-    let app = library.install(file)?;
-    let m = &app.manifest;
     // A file replaces what the Store installed; the Store no longer updates it.
-    Store::new(library).forget(&m.id);
+    let app = Store::new(library).install_file(library, file).map_err(|e| e.to_string())?;
+    let m = &app.manifest;
     if m.kind() == Kind::Service {
         let service = library.service(&m.id)?;
         let boot = if service.boot { "starts at boot" } else { "does not start at boot" };
@@ -115,8 +114,7 @@ fn install(library: &Library, file: &Path) -> Result<(), String> {
 }
 
 fn uninstall(library: &Library, id: &str, saves: bool) -> Result<(), String> {
-    let kind = library.remove(id, saves)?;
-    Store::new(library).forget(id);
+    let kind = Store::new(library).uninstall(library, id, saves).map_err(|e| e.to_string())?;
     if kind == Kind::Service {
         println!("removed the service {id}: stopped, unregistered, and deleted with its state");
     } else if saves {
@@ -189,7 +187,15 @@ fn store_command(library: &Library, args: &[String]) -> Result<(), String> {
             Ok(())
         }
         ["updates"] => {
-            let updates: Vec<_> = store.updates(library).map_err(fail)?.into_iter().filter(|u| u.has_update()).collect();
+            let all = store.updates(library).map_err(fail)?;
+            for u in &all {
+                match u.status.as_str() {
+                    "unverified" => eprintln!("{}: installed without GitHub's id for {}; install it again to update it", u.id, u.repo),
+                    "repository_changed" => eprintln!("{}: {} is now another repository; it is not updated from there", u.id, u.repo),
+                    _ => {}
+                }
+            }
+            let updates: Vec<_> = all.into_iter().filter(|u| u.has_update()).collect();
             if updates.is_empty() {
                 println!("everything from the Store is up to date");
             }

@@ -283,6 +283,13 @@ pub struct Origin {
     pub sha256: String,
 }
 
+/// A Store install whose package may be committed before its origin is recorded.
+#[derive(Serialize, Deserialize)]
+struct Pending {
+    id: String,
+    origin: Origin,
+}
+
 /// Where a package comes from, as the API named it.
 #[derive(Clone, Copy)]
 struct Source<'a> {
@@ -404,7 +411,7 @@ impl Store {
             return Err(Error::Other(format!("{id:?} is not an app ID")));
         }
         // One Store change at a time, across processes: downloads, installs and origins.
-        let _lock = self.lock()?;
+        let _lock = self.lock(library)?;
         // An installed app is only replaced by the repository it came from: the same path, and
         // GitHub's id for it when known then, which a new repository at a renamed one's path lacks.
         if let Ok(installed) = library.get(id) {
@@ -428,11 +435,18 @@ impl Store {
         }
         let file = self.download(url, sha256, size, progress)?;
         progress(Progress::Installing);
+        let origin = Origin { repo: repo.into(), repository_id: source.repository_id, version: source.version.into(), tag: source.tag.into(), sha256: sha256.clone() };
+        // Written first, so an install cut short after its package is committed is still recorded.
+        let pending = serde_json::to_vec(&Pending { id: id.into(), origin: origin.clone() }).map_err(other)?;
+        write_atomic(&self.pending_path(), &pending).map_err(other)?;
         let installed = library.install_as(&file, id, source.kind).map_err(Error::Other);
         let _ = fs::remove_file(&file);
+        let recorded = installed.as_ref().is_ok().then(|| self.set_origin(id, Some(origin)));
+        if recorded.as_ref().is_none_or(|r| r.is_ok()) {
+            let _ = fs::remove_file(self.pending_path());
+        }
         let app = installed?;
-        let origin = Origin { repo: repo.into(), repository_id: source.repository_id, version: source.version.into(), tag: source.tag.into(), sha256: sha256.clone() };
-        self.set_origin(id, Some(origin)).map_err(other)?;
+        recorded.transpose().map_err(other)?;
         Ok(app)
     }
 
@@ -498,18 +512,54 @@ impl Store {
         Ok(done)
     }
 
-    /// Holds the Store's lock, `<prefix>/store/.lock`, until dropped.
-    fn lock(&self) -> Result<File, Error> {
+    /// Holds the Store's lock, `<prefix>/store/.lock`, until dropped, and
+    /// finishes a Store install that was cut short: every change to what is
+    /// installed and where it came from happens under it, `gizlet install` and
+    /// `gizlet uninstall` included.
+    fn lock(&self, library: &Library) -> Result<File, Error> {
         fs::create_dir_all(&self.dir).map_err(other)?;
         let file = File::options().create(true).truncate(false).write(true).open(self.dir.join(".lock")).map_err(other)?;
         file.lock().map_err(other)?;
+        self.recover(library);
         Ok(file)
+    }
+
+    fn pending_path(&self) -> PathBuf {
+        self.dir.join("pending.json")
+    }
+
+    /// An install recorded in `pending.json` before its package was committed
+    /// ended without recording its origin: it is recorded if that version is
+    /// installed now, and dropped otherwise.
+    fn recover(&self, library: &Library) {
+        let path = self.pending_path();
+        let Some(pending) = fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Pending>(&b).ok()) else {
+            let _ = fs::remove_file(&path);
+            return;
+        };
+        if library.get(&pending.id).is_ok_and(|a| a.manifest.version == pending.origin.version)
+            && self.set_origin(&pending.id, Some(pending.origin)).is_err()
+        {
+            return;
+        }
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Installs a `.gzl` file, as `gizlet install` does: the Store no longer
+    /// updates what it replaces.
+    pub fn install_file(&self, library: &Library, file: &Path) -> Result<App, Error> {
+        let _lock = self.lock(library)?;
+        let app = library.install(file).map_err(Error::Other)?;
+        if self.origins().contains_key(&app.manifest.id) {
+            self.set_origin(&app.manifest.id, None).map_err(other)?;
+        }
+        Ok(app)
     }
 
     /// Removes an app, its saves only with `saves`, or a service with all it
     /// keeps, and forgets its origin.
     pub fn uninstall(&self, library: &Library, id: &str, saves: bool) -> Result<Kind, Error> {
-        let _lock = self.lock()?;
+        let _lock = self.lock(library)?;
         let kind = library.remove(id, saves).map_err(Error::Other)?;
         self.set_origin(id, None).map_err(other)?;
         Ok(kind)
@@ -547,14 +597,6 @@ impl Store {
 
     pub fn origin(&self, id: &str) -> Option<Origin> {
         self.origins().remove(id)
-    }
-
-    /// Forgets where `id` came from: it was installed from a file or removed.
-    pub fn forget(&self, id: &str) {
-        let Ok(_lock) = self.lock() else { return };
-        if self.origins().contains_key(id) {
-            let _ = self.set_origin(id, None);
-        }
     }
 
     fn set_origin(&self, id: &str, origin: Option<Origin>) -> std::io::Result<()> {
@@ -793,6 +835,32 @@ mod tests {
         prune(&dir, 200);
         assert!(!dir.join("old.png").exists());
         assert!(dir.join("mid.png").exists() && dir.join("new.png").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_install_cut_short_is_recorded_or_dropped() {
+        use crate::apps::tests::{manifest, package, temp};
+        let dir = temp("store-pending");
+        let library = Library::new(dir.join("prefix"));
+        let store = Store::with_api(&library, "http://127.0.0.1:9");
+        let origin = |version: &str| Origin { repo: "github.com/a/b".into(), repository_id: Some(7), version: version.into(), tag: format!("v{version}"), sha256: "0".repeat(64) };
+        let pending = |version: &str| serde_json::to_vec(&Pending { id: "dev.example.hello".into(), origin: origin(version) }).unwrap();
+        // Cut short before the package was committed: nothing is recorded.
+        write_atomic(&store.pending_path(), &pending("0.1.0")).unwrap();
+        drop(store.lock(&library).unwrap());
+        assert!(store.origins().is_empty());
+        assert!(!store.pending_path().exists());
+        // Cut short after: the installed version is recorded.
+        library.install(&package(&dir, &manifest("dev.example.hello", &apps::device_target()), &[])).unwrap();
+        write_atomic(&store.pending_path(), &pending("0.1.0")).unwrap();
+        drop(store.lock(&library).unwrap());
+        assert_eq!(store.origin("dev.example.hello"), Some(origin("0.1.0")));
+        assert!(!store.pending_path().exists());
+        // A newer version that never landed leaves the recorded one.
+        write_atomic(&store.pending_path(), &pending("0.2.0")).unwrap();
+        drop(store.lock(&library).unwrap());
+        assert_eq!(store.origin("dev.example.hello"), Some(origin("0.1.0")));
         let _ = fs::remove_dir_all(&dir);
     }
 
