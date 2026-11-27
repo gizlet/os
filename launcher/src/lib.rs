@@ -5,4 +5,5 @@ pub mod cli;
 pub mod ota;
 pub mod services;
 pub mod settings;
+pub mod store;
 mod supervise;
