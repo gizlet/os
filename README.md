@@ -4,6 +4,51 @@ Gizlet OS builds the Linux base system and TF1 system card for the RK3326 Game C
 
 The base includes Bun at `/usr/bin/bun`. Run `bun /home/hello.js` from SSH or the recovery shell. A JavaScript file with `#!/usr/bin/bun` and executable permissions can also serve as a `.gzl` app entry or the `boot.ini` entry.
 
+## Features
+
+- **Gamepad-first Launcher.** Browse the app shelf, test buttons and sticks, and adjust brightness, volume, theme, language, and A/B mapping from the handheld.
+- **Wi-Fi and SSH from Settings.** Scan for networks, enter a Wi-Fi password with the on-screen keyboard, and see the SSH login commands for the device's `.local` name and IP address.
+- **Apps and background services.** Install `.gzl` packages with `gizlet` and open games and apps from the shelf. Manage services such as Tailscale with separate controls for running now and starting at boot.
+- **Handheld power controls.** See battery charge and estimated time remaining, set separate idle sleep timers for battery and charging, and suspend from the Power menu.
+- **Two-card storage.** The read-only system runs from TF1, and the data partition keeps installed apps, saves, and settings. TF2 mounts at `/media/tf2` for user files such as games.
+- **Signed Launcher and Runtime updates.** Install updates from Settings and restart to try the new pair. If the new Launcher fails to start, the system restores the previous pair.
+
+## Screenshots
+
+![Gizlet Launcher home with The Little Prince selected in the app library](docs/screenshots/launcher-home.png)
+
+**Library** focuses the app shelf. The same row opens **Button Test**, **Settings**, and **Power**. **Store** is a placeholder.
+
+### Settings
+
+| Wi-Fi networks | Joining a Wi-Fi network |
+| --- | --- |
+| ![Wi-Fi settings with a connected network and nearby networks](docs/screenshots/launcher-wifi.png) | ![On-screen keyboard for entering a Wi-Fi password](docs/screenshots/launcher-wifi-join.png) |
+
+| SSH remote login | Background services |
+| --- | --- |
+| ![SSH enabled with example login commands for the hostname and IP address](docs/screenshots/launcher-ssh.png) | ![Tailscale service with Running and Start at boot enabled](docs/screenshots/launcher-services.png) |
+
+| Display | Battery |
+| --- | --- |
+| ![Display settings showing the brightness slider and theme](docs/screenshots/launcher-display.png) | ![Battery settings showing power draw, estimated time left, and separate sleep timers](docs/screenshots/launcher-battery.png) |
+
+### Device controls
+
+| Button Test | Power |
+| --- | --- |
+| ![Button Test with a controller diagram and stick readings](docs/screenshots/launcher-button-test.png) | ![Power menu with Sleep, Restart, and Power Off](docs/screenshots/launcher-power.png) |
+
+### Apps
+
+| The Little Prince | Emulation Center |
+| --- | --- |
+| ![The Little Prince exploring B612](docs/screenshots/little-prince.png) | ![Emulation Center showing RetroArch, PPSSPP, and the games folder](docs/screenshots/emulation-center.png) |
+
+Desktop captures use the R36S's 4:3 layout. The Launcher uses a sample app library and simulated device and service states. See [The Little Prince](https://github.com/gizlet/little-prince) and [Emulation Center](https://github.com/gizlet/emulation-center) for more app screenshots.
+
+## Repository layout
+
 | Path | Contents |
 | --- | --- |
 | `boards/` | Per-device kernel and boot settings, card layout and hardware-specific service configuration |
