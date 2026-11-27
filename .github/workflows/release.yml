@@ -91,3 +91,53 @@ jobs:
           sops decrypt --output-type json devops/secrets/release.enc.yaml |
             python3 devops/scripts/release.py "$GITHUB_REF_NAME" "$RELEASE_COMMIT" \
               "$RUNNER_TEMP/os-build" "$RUNNER_TEMP/os-release"
+
+  github-release:
+    name: Publish signed manifest to GitHub Releases
+    needs: [verify, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.verify.outputs.commit }}
+          persist-credentials: false
+      - name: Download and verify the published manifest
+        env:
+          RELEASE_COMMIT: ${{ needs.verify.outputs.commit }}
+        run: |
+          directory="$RUNNER_TEMP/os-manifest"
+          base="https://dl.gizlet.io/releases/$GITHUB_REF_NAME"
+          mkdir -p "$directory"
+          for asset in manifest.json manifest.json.sig; do
+            curl --fail --silent --show-error --location --retry 3 --max-time 30 \
+              "$base/$asset" -o "$directory/$asset"
+          done
+          ssh-keygen -Y verify -f rootfs/usr/lib/gizlet/launcher/allowed_signers \
+            -I launcher -n gizlet-launcher -s "$directory/manifest.json.sig" \
+            < "$directory/manifest.json"
+          jq -e --arg tag "$GITHUB_REF_NAME" --arg commit "$RELEASE_COMMIT" \
+            '.tag == $tag and .commit == $commit' "$directory/manifest.json"
+      - name: Attach the manifest and signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          directory="$RUNNER_TEMP/os-manifest"
+          if assets=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name'); then
+            missing=()
+            for asset in manifest.json manifest.json.sig; do
+              if ! grep -Fxq "$asset" <<< "$assets"; then
+                missing+=("$directory/$asset")
+              fi
+            done
+            if ((${#missing[@]})); then
+              gh release upload "$GITHUB_REF_NAME" "${missing[@]}" --repo "$GITHUB_REPOSITORY"
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" "$directory/manifest.json" "$directory/manifest.json.sig" \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" \
+              --notes "Artifact paths in the signed manifest are relative to https://dl.gizlet.io/releases/$GITHUB_REF_NAME/."
+          fi
