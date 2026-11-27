@@ -111,7 +111,8 @@ pub enum Offer {
 
 #[derive(Clone)]
 enum JobKind {
-    Install(String),
+    /// The repository, and the kind the person agreed to install.
+    Install(String, Kind),
     Upgrade(Box<UpdateStatus>),
     Remove(String),
 }
@@ -229,6 +230,8 @@ impl Storefront {
             self.reload(now);
         }
         self.check_updates();
+        // Art that failed last time, offline say, is asked for again.
+        self.want_shown();
     }
 
     /// Reads the lists again; the saved ones show meanwhile, as when offline.
@@ -313,7 +316,13 @@ impl Storefront {
                 }
                 Done::Art(url, result) => {
                     self.art_running -= 1;
+                    let saved = result.is_ok();
                     self.art.insert(url, result.map_or(Art::Failed, Art::Ready));
+                    // Saving it may have evicted older art from the disk cache: fetch what is shown again.
+                    if saved && self.art.values().any(|a| matches!(a, Art::Ready(path) if !path.exists())) {
+                        self.art.retain(|_, a| !matches!(a, Art::Ready(path) if !path.exists()));
+                        self.want_shown();
+                    }
                 }
                 Done::Progress(progress) => {
                     if let Some(job) = self.job.as_mut() {
@@ -325,7 +334,7 @@ impl Storefront {
                     notes.push(match (result, &job.kind) {
                         (Ok(_), JobKind::Remove(_)) => Note::Removed(job.name),
                         (Ok((_, kind, _)), JobKind::Upgrade(_)) => Note::Installed { name: job.name, kind, updated: true },
-                        (Ok((_, kind, _)), JobKind::Install(_)) => Note::Installed { name: job.name, kind, updated: false },
+                        (Ok((_, kind, _)), JobKind::Install(..)) => Note::Installed { name: job.name, kind, updated: false },
                         (Err(error), _) => Note::Failed(error),
                     });
                     self.origins = self.store.origins();
@@ -382,6 +391,11 @@ impl Storefront {
             let before = shown.and_then(|(kind, title)| lists.clone().find(|&r| self.rows[r].kind == kind && self.rows[r].title == title));
             before.unwrap_or(lists.start)
         };
+        self.want_shown();
+    }
+
+    /// Asks for the art of everything shown: the home page, the page open and search results.
+    fn want_shown(&mut self) {
         let mut wanted: Vec<String> = Vec::new();
         for row in &self.rows {
             for g in &row.cards {
@@ -391,9 +405,13 @@ impl Storefront {
                 }
             }
         }
+        if let Some(found) = self.search.as_ref().and_then(|s| s.results.as_ref()).and_then(Load::ready) {
+            wanted.extend(found.iter().filter_map(|g| g.device_icon_url.clone()));
+        }
         for url in wanted {
             self.want(&url);
         }
+        self.want_detail_art();
     }
 
     /// The card focused on the home page.
@@ -434,9 +452,15 @@ impl Storefront {
         }
     }
 
-    /// Asks for art not on hand yet.
+    /// Asks for art not on hand: never asked for, failed before (offline, say), or evicted
+    /// from the disk cache since.
     pub fn want(&mut self, url: &str) {
-        if !self.art.contains_key(url) {
+        let wanted = match self.art.get(url) {
+            None | Some(Art::Failed) => true,
+            Some(Art::Ready(path)) => !path.exists(),
+            Some(Art::Loading) => false,
+        };
+        if wanted {
             self.art.insert(url.to_string(), Art::Loading);
             self.art_queue.push_back(url.to_string());
         }
@@ -560,8 +584,13 @@ impl Storefront {
     }
 
     /// Installs the gizlet on the open page, after what is installing now.
-    pub fn install(&mut self, repo: &str, id: &str, name: &str) {
-        self.enqueue(Job { repo: repo.into(), id: id.into(), name: name.into(), kind: JobKind::Install(repo.into()), progress: None });
+    pub fn install(&mut self, repo: &str, id: &str, name: &str, kind: Kind) {
+        self.enqueue(Job { repo: repo.into(), id: id.into(), name: name.into(), kind: JobKind::Install(repo.into(), kind), progress: None });
+    }
+
+    /// Something is installing, updating or removing, or waits to.
+    pub fn busy(&self) -> bool {
+        self.job.is_some() || !self.queue.is_empty()
     }
 
     pub fn upgrade(&mut self, update: &UpdateStatus, name: &str) {
@@ -601,6 +630,7 @@ impl Storefront {
     fn next_job(&mut self) {
         let Some(job) = self.queue.pop_front() else { return };
         let kind = job.kind.clone();
+        let expected = job.id.clone();
         self.job = Some(job);
         let send = self.send.clone();
         self.spawn(move |store| {
@@ -609,7 +639,7 @@ impl Storefront {
                 let _ = send.send(Done::Progress(p));
             };
             let finished = match kind {
-                JobKind::Install(repo) => store.install(&library, &repo, &mut progress),
+                JobKind::Install(repo, kind) => store.install_expecting(&library, &repo, &expected, kind, &mut progress),
                 JobKind::Upgrade(update) => store.upgrade(&library, &update, &mut progress),
                 JobKind::Remove(id) => {
                     return Done::Job(store.uninstall(&library, &id, false).map(|kind| (id, kind, String::new())));
@@ -687,6 +717,27 @@ mod tests {
         s.move_home(Action::R);
         s.move_home(Action::R);
         assert_eq!((s.tab, s.focused().unwrap().repo.as_str()), (2, "b"));
+    }
+
+    #[test]
+    fn art_that_failed_or_was_evicted_is_asked_for_again() {
+        let mut s = front();
+        s.art.insert("u/failed".into(), Art::Failed);
+        s.art.insert("u/evicted".into(), Art::Ready(PathBuf::from("/nonexistent/gizlet-art.png")));
+        s.art.insert("u/loading".into(), Art::Loading);
+        for url in ["u/failed", "u/evicted", "u/loading"] {
+            s.want(url);
+        }
+        assert!(s.art.values().all(|a| matches!(a, Art::Loading)));
+        assert_eq!(s.art_queue, ["u/failed", "u/evicted"]);
+    }
+
+    #[test]
+    fn a_queued_install_keeps_the_store_busy() {
+        let mut s = front();
+        assert!(!s.busy());
+        s.install("github.com/o/a", "dev.a", "A", Kind::App);
+        assert!(s.busy());
     }
 
     #[test]

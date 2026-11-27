@@ -429,6 +429,18 @@ impl Store {
         self.install_package(library, source, &offer.package, progress)
     }
 
+    /// Installs `repo` only while it offers what was asked for: `id`, as `kind`. A page shown from
+    /// saved lists may be out of date, and a service is only installed after asking.
+    pub fn install_expecting(&self, library: &Library, repo: &str, id: &str, kind: Kind, progress: &mut dyn FnMut(Progress)) -> Result<App, Error> {
+        let offer = self.offer(repo)?;
+        let offered = kind_of(&offer.kind)?;
+        if offer.id != id || offered != kind {
+            return Err(Error::Other(format!("{repo} now offers {} as {}; open its page again", offer.id, apps::kind_word(offered))));
+        }
+        let source = Source { repo: &offer.repo, repository_id: offer.repository_id, id: &offer.id, kind, replaces: None, version: &offer.version, tag: &offer.tag };
+        self.install_package(library, source, &offer.package, progress)
+    }
+
     /// Installs the update `/v1/updates` offered.
     pub fn upgrade(&self, library: &Library, update: &UpdateStatus, progress: &mut dyn FnMut(Progress)) -> Result<App, Error> {
         let (Some(package), Some(version), Some(tag)) = (&update.package, &update.version, &update.tag) else {

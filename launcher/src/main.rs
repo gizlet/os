@@ -174,7 +174,8 @@ fn run(release: Option<String>) {
             app.gamepads = controls.gamepads();
             app.refresh_apps();
             // `gizlet start` asks over ssh: the start script runs the app next.
-            if KMS && !app.installing_update() && std::path::Path::new(apps::LAUNCH_REQUEST).exists() {
+            // It waits while the Store installs: quitting would end the download.
+            if KMS && !app.installing_update() && !app.store.busy() && std::path::Path::new(apps::LAUNCH_REQUEST).exists() {
                 break;
             }
         }
@@ -182,7 +183,7 @@ fn run(release: Option<String>) {
 
         let mut shot = None;
         match script.step(&mut input, &mut pad) {
-            Some(script::Step::Quit) if !app.installing_update() => break,
+            Some(script::Step::Quit) if !app.installing_update() && !app.store.busy() => break,
             Some(script::Step::Quit) => {}
             Some(script::Step::Shot(path)) => shot = Some(path),
             None => {}

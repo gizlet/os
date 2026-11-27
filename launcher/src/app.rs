@@ -755,6 +755,11 @@ impl App {
             self.toast(self.t(T::OtaWait));
             return;
         }
+        // On Gizlet OS the launcher quits for the app, which would end the Store's downloads.
+        if cfg!(feature = "gizlet-os") && self.store.busy() {
+            self.toast(self.t(T::StoreWait));
+            return;
+        }
         let Some(app) = self.apps.iter().find(|app| app.id() == id) else { return };
         let name = app.manifest.name_for(self.lang_code()).to_string();
         let result = if cfg!(feature = "gizlet-os") {
@@ -1271,7 +1276,7 @@ impl App {
                 ];
                 self.dialog = Some(Dialog { title: T::StoreServiceConfirm.fmt(l, &[&name]), buttons, focus: 1, opened: self.time });
             }
-            Offer::Install => self.store.install(&repo, &id, &name),
+            Offer::Install => self.store.install(&repo, &id, &name, apps::Kind::App),
             Offer::Update(_) => {
                 if let Some(update) = self.store.update_for(&id).cloned() {
                     self.store.upgrade(&update, &name);
@@ -1694,7 +1699,7 @@ impl App {
                         DialogAction::InstallUpdate => {
                             if let Some(updates) = &mut self.updates { updates.install(); }
                         }
-                        DialogAction::StoreInstall { repo, id, name } => self.store.install(&repo, &id, &name),
+                        DialogAction::StoreInstall { repo, id, name } => self.store.install(&repo, &id, &name, apps::Kind::Service),
                         DialogAction::StoreRemove { repo, id, name } => self.store.remove(&repo, &id, &name),
                         DialogAction::Close => {}
                     }

@@ -49,6 +49,7 @@ strings! {
     StoreUpdates => "可更新", "Updates";
     StoreUpdateAll => "全部更新", "Update All";
     StoreUpdate => "更新", "Update";
+    StoreWait => "请等待商店完成安装。", "Wait for the Store to finish installing.";
     StoreUpdateQueued => "已开始更新", "Update queued";
     StoreUpdatesQueued => "已排队 {} 个更新", "{} updates queued";
     Search => "搜索", "Search";
