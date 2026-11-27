@@ -140,12 +140,14 @@ fn rows(ui: &mut Ui, p: &mut Painter, app: &App, items: &[Item], left: f32, sele
     let mut target = 0.0;
     if let Some(sel) = selected.filter(|&index| index < items.len()) {
         target = ui.settings_scroll;
-        // Keep the focused row, and the heading above it, in view.
-        let mut fy = ys[sel];
-        if sel > 0 && items[sel - 1].value == ItemValue::Section {
-            fy = ys[sel - 1];
-        }
-        let fb = ys[sel] + row_height(p, &items[sel], width);
+        let (fy, fb) = if app.page() == Page::Services {
+            let heading = items[..sel].iter().rposition(|item| item.value == ItemValue::Section).unwrap_or(sel);
+            let next_heading = (sel + 1..items.len()).find(|&index| items[index].value == ItemValue::Section);
+            (ys[heading], next_heading.map_or(total, |index| ys[index]))
+        } else {
+            let heading = if sel > 0 && items[sel - 1].value == ItemValue::Section { sel - 1 } else { sel };
+            (ys[heading], ys.get(sel + 1).copied().unwrap_or(total))
+        };
         let view = bottom - top;
         if fy - target < 0.0 {
             target = fy;
