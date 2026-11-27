@@ -442,7 +442,8 @@ pub fn detail(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     let scroll_target = match view.focus {
         DetailFocus::Actions(_) => 0.0,
         DetailFocus::Shots(_) => 250.0,
-        DetailFocus::About => if shots.is_empty() { 250.0 } else { 520.0 },
+        // Far enough to show the end of the description and the controls.
+        DetailFocus::About => (if shots.is_empty() { 250.0f32 } else { 520.0 }).max(ui.detail_end - (p.h - BOTTOM_H - 16.0)),
     };
     ui.detail_y = approach(ui.detail_y, scroll_target, 12.0, dt);
     let sy = -ui.detail_y;
@@ -637,6 +638,9 @@ pub fn detail(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
     if let Load::Failed(error) = &view.data {
         p.text_mid(&store_error(app.lang(), error), MARGIN, y + 38.0, 18.0, Weight::Regular, pal.danger);
     }
+    let controls = data.map_or(0, |d| d.controls.len().min(8));
+    let end = (if g.tags.is_empty() { ty } else { ty + 26.0 }).max(y + 42.0 + controls as f32 * 38.0);
+    ui.detail_end = end + ui.detail_y;
     // The hint bar covers what scrolls under it.
     p.rect(0.0, p.h - BOTTOM_H, p.w, BOTTOM_H, 0.0, pal.bg_bottom);
 
@@ -807,6 +811,7 @@ pub fn search(ui: &mut Ui, p: &mut Painter, app: &App, dt: f32) {
 pub fn opened(ui: &mut Ui, app: &App, page: Page) {
     ui.expand = None;
     ui.detail_y = 0.0;
+    ui.detail_end = 0.0;
     ui.shots_x = f32::NAN;
     if page == Page::StoreDetail {
         if let Some(rect) = ui.card_rect.take() {

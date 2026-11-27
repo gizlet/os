@@ -162,7 +162,8 @@ fn run(release: Option<String>) {
     let mut drawn: Option<(f64, u64)> = None;
     let mut settling = false;
 
-    while app.installing_update() || !unsafe { ffi::WindowShouldClose() } {
+    // Closing the window waits for a system update or the Store's jobs to finish.
+    while app.installing_update() || app.store.busy() || !unsafe { ffi::WindowShouldClose() } {
         // Measured here rather than by raylib, which counts drawn frames only.
         let now = unsafe { ffi::GetTime() };
         let dt = ((now - last) as f32).min(0.1);

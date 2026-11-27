@@ -1691,6 +1691,10 @@ impl App {
                     let action = d.buttons.get(d.focus).map(|b| b.1.clone()).unwrap_or(DialogAction::Close);
                     self.dialog = None;
                     match action {
+                        // Leaving or restarting would end the Store's downloads.
+                        DialogAction::Quit | DialogAction::Power(PowerAction::Reboot | PowerAction::PowerOff) if self.store.busy() => {
+                            self.toast(self.t(T::StoreWait));
+                        }
                         DialogAction::Quit => return false,
                         DialogAction::Power(p) => self.system.send(Request::Power(p)),
                         DialogAction::WifiDisconnect => self.system.send(Request::WifiDisconnect),

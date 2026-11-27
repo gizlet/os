@@ -144,7 +144,8 @@ enum Done {
     Updates(Result<Vec<UpdateStatus>, Error>),
     Detail(String, Result<Box<Detail>, Error>),
     Search(String, Result<Vec<Summary>, Error>),
-    Resolved(Result<String, Error>),
+    /// A link looked up: which lookup, and the repository it leads to.
+    Resolved(u64, Result<String, Error>),
     Art(String, Result<PathBuf, Error>),
     Progress(Progress),
     Job(Result<(String, Kind, String), Error>),
@@ -176,7 +177,9 @@ pub struct Storefront {
     pub tab: usize,
     pub detail: Option<DetailView>,
     pub search: Option<SearchView>,
-    pub resolving: bool,
+    /// The link lookup waited for; an older one finishing is dropped.
+    pub resolving: Option<u64>,
+    links: u64,
     pub job: Option<Job>,
     pub queue: VecDeque<Job>,
     pub art: HashMap<String, Art>,
@@ -206,7 +209,8 @@ impl Storefront {
             tab: 0,
             detail: None,
             search: None,
-            resolving: false,
+            resolving: None,
+            links: 0,
             job: None,
             queue: VecDeque::new(),
             art: HashMap::new(),
@@ -255,7 +259,7 @@ impl Storefront {
 
     pub fn loading(&self) -> bool {
         matches!(self.home, Load::Loading)
-            || self.resolving
+            || self.resolving.is_some()
             || self.job.is_some()
             || self.art_running > 0
             || self.detail.as_ref().is_some_and(|d| matches!(d.data, Load::Loading))
@@ -308,13 +312,14 @@ impl Storefront {
                     }
                 }
                 // Only the link still waited for: opening another page meanwhile drops it.
-                Done::Resolved(result) if std::mem::take(&mut self.resolving) => {
+                Done::Resolved(seq, result) if self.resolving == Some(seq) => {
+                    self.resolving = None;
                     notes.push(match result {
                         Ok(repo) => Note::Open(repo),
                         Err(error) => Note::Failed(error),
                     });
                 }
-                Done::Resolved(_) => {}
+                Done::Resolved(..) => {}
                 Done::Art(url, result) => {
                     self.art_running -= 1;
                     // Art this evicted from the disk cache is fetched again when a page next asks for it.
@@ -483,7 +488,7 @@ impl Storefront {
 
     /// Opens a gizlet's page; `preview` is what a list showed of it.
     pub fn open(&mut self, repo: &str, preview: Option<Summary>) {
-        self.resolving = false;
+        self.resolving = None;
         self.detail = Some(DetailView { repo: repo.to_string(), preview, data: Load::Loading, focus: DetailFocus::Actions(0), viewer: None });
         self.want_detail_art();
         let repo = repo.to_string();
@@ -576,8 +581,10 @@ impl Storefront {
     }
 
     pub fn resolve(&mut self, link: String) {
-        self.resolving = true;
-        self.spawn(move |store| Done::Resolved(store.resolve(&link)));
+        self.links += 1;
+        let seq = self.links;
+        self.resolving = Some(seq);
+        self.spawn(move |store| Done::Resolved(seq, store.resolve(&link)));
     }
 
     /// Installs the gizlet on the open page, after what is installing now.
@@ -732,12 +739,25 @@ mod tests {
     #[test]
     fn a_link_resolved_after_another_page_opened_is_dropped() {
         let mut s = front();
-        s.resolving = true;
+        s.resolving = Some(1);
         s.open("github.com/o/a", Some(card("a")));
-        s.send.send(Done::Resolved(Ok("github.com/o/b".into()))).unwrap();
+        s.send.send(Done::Resolved(1, Ok("github.com/o/b".into()))).unwrap();
         let (notes, _) = s.poll();
         assert!(notes.is_empty());
         assert_eq!(s.detail.as_ref().unwrap().repo, "github.com/o/a");
+    }
+
+    #[test]
+    fn only_the_last_link_entered_opens() {
+        let mut s = front();
+        s.resolving = Some(2);
+        s.send.send(Done::Resolved(1, Ok("github.com/o/a".into()))).unwrap();
+        let (notes, _) = s.poll();
+        assert!(notes.is_empty(), "an older lookup is dropped");
+        s.send.send(Done::Resolved(2, Ok("github.com/o/b".into()))).unwrap();
+        let (notes, _) = s.poll();
+        assert!(matches!(notes.as_slice(), [Note::Open(repo)] if repo == "github.com/o/b"));
+        assert_eq!(s.resolving, None);
     }
 
     #[test]

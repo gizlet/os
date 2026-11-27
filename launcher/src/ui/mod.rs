@@ -363,6 +363,8 @@ pub struct Ui {
     card_rect: Option<store::Rect>,
     expand: Option<(store::Rect, f64)>,
     detail_y: f32,
+    /// Where the open Store page's content ends, unscrolled, as drawn last frame.
+    detail_end: f32,
     shots_x: f32,
 }
 
