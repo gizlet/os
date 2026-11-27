@@ -197,9 +197,7 @@ pub struct Detail {
 impl Detail {
     /// The package this device would install from the shown release, if any.
     pub fn package_here(&self) -> Option<&Package> {
-        let (target, tier) = (apps::device_target(), apps::device_tier());
-        let fits = |p: &&Package| p.target == target && (p.tier == "lite" || tier == "full");
-        self.packages.iter().filter(fits).find(|p| p.tier == tier).or_else(|| self.packages.iter().find(fits))
+        package_for(&self.packages, &apps::device_target(), &apps::device_tier())
     }
 }
 
@@ -389,9 +387,18 @@ impl Store {
     }
 
     /// The package this device would install.
+    /// The package this device would install: for its own target, else a static musl one.
     pub fn offer(&self, repo: &str) -> Result<Offer, Error> {
-        let url = format!("{}/v1/gizlets/{}/install?target={}&tier={}", self.api, repo_path(repo)?, encode(&apps::device_target()), encode(&apps::device_tier()));
-        serde_json::from_slice(&get(&url, JSON_LIMIT)?).map_err(other)
+        let repo = repo_path(repo)?;
+        let mut answer = Err(Error::Other("this device has no target".into()));
+        for target in apps::device_targets() {
+            let url = format!("{}/v1/gizlets/{repo}/install?target={}&tier={}", self.api, encode(&target), encode(&apps::device_tier()));
+            answer = get(&url, JSON_LIMIT).and_then(|body| serde_json::from_slice(&body).map_err(other));
+            if !matches!(&answer, Err(e) if e.code() == Some("no_compatible_package")) {
+                break;
+            }
+        }
+        answer
     }
 
     /// Installs or updates what `repo` holds, an app or a service.
@@ -693,6 +700,14 @@ fn prune(dir: &Path, limit: u64) {
     }
 }
 
+/// The package a device of `target` and `tier` installs: its own target before a static musl one,
+/// its own tier before `lite` on a `full` device.
+fn package_for<'a>(packages: &'a [Package], target: &str, tier: &str) -> Option<&'a Package> {
+    let fits = |p: &&Package| apps::runs_here(&p.target, target) && (p.tier == "lite" || tier == "full");
+    let rank = |p: &&Package| (p.target != target, p.tier != tier);
+    packages.iter().filter(fits).min_by_key(rank)
+}
+
 fn kind_of(kind: &str) -> Result<Kind, Error> {
     match kind {
         "app" => Ok(Kind::App),
@@ -821,6 +836,18 @@ fn sha256_file(path: &Path) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picks_the_package_the_installer_runs() {
+        let pkg = |target: &str, tier: &str| Package { file: format!("{target}-{tier}"), target: target.into(), tier: tier.into(), size: None, sha256: None, url: None };
+        let gnu = "aarch64-unknown-linux-gnu";
+        let musl_only = [pkg("aarch64-unknown-linux-musl", "lite"), pkg("x86_64-unknown-linux-gnu", "lite")];
+        assert_eq!(package_for(&musl_only, gnu, "lite").unwrap().file, "aarch64-unknown-linux-musl-lite");
+        let both = [pkg("aarch64-unknown-linux-musl", "lite"), pkg(gnu, "full"), pkg(gnu, "lite")];
+        assert_eq!(package_for(&both, gnu, "lite").unwrap().file, "aarch64-unknown-linux-gnu-lite");
+        assert_eq!(package_for(&both, gnu, "full").unwrap().file, "aarch64-unknown-linux-gnu-full");
+        assert!(package_for(&[pkg(gnu, "full")], gnu, "lite").is_none());
+    }
 
     #[test]
     fn encodes_queries() {

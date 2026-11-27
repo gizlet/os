@@ -76,12 +76,22 @@ pub fn device_target() -> String {
 }
 
 /// `lite` on handhelds, or `GIZLET_TIER`: `lite` packages run on `lite` and `full`, `full` only on `full`.
+/// Targets this device runs, its own first: on Linux, also static musl programs of its CPU.
+pub fn device_targets() -> Vec<String> {
+    let device = device_target();
+    let mut targets = vec![device.clone()];
+    if device.contains("-linux-") && !device.ends_with("-musl") {
+        targets.push(format!("{}-unknown-linux-musl", device.split('-').next().unwrap_or("")));
+    }
+    targets
+}
+
 pub fn device_tier() -> String {
     std::env::var("GIZLET_TIER").unwrap_or_else(|_| "lite".into())
 }
 
 /// Linux runs packages for its C library or static musl ones of the same CPU.
-fn runs_here(target: &str, device: &str) -> bool {
+pub fn runs_here(target: &str, device: &str) -> bool {
     if target == device {
         return true;
     }
