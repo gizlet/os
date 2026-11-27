@@ -796,6 +796,38 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The ID in `package`'s manifest, read without unpacking it; installing
+/// checks the package in full.
+pub fn package_id(package: &Path) -> Result<String, String> {
+    let what = package.display();
+    let mut file = File::open(package).map_err(|e| format!("{what}: {e}"))?;
+    let list = entries(&mut file).map_err(|e| format!("{what} {e}"))?;
+    let e = list.iter().find(|e| e.name == MANIFEST && !e.dir).ok_or_else(|| format!("{what} has no {MANIFEST}"))?;
+    if e.size > MAX_MANIFEST_BYTES {
+        return Err(format!("{what} has a {MANIFEST} larger than 64 KiB"));
+    }
+    let damaged = || format!("{what} has a damaged entry for {MANIFEST}");
+    let mut local = [0u8; 30];
+    file.seek(SeekFrom::Start(e.local_offset)).map_err(|err| err.to_string())?;
+    file.read_exact(&mut local).map_err(|_| damaged())?;
+    if u32_at(&local, 0) != 0x0403_4b50 {
+        return Err(damaged());
+    }
+    let skip = u16_at(&local, 26) as i64 + u16_at(&local, 28) as i64;
+    file.seek(SeekFrom::Current(skip)).map_err(|err| err.to_string())?;
+    let data = (&mut file).take(e.compressed);
+    let mut text = Vec::new();
+    let read = if e.method == 8 {
+        flate2::read::DeflateDecoder::new(data).take(e.size + 1).read_to_end(&mut text)
+    } else {
+        data.take(e.size + 1).read_to_end(&mut text)
+    };
+    if read.is_err() || text.len() as u64 != e.size {
+        return Err(damaged());
+    }
+    Ok(Manifest::parse(&String::from_utf8_lossy(&text))?.id)
+}
+
 /// Extracts `package` into the new folder `dest`, checks every file against
 /// `CHECKSUMS` and returns its manifest.
 pub fn unpack(package: &Path, dest: &Path) -> Result<Manifest, String> {
@@ -1052,6 +1084,14 @@ pub(crate) mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn reads_a_package_id_without_unpacking() {
+        let dir = temp("package-id");
+        let pkg = package(&dir, &manifest("dev.example.peek", &device_target()), &[]);
+        assert_eq!(package_id(&pkg).unwrap(), "dev.example.peek");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
