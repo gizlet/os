@@ -1,6 +1,10 @@
 //! The Gizlet Store on the device: browsing gizlet.io's public API, and
-//! installing, updating and removing apps from it. Shared by the launcher's
+//! installing, updating and removing gizlets from it. Shared by the launcher's
 //! Store page and `gizlet store`.
+//!
+//! Its lists and search show apps only. Installing by a GitHub repository or a
+//! short link id (`gizlet.io/<id>`) is a way of installing of its own, for
+//! apps and services alike: whatever kind the link leads to is installed.
 //!
 //! Nobody signs in: every request is to the public API. Requests and
 //! downloads go through `curl`, like system updates. A package is downloaded
@@ -33,10 +37,10 @@ pub enum Error {
     Offline,
     /// The API answered with an error: its code and message.
     Api { status: u16, code: String, message: String },
-    /// The gizlet is a background service, which the Store does not install yet.
-    Service,
     /// The app is installed from another repository or as a file.
     OtherSource { id: String, from: Option<String> },
+    /// The repository the app came from was renamed or deleted, and another one has its path.
+    RepositoryChanged { id: String, repo: String },
     Other(String),
 }
 
@@ -45,9 +49,9 @@ impl std::fmt::Display for Error {
         match self {
             Error::Offline => f.write_str("cannot reach gizlet.io; check the network"),
             Error::Api { message, .. } => f.write_str(message),
-            Error::Service => f.write_str("services cannot be installed from the Store yet"),
             Error::OtherSource { id, from: Some(repo) } => write!(f, "{id} is installed from {repo}"),
             Error::OtherSource { id, from: None } => write!(f, "{id} is installed from a file; uninstall it first"),
+            Error::RepositoryChanged { id, repo } => write!(f, "{repo} is no longer the repository {id} came from; uninstall it first"),
             Error::Other(message) => f.write_str(message),
         }
     }
@@ -259,7 +263,7 @@ pub struct UpdateStatus {
 
 impl UpdateStatus {
     pub fn has_update(&self) -> bool {
-        self.status == "update" && self.package.is_some() && self.kind.as_deref().is_none_or(|k| k == "app")
+        self.status == "update" && self.package.is_some()
     }
 
     pub fn name_for(&self, lang: &str) -> &str {
@@ -285,6 +289,7 @@ struct Source<'a> {
     repo: &'a str,
     repository_id: Option<u64>,
     id: &'a str,
+    kind: Kind,
     version: &'a str,
     tag: &'a str,
 }
@@ -369,13 +374,11 @@ impl Store {
         serde_json::from_slice(&get(&url, JSON_LIMIT)?).map_err(other)
     }
 
-    /// Installs or updates the app from `repo`.
+    /// Installs or updates what `repo` holds, an app or a service.
     pub fn install(&self, library: &Library, repo: &str, progress: &mut dyn FnMut(Progress)) -> Result<App, Error> {
         let offer = self.offer(repo)?;
-        if offer.kind != "app" {
-            return Err(Error::Service);
-        }
-        let source = Source { repo: &offer.repo, repository_id: offer.repository_id, id: &offer.id, version: &offer.version, tag: &offer.tag };
+        let kind = kind_of(&offer.kind)?;
+        let source = Source { repo: &offer.repo, repository_id: offer.repository_id, id: &offer.id, kind, version: &offer.version, tag: &offer.tag };
         self.install_package(library, source, &offer.package, progress)
     }
 
@@ -384,12 +387,14 @@ impl Store {
         let (Some(package), Some(version), Some(tag)) = (&update.package, &update.version, &update.tag) else {
             return Err(Error::Other(format!("{} has no update", update.id)));
         };
-        if !update.has_update() {
-            return Err(Error::Service);
+        // An update keeps the kind: an app that became a service, or the reverse, is installed again by hand.
+        let kind = library.get(&update.id).map_err(Error::Other)?.manifest.kind();
+        if kind_of(update.kind.as_deref().unwrap_or("app"))? != kind {
+            return Err(Error::Other(format!("{} is no longer {}; uninstall it and install it again", update.id, apps::kind_word(kind))));
         }
         // The repository it came from, by GitHub's id when the API knows it now and did not then.
         let repository_id = update.repository_id.or_else(|| self.origin(&update.id).and_then(|o| o.repository_id));
-        let source = Source { repo: &update.repo, repository_id, id: &update.id, version, tag };
+        let source = Source { repo: &update.repo, repository_id, id: &update.id, kind, version, tag };
         self.install_package(library, source, package, progress)
     }
 
@@ -398,13 +403,19 @@ impl Store {
         if !apps::is_valid_id(id) {
             return Err(Error::Other(format!("{id:?} is not an app ID")));
         }
-        // An installed app is only replaced by the repository it came from.
+        // One Store change at a time, across processes: downloads, installs and origins.
+        let _lock = self.lock()?;
+        // An installed app is only replaced by the repository it came from: the same path, and
+        // GitHub's id for it when known then, which a new repository at a renamed one's path lacks.
         if let Ok(installed) = library.get(id) {
-            if installed.manifest.kind() != Kind::App {
-                return Err(Error::Service);
+            if installed.manifest.kind() != source.kind {
+                return Err(Error::Other(format!("{id} is installed as {}; uninstall it first", apps::kind_word(installed.manifest.kind()))));
             }
             match self.origin(id) {
                 Some(origin) if origin.repo != repo => return Err(Error::OtherSource { id: id.into(), from: Some(origin.repo) }),
+                Some(origin) if origin.repository_id.is_some() && origin.repository_id != source.repository_id => {
+                    return Err(Error::RepositoryChanged { id: id.into(), repo: repo.into() });
+                }
                 None => return Err(Error::OtherSource { id: id.into(), from: None }),
                 Some(_) => {}
             }
@@ -417,13 +428,9 @@ impl Store {
         }
         let file = self.download(url, sha256, size, progress)?;
         progress(Progress::Installing);
-        let installed = library.install(&file).map_err(Error::Other);
+        let installed = library.install_as(&file, id, source.kind).map_err(Error::Other);
         let _ = fs::remove_file(&file);
         let app = installed?;
-        if app.manifest.id != id || app.manifest.kind() != Kind::App {
-            let _ = library.remove(&app.manifest.id, false);
-            return Err(Error::Other(format!("the package holds {}, not {id}", app.manifest.id)));
-        }
         let origin = Origin { repo: repo.into(), repository_id: source.repository_id, version: source.version.into(), tag: source.tag.into(), sha256: sha256.clone() };
         self.set_origin(id, Some(origin)).map_err(other)?;
         Ok(app)
@@ -491,22 +498,31 @@ impl Store {
         Ok(done)
     }
 
-    /// Removes an app and forgets its origin; its saves stay unless `saves`.
-    pub fn uninstall(&self, library: &Library, id: &str, saves: bool) -> Result<(), Error> {
-        let app = library.get(id).map_err(Error::Other)?;
-        if app.manifest.kind() != Kind::App {
-            return Err(Error::Service);
-        }
-        library.remove(id, saves).map_err(Error::Other)?;
-        self.set_origin(id, None).map_err(other)
+    /// Holds the Store's lock, `<prefix>/store/.lock`, until dropped.
+    fn lock(&self) -> Result<File, Error> {
+        fs::create_dir_all(&self.dir).map_err(other)?;
+        let file = File::options().create(true).truncate(false).write(true).open(self.dir.join(".lock")).map_err(other)?;
+        file.lock().map_err(other)?;
+        Ok(file)
     }
 
-    /// Updates for the installed apps that came from the Store.
+    /// Removes an app, its saves only with `saves`, or a service with all it
+    /// keeps, and forgets its origin.
+    pub fn uninstall(&self, library: &Library, id: &str, saves: bool) -> Result<Kind, Error> {
+        let _lock = self.lock()?;
+        let kind = library.remove(id, saves).map_err(Error::Other)?;
+        self.set_origin(id, None).map_err(other)?;
+        Ok(kind)
+    }
+
+    /// Updates for the installed apps and services that came from the Store.
     pub fn updates(&self, library: &Library) -> Result<Vec<UpdateStatus>, Error> {
         let origins = self.origins();
+        let services = library.services().unwrap_or_default().into_iter().map(|s| s.package);
         let installed: Vec<serde_json::Value> = library
             .scan()
-            .iter()
+            .into_iter()
+            .chain(services)
             .filter_map(|app| {
                 let origin = origins.get(app.id())?;
                 Some(serde_json::json!({ "repo": origin.repo, "repository_id": origin.repository_id, "id": app.id(), "version": app.manifest.version }))
@@ -535,6 +551,7 @@ impl Store {
 
     /// Forgets where `id` came from: it was installed from a file or removed.
     pub fn forget(&self, id: &str) {
+        let Ok(_lock) = self.lock() else { return };
         if self.origins().contains_key(id) {
             let _ = self.set_origin(id, None);
         }
@@ -600,6 +617,14 @@ fn prune(dir: &Path, limit: u64) {
         if fs::remove_file(&path).is_ok() {
             total -= len;
         }
+    }
+}
+
+fn kind_of(kind: &str) -> Result<Kind, Error> {
+    match kind {
+        "app" => Ok(Kind::App),
+        "service" => Ok(Kind::Service),
+        other => Err(Error::Other(format!("this device cannot install a {other}"))),
     }
 }
 

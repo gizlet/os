@@ -413,7 +413,8 @@ def check_apps(console):
 STORE_APP = "dev.gizlet.test-store"
 
 # A stand-in for api.gizlet.io and dl.gizlet.io, over HTTPS: the Store's part of the public API.
-# `version` holds the release the API offers; `fault` set to `drop` cuts the next download in half.
+# `version` holds the release the API offers; `fault` set to `drop` cuts the next download in half;
+# `renamed` makes another GitHub repository hold the store test's path.
 STORE_SERVER = r"""
 import { appendFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -482,7 +483,9 @@ Bun.serve({
     }
     if (path === "/v1/resolve") {
       const link = url.searchParams.get("url");
-      const repo = link === "gizlet.io/storetest" ? REPO : others[link] ? link : null;
+      const github = /github\.com\/([^/]+)\/([^/?#]+)/i.exec(link);
+      const named = github ? `github.com/${github[1]}/${github[2]}`.toLowerCase() : null;
+      const repo = link === "gizlet.io/storetest" ? REPO : named === REPO || others[named] ? named : null;
       return repo ? json({ repo }) : error(404, "not_found", `${link} leads nowhere`);
     }
     if (path === `/v1/gizlets/${REPO}`) {
@@ -491,7 +494,7 @@ Bun.serve({
     const install = /^\/v1\/gizlets\/(.+)\/install$/.exec(path);
     if (install && device) {
       const repo = install[1];
-      if (repo === REPO) return json({ repo, repository_id: 4242, id: "dev.gizlet.test-store", name: "Store Test", kind: "app", version, tag: `v${version}`, package: await pkg(`store-${version}.gzl`) });
+      if (repo === REPO) return json({ repo, repository_id: (await state("renamed")) ? 9999 : 4242, id: "dev.gizlet.test-store", name: "Store Test", kind: "app", version, tag: `v${version}`, package: await pkg(`store-${version}.gzl`) });
       const g = others[repo];
       if (g) return json({ repo, repository_id: 5150, id: g.id, name: g.name, kind: g.kind, version: g.version, tag: `v${g.version}`, package: await pkg(g.file) });
     }
@@ -529,8 +532,9 @@ def store_app(app_id, version, pad=16 << 10):
 
 
 def check_store(console):
-    """`gizlet store` against a stand-in for gizlet.io: search, a page, refusing a service, installing,
-    refusing the same app ID from another repository, an update whose download is cut and resumed,
+    """`gizlet store` against a stand-in for gizlet.io: search, a page, installing an app and a service
+    by short link or GitHub repository, refusing the same app ID from another repository or a new
+    repository at the old path, concurrent installs, an update whose download is cut and resumed,
     uninstalling, and no network."""
     console.command("mkdir -p /tmp/store/pkg /tmp/store/bin && cd /tmp/store && "
                     "openssl req -x509 -newkey ed25519 -nodes -days 1 -subj /CN=api.gizlet.io "
@@ -562,22 +566,39 @@ def check_store(console):
     console.expect(b"gizlet.io/nowhere leads nowhere")
     console.expect(b"\r\nstatus-1\r\n")
     console.expect(PROMPT)
-    console.enter("./gz store install github.com/fixture/clock; echo status-$?")
-    console.expect(b"services cannot be installed from the Store yet")
-    console.expect(b"\r\nstatus-1\r\n")
+    # Installing by link is for apps and services alike.
+    console.enter("./gz store install https://github.com/Fixture/clock")
+    console.expect(b"installed the service dev.gizlet.test-clock 1.0.0 (Test Service) from github.com/fixture/clock: ")
     console.expect(PROMPT)
-    console.enter("./gz store install storetest")
-    console.expect(b"installed dev.gizlet.test-store 1.0.0 (Store Test) from github.com/fixture/store-test\r\n")
+    console.enter("systemctl is-active gizlet-service-dev.gizlet.test-clock.service; grep -c test-clock /opt/gizlet/store/origins.json")
+    console.expect(b"\r\nactive\r\n1\r\n")
+    console.expect(PROMPT)
+    console.enter("gizlet uninstall dev.gizlet.test-clock && grep -c test-clock /opt/gizlet/store/origins.json")
+    console.expect(b"removed the service dev.gizlet.test-clock")
+    console.expect(b"\r\n0\r\n")
+    console.expect(PROMPT)
+    # Two installs at once take turns; neither removes the other's download.
+    console.enter("(./gz store install storetest >one.log 2>&1 &) ; ./gz store install github.com/fixture/store-test >two.log 2>&1; "
+                  "sleep 2; while pgrep -f 'store install' >/dev/null; do sleep 1; done; "
+                  "grep -h '^installed' one.log two.log | sort | uniq -c | sed 's/^ *//'")
+    console.expect(b"\r\n2 installed dev.gizlet.test-store 1.0.0 (Store Test) from github.com/fixture/store-test\r\n")
     console.expect(PROMPT)
     console.enter("grep -c '\"repository_id\": 4242' /opt/gizlet/store/origins.json && gizlet run dev.gizlet.test-store && ./gz store updates")
     console.expect(b"\r\n1\r\nstore-app 1.0.0\r\n")
-    console.expect(b"\r\nall apps from the Store are up to date\r\n")
+    console.expect(b"\r\neverything from the Store is up to date\r\n")
     console.expect(PROMPT)
     # Another repository naming the same app ID never replaces it.
     console.enter("./gz store install github.com/fixture/impostor; echo status-$?")
     console.expect(b"dev.gizlet.test-store is installed from github.com/fixture/store-test")
     console.expect(b"\r\nstatus-1\r\n")
     console.expect(PROMPT)
+    # The repository was renamed and another one took its path: it never replaces the app.
+    console.command("echo 1 > renamed")
+    console.enter("./gz store install storetest; echo status-$?")
+    console.expect(b"github.com/fixture/store-test is no longer the repository dev.gizlet.test-store came from")
+    console.expect(b"\r\nstatus-1\r\n")
+    console.expect(PROMPT)
+    console.command(": > renamed")
     # A new release, and the connection drops halfway through its download.
     console.command("echo 1.1.0 > version && echo drop > fault && : > requests.log")
     console.enter("./gz store updates")
@@ -592,7 +613,7 @@ def check_store(console):
     console.expect(b"\r\n1\r\n1\r\nstore-app 1.1.0\r\n0\r\n")
     console.expect(PROMPT)
     console.enter("./gz store upgrade")
-    console.expect(b"\r\nall apps from the Store are up to date\r\n")
+    console.expect(b"\r\neverything from the Store is up to date\r\n")
     console.expect(PROMPT)
     # Uninstalling forgets where it came from.
     console.enter("gizlet uninstall dev.gizlet.test-store --saves && grep -c test-store /opt/gizlet/store/origins.json")
@@ -604,8 +625,9 @@ def check_store(console):
     console.expect(b"\r\nstatus-1\r\n")
     console.expect(PROMPT)
     console.command("cd / && rm -rf /tmp/store")
-    print("gizlet store searches, installs and updates apps over HTTPS, resumes a cut download, refuses services "
-          "and another repository's app with the same ID, and reports no network")
+    print("gizlet store searches, installs apps and services by short link or GitHub repository over HTTPS, "
+          "updates them and resumes a cut download, refuses another repository's app with the same ID, "
+          "serializes concurrent installs, and reports no network")
 
 
 SERVICE = "dev.gizlet.test-service"

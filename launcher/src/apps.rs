@@ -193,6 +193,14 @@ impl Manifest {
 }
 
 /// Why a manifest's package cannot run as an app.
+/// `an app` or `a service`.
+pub fn kind_word(kind: Kind) -> &'static str {
+    match kind {
+        Kind::App => "an app",
+        Kind::Service => "a service",
+    }
+}
+
 pub fn not_an_app(manifest: &Manifest) -> String {
     format!("{0} is a service, not an app; start it with `gizlet service start {0}`", manifest.id)
 }
@@ -369,11 +377,22 @@ impl Library {
     /// Installs or updates the app or service in `package`, a `.gzl`. The
     /// previous version stays in place until the new one is complete and checked.
     pub fn install(&self, package: &Path) -> Result<App, String> {
+        self.install_checked(package, None)
+    }
+
+    /// Installs or updates `id`, an app or a service as `kind` says, from
+    /// `package`, and nothing else: a package that holds another ID or kind is
+    /// refused once unpacked, before anything installed is replaced or started.
+    pub fn install_as(&self, package: &Path, id: &str, kind: Kind) -> Result<App, String> {
+        self.install_checked(package, Some((id, kind)))
+    }
+
+    fn install_checked(&self, package: &Path, expected: Option<(&str, Kind)>) -> Result<App, String> {
         let _lock = self.lock_waiting()?;
         self.recover();
         let staging = self.apps_dir().join(format!(".install-{}", std::process::id()));
         let _ = fs::remove_dir_all(&staging);
-        let result = self.install_staged(package, &staging);
+        let result = self.install_staged(package, &staging, expected);
         if result.is_err() {
             let _ = fs::remove_dir_all(&staging);
         }
@@ -499,8 +518,16 @@ impl Library {
         }
     }
 
-    fn install_staged(&self, package: &Path, staging: &Path) -> Result<App, String> {
+    fn install_staged(&self, package: &Path, staging: &Path, expected: Option<(&str, Kind)>) -> Result<App, String> {
         let manifest = unpack(package, staging)?;
+        if let Some((id, kind)) = expected {
+            if manifest.id != id {
+                return Err(format!("the package holds {}, not {id}", manifest.id));
+            }
+            if manifest.kind() != kind {
+                return Err(format!("{id} is packaged as {}, not {}", kind_word(manifest.kind()), kind_word(kind)));
+            }
+        }
         let (device, tier) = (device_target(), device_tier());
         if !runs_here(&manifest.target, &device) {
             return Err(format!("{} is built for {}; this device runs {device}", manifest.id, manifest.target));
@@ -1025,6 +1052,26 @@ pub(crate) mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn install_as_refuses_another_id_or_kind_before_replacing() {
+        let dir = temp("expected");
+        let lib = Library::new(dir.join("prefix"));
+        for d in ["mine", "other"] {
+            fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        let mine = package(&dir.join("mine"), &manifest("dev.example.mine", &device_target()), &[]);
+        lib.install(&mine).unwrap();
+        let other = package(&dir.join("other"), &manifest("dev.example.other", &device_target()), &[]);
+        let err = lib.install_as(&other, "dev.example.mine", Kind::App).unwrap_err();
+        assert!(err.contains("holds dev.example.other"), "{err}");
+        assert!(!lib.apps_dir().join("dev.example.other").exists());
+        let err = lib.install_as(&mine, "dev.example.mine", Kind::Service).unwrap_err();
+        assert!(err.contains("packaged as an app, not a service"), "{err}");
+        assert_eq!(lib.scan().iter().map(|a| a.id().to_string()).collect::<Vec<_>>(), ["dev.example.mine"]);
+        lib.install_as(&mine, "dev.example.mine", Kind::App).unwrap();
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

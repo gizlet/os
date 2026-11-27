@@ -23,8 +23,9 @@ usage: gizlet <command>
   store search [WORDS]   search the Gizlet Store for apps this device runs
   store info LINK        show an app's page: a short link such as
                          gizlet.io/rocket, or a GitHub repository
-  store install LINK     install an app from the Store
-  store updates          list updates for apps installed from the Store
+  store install LINK     install an app or a service from its short link
+                         or GitHub repository
+  store updates          list updates for what the Store installed
   store upgrade [ID...]  install those updates, all of them without IDs
 
   service list           list installed services: ID, version, state,
@@ -162,8 +163,9 @@ fn store_command(library: &Library, args: &[String]) -> Result<(), String> {
                 println!("{d}");
             }
             if g.is_service() {
-                println!("a background service: the Store does not install services yet");
-            } else if let Some(p) = detail.package_here() {
+                println!("a background service: it runs as root, starts now and at boot");
+            }
+            if let Some(p) = detail.package_here() {
                 println!("package: {} ({} bytes)", p.file, p.size.unwrap_or(0));
             } else {
                 println!("no package for {} ({})", apps::device_target(), apps::device_tier());
@@ -177,13 +179,19 @@ fn store_command(library: &Library, args: &[String]) -> Result<(), String> {
             let repo = store.resolve(link).map_err(fail)?;
             let app = store.install(library, &repo, &mut progress()).map_err(fail)?;
             eprintln!();
-            println!("installed {} {} ({}) from {repo}", app.manifest.id, app.manifest.version, app.manifest.name_for(lang));
+            let m = &app.manifest;
+            if m.kind() == Kind::Service {
+                let state = library.service(&m.id).map(|s| s.state.word().to_string()).unwrap_or_else(|_| "installed".into());
+                println!("installed the service {} {} ({}) from {repo}: {state}", m.id, m.version, m.name_for(lang));
+            } else {
+                println!("installed {} {} ({}) from {repo}", m.id, m.version, m.name_for(lang));
+            }
             Ok(())
         }
         ["updates"] => {
             let updates: Vec<_> = store.updates(library).map_err(fail)?.into_iter().filter(|u| u.has_update()).collect();
             if updates.is_empty() {
-                println!("all apps from the Store are up to date");
+                println!("everything from the Store is up to date");
             }
             for u in updates {
                 println!("{}\t{} -> {}\t{}", u.id, u.installed, u.version.as_deref().unwrap_or("-"), u.name_for(lang));
@@ -199,7 +207,7 @@ fn store_command(library: &Library, args: &[String]) -> Result<(), String> {
             }
             let chosen: Vec<_> = updates.iter().filter(|u| u.has_update() && (ids.is_empty() || ids.contains(&u.id.as_str()))).collect();
             if chosen.is_empty() {
-                println!("all apps from the Store are up to date");
+                println!("everything from the Store is up to date");
             }
             for u in chosen {
                 let app = store.upgrade(library, u, &mut progress()).map_err(fail)?;
