@@ -847,7 +847,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         # A fresh card starts the factory launcher. QEMU's machine has no
         # display, so it says so and the recovery shell opens.
         console.expect(b"starting the selected launcher")
-        console.expect(b"Gizlet launcher 0.")
+        console.expect(b"Gizlet launcher ")
         console.expect(b"Gizlet launcher: no display")
         console.expect(b"boot entry finished with status 1")
         console.expect(PROMPT)
@@ -982,6 +982,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         console.command("printf '%s\\r\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
         console.enter("exit")
         console.expect(b"using Launcher from /opt/gizlet/launcher/releases/1.10.0")
+        console.expect(b"\r\nGizlet launcher v1.10.0\r\n")
         console.expect(b"Gizlet launcher: no display")
         console.expect(PROMPT)
         # A boot.ini that is a FIFO is refused without blocking the session.
