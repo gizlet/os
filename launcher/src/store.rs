@@ -623,9 +623,21 @@ impl Store {
         struct Answer {
             gizlets: Vec<UpdateStatus>,
         }
-        let body = serde_json::json!({ "target": apps::device_target(), "tier": apps::device_tier(), "installed": installed });
-        let answer: Answer = serde_json::from_slice(&post(&format!("{}/v1/updates", self.api), &body.to_string(), JSON_LIMIT)?).map_err(other)?;
-        Ok(answer.gizlets)
+        // The device's own target first; what has no package for it is asked again for the
+        // others it runs (static musl), as installing does.
+        let mut statuses: Vec<UpdateStatus> = Vec::new();
+        let mut ask: Vec<serde_json::Value> = installed;
+        for target in apps::device_targets() {
+            if ask.is_empty() {
+                break;
+            }
+            let body = serde_json::json!({ "target": target, "tier": apps::device_tier(), "installed": ask });
+            let answer: Answer = serde_json::from_slice(&post(&format!("{}/v1/updates", self.api), &body.to_string(), JSON_LIMIT)?).map_err(other)?;
+            statuses.retain(|u| !answer.gizlets.iter().any(|a| a.id == u.id));
+            ask.retain(|one| answer.gizlets.iter().any(|u| u.status == "no_package" && one["id"] == u.id.as_str()));
+            statuses.extend(answer.gizlets);
+        }
+        Ok(statuses)
     }
 
     /// Origins of the apps installed from the Store, by app ID.

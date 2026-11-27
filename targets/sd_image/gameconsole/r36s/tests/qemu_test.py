@@ -437,7 +437,10 @@ const summary = (version) => ({
 const others = {
   "github.com/fixture/clock": { id: "dev.gizlet.test-clock", name: "Clock", kind: "service", version: "1.0.0", file: "clock-1.0.0.gzl" },
   "github.com/fixture/impostor": { id: "dev.gizlet.test-store", name: "Impostor", kind: "app", version: "2.0.0", file: "impostor-2.0.0.gzl" },
+  // Only a static musl build, which the device runs; the API matches targets exactly.
+  "github.com/fixture/static": { id: "dev.gizlet.test-static", name: "Static", kind: "app", version: "1.0.0", file: "static-1.0.0.gzl", target: "aarch64-unknown-linux-musl" },
 };
+const MUSL = "aarch64-unknown-linux-musl";
 Bun.serve({
   port: 8445,
   hostname: "127.0.0.1",
@@ -472,6 +475,7 @@ Bun.serve({
     }
     if (host !== "api.gizlet.io") return new Response("Not found", { status: 404 });
     const device = url.searchParams.get("target") === TARGET && url.searchParams.get("tier") === "lite";
+    const asked = url.searchParams.get("target");
     if (path === "/v1/featured") {
       if (!device || url.searchParams.get("kind") !== "app") return error(400, "bad_request", "the Store asks for apps for this device");
       return json({ hero: [summary(version)], sections: [{ id: "new", title: "New", titles: { "zh-CN": "最新" }, layout: "row", gizlets: [summary(version)] }] });
@@ -492,16 +496,23 @@ Bun.serve({
       return json({ ...summary(version), owner: "fixture", device_screenshots: [], controls: [{ button: "a", action: "Jump", actions: {} }], packages: [await pkg(`store-${version}.gzl`)] });
     }
     const install = /^\/v1\/gizlets\/(.+)\/install$/.exec(path);
-    if (install && device) {
+    if (install && (device || (asked === MUSL && url.searchParams.get("tier") === "lite"))) {
       const repo = install[1];
       if (repo === REPO) return json({ repo, repository_id: (await state("renamed")) ? 9999 : 4242, id: "dev.gizlet.test-store", name: "Store Test", kind: "app", version, tag: `v${version}`, package: await pkg(`store-${version}.gzl`) });
       const g = others[repo];
+      if (g?.target && g.target !== asked) return error(404, "no_compatible_package", `${g.name} has no package for ${asked} (lite)`);
       if (g) return json({ repo, repository_id: 5150, id: g.id, name: g.name, kind: g.kind, version: g.version, tag: `v${g.version}`, package: await pkg(g.file) });
     }
     if (path === "/v1/updates" && req.method === "POST") {
       const body = await req.json();
       const gizlets = [];
       for (const one of body.installed) {
+        if (one.repo === "github.com/fixture/static") {
+          if (body.target !== MUSL) gizlets.push({ ...one, installed: one.version, status: "no_package" });
+          else if (one.version === "1.0.1") gizlets.push({ ...one, installed: one.version, status: "current", version: "1.0.1" });
+          else gizlets.push({ ...one, installed: one.version, status: "update", version: "1.0.1", tag: "v1.0.1", kind: "app", name: "Static", package: await pkg("static-1.0.1.gzl") });
+          continue;
+        }
         if (one.repo !== REPO || one.id !== "dev.gizlet.test-store") {
           gizlets.push({ ...one, installed: one.version, status: "not_found" });
         } else if (one.repository_id !== 4242) {
@@ -521,10 +532,10 @@ console.log("store-server-up");
 """
 
 
-def store_app(app_id, version, pad=16 << 10):
+def store_app(app_id, version, pad=16 << 10, target="aarch64-unknown-linux-gnu"):
     """An app package for the Store test; PAD random bytes make a download worth cutting in half."""
     manifest = {"schema": 2, "kind": "app", "id": app_id, "name": "Store Test", "names": {"zh-CN": "商店测试"},
-                "version": version, "runtime": 1, "target": "aarch64-unknown-linux-gnu", "tier": "lite",
+                "version": version, "runtime": 1, "target": target, "tier": "lite",
                 "entry": "bin/hello.sh"}
     return gzl({"manifest.json": (json.dumps(manifest).encode(), 0o644),
                 "bin/hello.sh": (f'#!/bin/sh\necho "store-app {version}"\n'.encode(), 0o755),
@@ -544,6 +555,9 @@ def check_store(console):
     send(console, store_app(STORE_APP, "1.1.0"), "/tmp/store/pkg/store-1.1.0.gzl")
     send(console, store_app(STORE_APP, "2.0.0", pad=16), "/tmp/store/pkg/impostor-2.0.0.gzl")
     send(console, service_gzl("dev.gizlet.test-clock", "1.0.0", b"exec sleep 4545\n"), "/tmp/store/pkg/clock-1.0.0.gzl")
+    for version in ("1.0.0", "1.0.1"):
+        send(console, store_app("dev.gizlet.test-static", version, pad=16, target="aarch64-unknown-linux-musl"),
+             f"/tmp/store/pkg/static-{version}.gzl")
     # curl reaches both hosts on the stand-in, which the test certificate vouches for; the gizlet
     # command's own requests stay HTTPS to api.gizlet.io and dl.gizlet.io.
     send(console, b"#!/bin/sh\nexec /usr/bin/curl --connect-to api.gizlet.io:443:127.0.0.1:8445 "
@@ -576,6 +590,16 @@ def check_store(console):
     console.enter("gizlet uninstall dev.gizlet.test-clock && grep -c test-clock /opt/gizlet/store/origins.json")
     console.expect(b"removed the service dev.gizlet.test-clock")
     console.expect(b"\r\n0\r\n")
+    console.expect(PROMPT)
+    # A release with only a static musl build installs and updates: the device runs it, and the
+    # Store asks for it when nothing is built for the device's own target.
+    console.enter("./gz store install github.com/fixture/static && ./gz store updates")
+    console.expect(b"installed dev.gizlet.test-static 1.0.0 (Store Test) from github.com/fixture/static\r\n")
+    console.expect(b"\r\ndev.gizlet.test-static\t1.0.0 -> 1.0.1\tStatic\r\n")
+    console.expect(PROMPT)
+    console.enter("./gz store upgrade dev.gizlet.test-static && gizlet run dev.gizlet.test-static && gizlet uninstall dev.gizlet.test-static --saves")
+    console.expect(b"updated dev.gizlet.test-static 1.0.0 -> 1.0.1\r\n")
+    console.expect(b"\r\nstore-app 1.0.1\r\n")
     console.expect(PROMPT)
     # Two installs at once take turns; neither removes the other's download.
     console.enter("(./gz store install storetest >one.log 2>&1 &) ; ./gz store install github.com/fixture/store-test >two.log 2>&1; "
