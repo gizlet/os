@@ -3,6 +3,7 @@
 pub mod apps;
 pub mod cli;
 pub mod ota;
+pub mod profiles;
 pub mod services;
 pub mod settings;
 pub mod store;

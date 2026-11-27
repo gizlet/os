@@ -65,7 +65,7 @@ pub fn dialog(p: &mut Painter, app: &App) {
             p.rect(x + 12.0, ry + 4.0, w - 24.0, 56.0, 12.0, pal.surface_hi);
             focus_ring(p, x + 16.0, ry + 8.0, w - 32.0, 48.0, 8.0, -3.0);
         }
-        let danger = matches!(action, DialogAction::WifiForget(_) | DialogAction::WifiDisconnect);
+        let danger = matches!(action, DialogAction::WifiForget(_) | DialogAction::WifiDisconnect | DialogAction::ProfileDeleteAsk(_) | DialogAction::ProfileDelete(_));
         let c = if danger { pal.danger } else { pal.text };
         let ic = if danger { pal.danger } else { pal.dim };
         let (icon_x, cy) = (x + pad + 6.0, ry + 32.0);
@@ -75,8 +75,10 @@ pub fn dialog(p: &mut Painter, app: &App) {
             }
             DialogAction::Power(PowerAction::Reboot) => icons::restart(p, icon_x, cy, 26.0, ic),
             DialogAction::Power(PowerAction::PowerOff) | DialogAction::Quit => icons::power(p, icon_x, cy, 26.0, ic),
-            DialogAction::InstallUpdate => icons::chevron(p, icon_x, cy, 26.0, true, ic),
-            DialogAction::WifiForget(_) | DialogAction::WifiDisconnect | DialogAction::Close => {
+            DialogAction::InstallUpdate | DialogAction::ProfileSwitchAsk(_) => icons::chevron(p, icon_x, cy, 26.0, true, ic),
+            DialogAction::ProfileSwitch(_) => icons::restart(p, icon_x, cy, 26.0, ic),
+            DialogAction::ProfileRename(_) => icons::person(p, icon_x, cy, 26.0, ic),
+            DialogAction::WifiForget(_) | DialogAction::WifiDisconnect | DialogAction::ProfileDeleteAsk(_) | DialogAction::ProfileDelete(_) | DialogAction::Close => {
                 icons::cross_circle(p, icon_x, cy, 26.0, ic)
             }
         }

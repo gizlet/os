@@ -364,7 +364,7 @@ def check_apps(console):
     console.expect(b"\r\nstatus-1\r\n")
     console.expect(PROMPT)
     console.enter("gizlet install /tmp/hello.gzl")
-    console.expect(b"\r\ninstalled dev.gizlet.test-hello 0.1.0 (Hello) in /opt/gizlet/apps/dev.gizlet.test-hello")
+    console.expect(b"\r\ninstalled dev.gizlet.test-hello 0.1.0 (Hello) in /data/device/packages/apps/dev.gizlet.test-hello")
     console.expect(PROMPT)
     console.enter("gizlet list")
     console.expect(b"\r\ndev.gizlet.test-hello\t0.1.0\tHello\r\n")
@@ -377,7 +377,7 @@ def check_apps(console):
     console.expect(b"\r\n42\r\n")
     console.expect(PROMPT)
     console.enter("gizlet run dev.gizlet.test-hello")
-    console.expect(b"\r\nhello-app 0 /opt/gizlet/apps/dev.gizlet.test-hello /opt/gizlet/saves/dev.gizlet.test-hello\r\n")
+    console.expect(b"\r\nhello-app 0 /data/device/packages/apps/dev.gizlet.test-hello /run/gizlet/profile/apps/dev.gizlet.test-hello\r\n")
     console.expect(PROMPT)
     # Without a launcher on a screen, start says to use run.
     console.enter("gizlet start dev.gizlet.test-hello; echo status-$?")
@@ -390,7 +390,7 @@ def check_apps(console):
     v2_manifest = dict(manifest, schema=2, kind="app", id="dev.gizlet.test-v2", entry="bin/hello.sh")
     send(console, gzl({"manifest.json": (json.dumps(v2_manifest).encode(), 0o644), "bin/hello.sh": v2}), "/tmp/app.gzl")
     console.enter("gizlet install /tmp/app.gzl")
-    console.expect(b"\r\ninstalled dev.gizlet.test-v2 0.1.0 (Hello) in /opt/gizlet/apps/dev.gizlet.test-v2")
+    console.expect(b"\r\ninstalled dev.gizlet.test-v2 0.1.0 (Hello) in /data/device/packages/apps/dev.gizlet.test-v2")
     console.expect(PROMPT)
     console.enter("gizlet run dev.gizlet.test-v2")
     console.expect(b"\r\nhello-v2 dev.gizlet.test-v2\r\n")
@@ -398,12 +398,12 @@ def check_apps(console):
     console.enter("gizlet list | cut -f1 | sort | tr '\\n' ' '; echo")
     console.expect(b"\r\ndev.gizlet.test-hello dev.gizlet.test-v2 \r\n")
     console.expect(PROMPT)
-    console.command("gizlet uninstall dev.gizlet.test-v2 --saves")
-    console.enter("gizlet uninstall dev.gizlet.test-hello && cat /opt/gizlet/saves/dev.gizlet.test-hello/kept")
-    console.expect(b"\r\nremoved dev.gizlet.test-hello; its saves stay")
+    console.command("gizlet uninstall dev.gizlet.test-v2")
+    console.enter("gizlet uninstall dev.gizlet.test-hello && cat /run/gizlet/profile/apps/dev.gizlet.test-hello/kept")
+    console.expect(b"\r\nremoved dev.gizlet.test-hello; each profile keeps its files")
     console.expect(b"\r\nkept\r\n")
     console.expect(PROMPT)
-    console.enter("gizlet list | wc -l; ls -A /opt/gizlet/apps | grep -vxE '[.](lock|running-.*)' | wc -l")
+    console.enter("gizlet list | wc -l; ls -A /data/device/packages/apps | grep -vxE '[.](lock|running-.*)' | wc -l")
     # Nothing is left but the lock files: no staging, removal or backup folders.
     console.expect(b"\r\n0\r\n0\r\n")
     console.expect(PROMPT)
@@ -584,10 +584,10 @@ def check_store(console):
     console.enter("./gz store install https://github.com/Fixture/clock")
     console.expect(b"installed the service dev.gizlet.test-clock 1.0.0 (Test Service) from github.com/fixture/clock: ")
     console.expect(PROMPT)
-    console.enter("systemctl is-active gizlet-service-dev.gizlet.test-clock.service; grep -c test-clock /opt/gizlet/store/origins.json")
+    console.enter("systemctl is-active gizlet-service-dev.gizlet.test-clock.service; grep -c test-clock /data/device/store/origins.json")
     console.expect(b"\r\nactive\r\n1\r\n")
     console.expect(PROMPT)
-    console.enter("gizlet uninstall dev.gizlet.test-clock && grep -c test-clock /opt/gizlet/store/origins.json")
+    console.enter("gizlet uninstall dev.gizlet.test-clock && grep -c test-clock /data/device/store/origins.json")
     console.expect(b"removed the service dev.gizlet.test-clock")
     console.expect(b"\r\n0\r\n")
     console.expect(PROMPT)
@@ -597,7 +597,7 @@ def check_store(console):
     console.expect(b"installed dev.gizlet.test-static 1.0.0 (Store Test) from github.com/fixture/static\r\n"
                    b"dev.gizlet.test-static\t1.0.0 -> 1.0.1\tStatic\r\n")
     console.expect(PROMPT)
-    console.enter("./gz store upgrade dev.gizlet.test-static && gizlet run dev.gizlet.test-static && gizlet uninstall dev.gizlet.test-static --saves")
+    console.enter("./gz store upgrade dev.gizlet.test-static && gizlet run dev.gizlet.test-static && gizlet uninstall dev.gizlet.test-static")
     console.expect(b"updated dev.gizlet.test-static 1.0.0 -> 1.0.1\r\nstore-app 1.0.1\r\n")
     console.expect(PROMPT)
     # Two installs at once take turns; neither removes the other's download.
@@ -606,7 +606,7 @@ def check_store(console):
                   "grep -h '^installed' one.log two.log | sort | uniq -c | sed 's/^ *//'")
     console.expect(b"\r\n2 installed dev.gizlet.test-store 1.0.0 (Store Test) from github.com/fixture/store-test\r\n")
     console.expect(PROMPT)
-    console.enter("grep -c '\"repository_id\": 4242' /opt/gizlet/store/origins.json && gizlet run dev.gizlet.test-store && ./gz store updates")
+    console.enter("grep -c '\"repository_id\": 4242' /data/device/store/origins.json && gizlet run dev.gizlet.test-store && ./gz store updates")
     console.expect(b"\r\n1\r\nstore-app 1.0.0\r\neverything from the Store is up to date\r\n")
     console.expect(PROMPT)
     # Another repository naming the same app ID never replaces it.
@@ -631,14 +631,14 @@ def check_store(console):
     console.expect(PROMPT)
     console.enter("grep -c 'GET dl.gizlet.io/pkg/store-1.1.0.gzl range=-' requests.log; "
                   "grep -c 'GET dl.gizlet.io/pkg/store-1.1.0.gzl range=bytes=[1-9]' requests.log; "
-                  "gizlet run dev.gizlet.test-store; ls /opt/gizlet/store/downloads | wc -l")
+                  "gizlet run dev.gizlet.test-store; ls /data/device/store/downloads | wc -l")
     console.expect(b"\r\n1\r\n1\r\nstore-app 1.1.0\r\n0\r\n")
     console.expect(PROMPT)
     console.enter("./gz store upgrade")
     console.expect(b"\r\neverything from the Store is up to date\r\n")
     console.expect(PROMPT)
     # Uninstalling forgets where it came from.
-    console.enter("gizlet uninstall dev.gizlet.test-store --saves && grep -c test-store /opt/gizlet/store/origins.json")
+    console.enter("gizlet uninstall dev.gizlet.test-store && grep -c test-store /data/device/store/origins.json")
     console.expect(b"\r\n0\r\n")
     console.expect(PROMPT)
     console.command("pkill -f 'bun serve.js'; sleep 1")
@@ -712,7 +712,7 @@ def check_services(console):
     send(console, service_gzl(SERVICE, "0.3.0", b'echo "test-service 0.3.0 fails"\nexit 3\n'), "/tmp/service-bad.gzl")
     send(console, service_gzl(KEEP, "1.0.0", b'exec sleep 4545\n'), "/tmp/keep.gzl")
     console.enter("gizlet install /tmp/service-1.gzl")
-    console.expect(f"\r\ninstalled the service {SERVICE} 0.1.0 (Test Service) in /opt/gizlet/services/{SERVICE}: "
+    console.expect(f"\r\ninstalled the service {SERVICE} 0.1.0 (Test Service) in /data/device/packages/services/{SERVICE}: "
                    "running, starts at boot\r\n".encode())
     console.expect(PROMPT)
     console.enter("gizlet install /tmp/keep.gzl")
@@ -723,9 +723,9 @@ def check_services(console):
     # A service runs as a system unit with its own folders, never as an app.
     expect_lines(console, f"cat /run/gizlet-services/{SERVICE}/env; systemctl show -P ControlGroup {SERVICE_UNIT}; "
                           f"gizlet list | grep -c {SERVICE}; gizlet run {SERVICE} 2>&1 | grep -c 'is a service, not an app'",
-                 f"/opt/gizlet/services/{SERVICE}".encode(), f"/opt/gizlet/service-data/{SERVICE}".encode(),
-                 f"/run/gizlet-services/{SERVICE}".encode(), f"/opt/gizlet/service-data/{SERVICE}".encode(),
-                 f"/opt/gizlet/services/{SERVICE}".encode(), f"/system.slice/{SERVICE_UNIT}".encode(), b"0", b"1")
+                 f"/data/device/packages/services/{SERVICE}".encode(), f"/run/gizlet/profile/services/{SERVICE}".encode(),
+                 f"/run/gizlet-services/{SERVICE}".encode(), f"/run/gizlet/profile/services/{SERVICE}".encode(),
+                 f"/data/device/packages/services/{SERVICE}".encode(), f"/system.slice/{SERVICE_UNIT}".encode(), b"0", b"1")
     expect_lines(console, "gizlet service list",
                  f"{KEEP}\t1.0.0\trunning\tenabled\tTest Service".encode(),
                  f"{SERVICE}\t0.1.0\trunning\tenabled\tTest Service".encode())
@@ -745,12 +745,12 @@ def check_services(console):
     service_processes(console, 1)
     # An update stops the running version, keeps its state and starts the new one.
     console.enter("gizlet install /tmp/service-2.gzl")
-    console.expect(f"\r\ninstalled the service {SERVICE} 0.2.0 (Test Service) in /opt/gizlet/services/{SERVICE}: "
+    console.expect(f"\r\ninstalled the service {SERVICE} 0.2.0 (Test Service) in /data/device/packages/services/{SERVICE}: "
                    "running, starts at boot\r\n".encode())
     console.expect(PROMPT)
     wait_for_socket(console)
     service_processes(console, 1)
-    expect_lines(console, f"cat /opt/gizlet/service-data/{SERVICE}/starts /opt/gizlet/service-data/{SERVICE}/version",
+    expect_lines(console, f"cat /run/gizlet/profile/services/{SERVICE}/starts /run/gizlet/profile/services/{SERVICE}/version",
                  b"3", b"0.2.0")
     # A version that does not start is replaced by the one before it.
     console.enter("gizlet install /tmp/service-bad.gzl; echo status-$?")
@@ -763,80 +763,223 @@ def check_services(console):
                  f"{SERVICE} 0.2.0 (Test Service)".encode(), b"starts at boot: yes", b"logged")
     # The other service keeps running but no longer starts at boot.
     expect_lines(console, f"gizlet service disable {KEEP}", f"{KEEP}: running, does not start at boot".encode())
-    expect_lines(console, f"ls -A /opt/gizlet/services | grep -c '^[.]\\(old\\|install\\|remove\\)-'", b"0")
+    expect_lines(console, f"ls -A /data/device/packages/services | grep -c '^[.]\\(old\\|install\\|remove\\)-'", b"0")
     print("gizlet installs a schema 2 service under systemd, which outlives the launcher, starts and stops it with its "
           "children, and updates it, keeping its state and restoring the previous version when the new one fails")
 
 
 def check_services_after_reboot(console):
     """After a reboot into a custom entry, without the launcher: the service set to start at boot
-    runs again with its state; uninstalling a running service, and one whose state cannot be deleted."""
+    runs again with its state; uninstalling a running service, and one whose package cannot be deleted."""
     expect_lines(console, f"for i in $(seq 60); do systemctl -q is-active {SERVICE_UNIT} && break; sleep 1; done; "
                           f"systemctl is-active {SERVICE_UNIT} gizlet-service-{KEEP}.service; "
-                          f"cat /opt/gizlet/service-data/{SERVICE}/starts",
+                          f"cat /run/gizlet/profile/services/{SERVICE}/starts",
                  b"active", b"inactive", b"5")
     wait_for_socket(console)
     console.command(f"gizlet service start {KEEP}")
-    # Uninstalling the running service started at boot stops it and its child and removes all it had.
+    # Uninstalling the running service started at boot stops it and its child and removes the
+    # package, unit and runtime folder; the profile keeps its state.
     console.enter(f"gizlet uninstall {SERVICE}")
-    console.expect(f"\r\nremoved the service {SERVICE}: stopped, unregistered, and deleted with its state\r\n".encode())
+    console.expect(f"\r\nremoved the service {SERVICE}: stopped, unregistered and deleted; each profile keeps its state\r\n".encode())
     console.expect(PROMPT)
     service_processes(console, 0)
     expect_lines(console, f"systemctl is-active {SERVICE_UNIT}; systemctl cat {SERVICE_UNIT} >/dev/null 2>&1 || echo no-unit; "
-                          f"for path in /opt/gizlet/services/{SERVICE} /opt/gizlet/services/.boot-{SERVICE} "
-                          f"/opt/gizlet/services/.running-{SERVICE} /opt/gizlet/service-data/{SERVICE} "
+                          f"for path in /data/device/packages/services/{SERVICE} /data/device/packages/services/.running-{SERVICE} "
                           f"/run/gizlet-services/{SERVICE} /run/systemd/system/{SERVICE_UNIT}; do "
-                          'test -e "$path" && echo "left: $path"; done; echo checked',
-                 b"inactive", b"no-unit", b"checked")
+                          'test -e "$path" && echo "left: $path"; done; echo checked; '
+                          f"cat /run/gizlet/profile/services/{SERVICE}/starts; grep -cx {SERVICE} /run/gizlet/profile/enabled-services",
+                 b"inactive", b"no-unit", b"checked", b"5", b"0")
     # Other services, apps' saves and system services stay.
     expect_lines(console, f"systemctl is-active gizlet-service-{KEEP}.service gizlet-data; "
-                          "cat /opt/gizlet/saves/dev.gizlet.test-hello/kept",
+                          "cat /run/gizlet/profile/apps/dev.gizlet.test-hello/kept",
                  b"active", b"active", b"kept")
-    # A state file that cannot be deleted stops the uninstall with what to do; it finishes once that is fixed.
-    console.command(f"touch /opt/gizlet/service-data/{KEEP}/pinned && chattr +i /opt/gizlet/service-data/{KEEP}/pinned")
+    # A package file that cannot be deleted stops the uninstall with what to do; it finishes once that is fixed.
+    console.command(f"touch /data/device/packages/services/{KEEP}/pinned && chattr +i /data/device/packages/services/{KEEP}/pinned")
     console.enter(f"gizlet uninstall {KEEP}; echo status-$?")
-    console.expect(f"{KEEP} is stopped and unregistered, but /opt/gizlet/service-data/{KEEP} cannot be deleted".encode())
+    console.expect(f"{KEEP} is stopped and unregistered, but /data/device/packages/services/.uninstall-{KEEP} cannot be deleted".encode())
     console.expect(f"then run `gizlet uninstall {KEEP}` again".encode())
     console.expect(b"\r\nstatus-1\r\n")
     console.expect(PROMPT)
     expect_lines(console, f"systemctl is-active gizlet-service-{KEEP}.service; pgrep -c -f 'sleep 4545'", b"inactive", b"0")
-    console.command(f"chattr -i /opt/gizlet/service-data/{KEEP}/pinned")
+    console.command(f"chattr -i /data/device/packages/services/.uninstall-{KEEP}/pinned")
     console.enter(f"gizlet uninstall {KEEP}")
     console.expect(f"\r\nremoved the service {KEEP}: stopped".encode())
     console.expect(PROMPT)
-    expect_lines(console, "ls -A /opt/gizlet/services /opt/gizlet/service-data | grep -v ':$' | grep -c .; "
-                          "ls /run/systemd/system | grep -c '^gizlet-service-'", b"0", b"0")
+    expect_lines(console, "ls -A /data/device/packages/services | grep -v '^[.]lock$' | grep -c .; "
+                          "ls /run/systemd/system | grep -c '^gizlet-service-'; "
+                          f"test -d /run/gizlet/profile/services/{KEEP} && test -d /run/gizlet/profile/services/{SERVICE} && echo states-kept",
+                 b"0", b"0", b"states-kept")
     print("after a reboot without the launcher, the service set to start at boot runs with its state; "
-          "uninstalling stops it and its child and removes its unit, package, state, socket and runtime folder, "
-          "and a cleanup failure says what to do")
+          "uninstalling stops it and its child and removes its unit, package, socket and runtime folder while the "
+          "profile keeps its state, and a cleanup failure says what to do")
 
 
 def check_services_gone(console):
-    """A boot after the uninstall: nothing of the services is registered or kept, and the service installs again."""
+    """A boot after the uninstall: nothing of the services is registered, and the service installs again
+    with the state the profile kept."""
     expect_lines(console, "systemctl list-units --all --no-legend 'gizlet-service-*' | grep -c .; "
-                          "ls /run/systemd/system | grep -c '^gizlet-service-'; ls -A /opt/gizlet/services | grep -c .; "
+                          "ls /run/systemd/system | grep -c '^gizlet-service-'; "
+                          "ls -A /data/device/packages/services | grep -v '^[.]lock$' | grep -c .; "
                           f"test -e /run/gizlet-services/{SERVICE} || echo no-runtime",
                  b"0", b"0", b"0", b"no-runtime")
     send(console, test_service("0.1.0"), "/tmp/service-1.gzl")
     console.enter("gizlet install /tmp/service-1.gzl")
-    console.expect(f"\r\ninstalled the service {SERVICE} 0.1.0 (Test Service) in /opt/gizlet/services/{SERVICE}: "
+    console.expect(f"\r\ninstalled the service {SERVICE} 0.1.0 (Test Service) in /data/device/packages/services/{SERVICE}: "
                    "running, starts at boot\r\n".encode())
     console.expect(PROMPT)
     wait_for_socket(console)
-    # A fresh state: its first start.
-    expect_lines(console, f"cat /opt/gizlet/service-data/{SERVICE}/starts", b"1")
+    # It goes on from the state the profile kept.
+    expect_lines(console, f"cat /run/gizlet/profile/services/{SERVICE}/starts", b"6")
     console.enter(f"gizlet uninstall {SERVICE}")
     console.expect(f"\r\nremoved the service {SERVICE}".encode())
     console.expect(PROMPT)
     service_processes(console, 0)
-    print("an uninstalled service stays gone after a reboot and installs again with a fresh state")
+    print("an uninstalled service stays gone after a reboot and installs again with the state its profile kept")
+
+
+PROFILE_APP = "dev.gizlet.test-profile"
+PROFILE_SERVICE = "dev.gizlet.test-profile-service"
+PROFILE_UNIT = f"gizlet-service-{PROFILE_SERVICE}.service"
+
+
+def profile_app_gzl():
+    """An app that counts its runs in its save folder and prints the folder and the count."""
+    manifest = {"schema": 2, "kind": "app", "id": PROFILE_APP, "name": "Profile Test", "version": "0.1.0",
+                "runtime": 1, "target": "aarch64-unknown-linux-gnu", "tier": "lite", "entry": "bin/count"}
+    count = (b'#!/bin/sh\nn=$(cat "$GIZLET_SAVE_DIR/runs" 2>/dev/null || echo 0)\n'
+             b'echo $((n + 1)) > "$GIZLET_SAVE_DIR/runs"\necho "profile-app $GIZLET_SAVE_DIR $((n + 1))"\n')
+    return gzl({"manifest.json": (json.dumps(manifest).encode(), 0o644), "bin/count": (count, 0o755)})
+
+
+def profile_service_gzl():
+    """A service that counts its starts in its state folder and writes `stopped` there when it is stopped."""
+    return service_gzl(PROFILE_SERVICE, "0.1.0", (
+        b'n=$(cat "$GIZLET_STATE_DIR/starts" 2>/dev/null || echo 0)\n'
+        b'echo $((n + 1)) > "$GIZLET_STATE_DIR/starts"\n'
+        b'rm -f "$GIZLET_STATE_DIR/stopped"\n'
+        b'trap \'echo stopped > "$GIZLET_STATE_DIR/stopped"; sync; exit 0\' TERM\n'
+        b'while :; do sleep 1 & wait $!; done\n'))
+
+
+def current_profile(console):
+    """The ID of the profile mounted at boot."""
+    console.enter("echo profile-$(cat /run/gizlet/profile.id)-")
+    console.expect(b"\r\nprofile-")
+    profile = console.expect(b"-\r\n").decode()
+    console.expect(PROMPT)
+    return profile
+
+
+def wait_restart(console):
+    """Waits for the guest to restart; QEMU runs with -no-reboot, so it exits instead."""
+    console.expect(b"reboot: Restarting system", timeout=180)
+    if console.guest.wait(timeout=30) != 0:
+        raise RuntimeError("QEMU failed at the restart")
+
+
+def wait_active(unit):
+    return f"for i in $(seq 60); do systemctl -q is-active {unit} && break; sleep 1; done; systemctl is-active {unit}"
+
+
+def check_profiles(disk, kernel, root):
+    """Two profiles on one card: each keeps its own saves, favorites, home folder, service state and start at
+    boot choice, while installed apps and services are shared. A switch stops the current profile's services
+    and restarts into the other one; uninstalling keeps every profile's data; deleting a profile removes it
+    whole, and the current one cannot be deleted."""
+    with boot(disk, kernel, root) as console:
+        console.expect(PROMPT)
+        console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /data/device/boot.ini")
+        first = current_profile(console)
+        # The first boot made one profile without a name.
+        expect_lines(console, "gizlet profile list", f"{first}\tDefault\tcurrent".encode())
+        send(console, profile_app_gzl(), "/tmp/profile-app.gzl")
+        send(console, profile_service_gzl(), "/tmp/profile-service.gzl")
+        console.command("gizlet install /tmp/profile-app.gzl && gizlet install /tmp/profile-service.gzl")
+        expect_lines(console, f"gizlet run {PROFILE_APP}; gizlet run {PROFILE_APP}",
+                     f"profile-app /run/gizlet/profile/apps/{PROFILE_APP} 1".encode(),
+                     f"profile-app /run/gizlet/profile/apps/{PROFILE_APP} 2".encode())
+        console.command(f"printf 'favorite = {PROFILE_APP}\\n' >> /run/gizlet/profile/launcher/settings.ini")
+        expect_lines(console, f"{wait_active(PROFILE_UNIT)}; cat /run/gizlet/profile/services/{PROFILE_SERVICE}/starts; cat /home/check",
+                     b"active", b"1", b"persistent-user-file")
+        console.enter(f"gizlet profile delete {first} --yes; echo status-$?")
+        console.expect(b"is the current profile; switch to another one first")
+        console.expect(b"\r\nstatus-1\r\n")
+        console.expect(PROMPT)
+        console.enter("gizlet profile create Ben")
+        console.expect(b"\r\ncreated the profile Ben (")
+        console.expect(PROMPT)
+        console.enter("gizlet profile switch ben")
+        console.expect(b"\r\nstopped the services; restarting into Ben (")
+        wait_restart(console)
+    with boot(disk, kernel, root) as console:
+        # boot.ini is the device's, so the same entry starts.
+        console.expect(b"starting /data/device/bin/hello")
+        console.expect(PROMPT)
+        second = current_profile(console)
+        assert second != first, "the switch mounted the same profile"
+        expect_lines(console, "gizlet profile list", f"{first}\tDefault\t".encode(), f"{second}\tBen\tcurrent".encode())
+        # The first profile's service stopped before the restart and wrote that to its own state;
+        # this profile starts nothing it did not choose.
+        expect_lines(console, f"cat /data/profiles/{first}/services/{PROFILE_SERVICE}/stopped; systemctl is-active {PROFILE_UNIT}; "
+                              f"gizlet service list | cut -f1,3,4 | grep {PROFILE_SERVICE}",
+                     b"stopped", b"inactive", f"{PROFILE_SERVICE}\tstopped\tdisabled".encode())
+        # None of the first profile's saves, favorites, service state or home files are here.
+        expect_lines(console, "ls -A /run/gizlet/profile/apps /run/gizlet/profile/services /home | grep -v ':$' | grep -c .; "
+                              "test -e /run/gizlet/profile/launcher/settings.ini || echo no-settings",
+                     b"0", b"no-settings")
+        # The app installed there runs here, with this profile's save folder.
+        expect_lines(console, f"gizlet run {PROFILE_APP}", f"profile-app /run/gizlet/profile/apps/{PROFILE_APP} 1".encode())
+        # Uninstalling removes the packages for everyone and keeps every profile's data.
+        console.command(f"gizlet uninstall {PROFILE_APP} && gizlet uninstall {PROFILE_SERVICE}")
+        expect_lines(console, f"gizlet list | grep -c {PROFILE_APP}; cat /data/profiles/{first}/apps/{PROFILE_APP}/runs "
+                              f"/run/gizlet/profile/apps/{PROFILE_APP}/runs /data/profiles/{first}/services/{PROFILE_SERVICE}/starts",
+                     b"0", b"2", b"1", b"1")
+        # Installed again here, the service is this profile's to start at boot; the first keeps its own choice.
+        send(console, profile_service_gzl(), "/tmp/profile-service.gzl")
+        console.command("gizlet install /tmp/profile-service.gzl")
+        expect_lines(console, f"{wait_active(PROFILE_UNIT)}; cat /run/gizlet/profile/services/{PROFILE_SERVICE}/starts; "
+                              f"cat /run/gizlet/profile/enabled-services; grep -cx {PROFILE_SERVICE} /data/profiles/{first}/enabled-services",
+                     b"active", b"1", PROFILE_SERVICE.encode(), b"1")
+        console.enter(f"gizlet profile delete Ben --yes; echo status-$?")
+        console.expect(b"is the current profile; switch to another one first")
+        console.expect(b"\r\nstatus-1\r\n")
+        console.expect(PROMPT)
+        console.enter(f"gizlet profile switch {first}")
+        console.expect(b"\r\nstopped the services; restarting into Default (")
+        wait_restart(console)
+    with boot(disk, kernel, root) as console:
+        console.expect(b"starting /data/device/bin/hello")
+        console.expect(PROMPT)
+        assert current_profile(console) == first, "the switch back mounted another profile"
+        # The second profile's service stopped with it; this one starts it at boot with its own state.
+        expect_lines(console, f"cat /data/profiles/{second}/services/{PROFILE_SERVICE}/stopped; {wait_active(PROFILE_UNIT)}; "
+                              f"cat /run/gizlet/profile/services/{PROFILE_SERVICE}/starts",
+                     b"stopped", b"active", b"2")
+        # Everything the first profile kept is back, and the app installed again goes on from its saves.
+        send(console, profile_app_gzl(), "/tmp/profile-app.gzl")
+        console.command("gizlet install /tmp/profile-app.gzl")
+        expect_lines(console, f"gizlet run {PROFILE_APP}; grep -c favorite /run/gizlet/profile/launcher/settings.ini; "
+                              "cat /home/check /run/gizlet/profile/apps/dev.gizlet.test-hello/kept",
+                     f"profile-app /run/gizlet/profile/apps/{PROFILE_APP} 3".encode(), b"1", b"persistent-user-file", b"kept")
+        # Deleting another profile asks first, then removes all it kept.
+        console.enter("gizlet profile delete Ben; echo status-$?")
+        console.expect(f"run `gizlet profile delete {second} --yes`".encode())
+        console.expect(b"\r\nstatus-1\r\n")
+        console.expect(PROMPT)
+        expect_lines(console, f"gizlet profile delete Ben --yes; test -e /data/profiles/{second} || echo gone; gizlet profile list | wc -l",
+                     f"deleted the profile Ben ({second}) with all its data".encode(), b"gone", b"1")
+        console.command(f"gizlet uninstall {PROFILE_APP} && gizlet uninstall {PROFILE_SERVICE}")
+        console.stop()
+    print("profiles keep their own saves, favorites, home folder, service state and boot choice over shared apps and "
+          "services; a switch stops the current profile's services and restarts into the other; uninstalling keeps "
+          "every profile's data; deleting removes a profile whole, never the current one")
 
 
 def install_launcher_updates(console, pack_release):
-    console.command("set +H; mkdir -p /opt/gizlet/launcher /tmp/updates && cd /tmp/updates")
+    console.command("set +H; mkdir -p /data/device/launcher-releases /tmp/updates && cd /tmp/updates")
     send(console, pack_release.read_bytes(), "/tmp/updates/pack.sh")
     console.command("cp /usr/lib/gizlet/launcher/start start.sh && ssh-keygen -qt ed25519 -N '' -f test-key")
-    console.command("(printf 'launcher '; cat test-key.pub) > /opt/gizlet/launcher/allowed_signers")
+    console.command("(printf 'launcher '; cat test-key.pub) > /data/device/settings/allowed_signers")
     console.command('pack() { printf "#!/bin/sh\\necho cli-%s\\n" "$1" > cli; '
                     'sh pack.sh "$1" test-key /usr/lib/gizlet/launcher/bin/gizlet-launcher cli "$1.gizlet"; }')
     for version in ("1.0.0", "1.1.0", "1.2.0"):
@@ -855,8 +998,8 @@ def install_launcher_updates(console, pack_release):
     console.expect(b"signature verification failed")
     console.expect(b"\r\nstatus-1\r\n")
     console.expect(PROMPT)
-    console.command("mkdir -p /opt/gizlet/launcher/releases/9.0.0 /opt/gizlet/launcher/releases/.install.interrupted")
-    console.enter("gizlet target && LC_ALL=C ls -1 /opt/gizlet/launcher/releases")
+    console.command("mkdir -p /data/device/launcher-releases/9.0.0 /data/device/launcher-releases/.install.interrupted")
+    console.enter("gizlet target && LC_ALL=C ls -1 /data/device/launcher-releases")
     console.expect(b"\r\naarch64-unknown-linux-gnu lite\r\n1.1.0\r\n1.10.0\r\n1.2.0\r\n9.0.0\r\n")
     console.expect(PROMPT)
 
@@ -874,11 +1017,11 @@ def check_runtime_reload(console):
     }
     send(console, gzl({"manifest.json": (json.dumps(manifest).encode(), 0o644),
                       "bin/printenv": (b"replaced in the guest", 0o755)}), "/tmp/runtime.gzl")
-    console.command("gizlet install /tmp/runtime.gzl && cp /usr/bin/printenv /opt/gizlet/apps/dev.gizlet.test-runtime/bin/printenv")
+    console.command("gizlet install /tmp/runtime.gzl && cp /usr/bin/printenv /data/device/packages/apps/dev.gizlet.test-runtime/bin/printenv")
     console.enter("gizlet run dev.gizlet.test-runtime ALSA_CONFIG_DIR")
-    console.expect(b"\r\n/opt/gizlet/runtime/1/share/alsa\r\n")
+    console.expect(b"\r\n/data/device/runtime/1/share/alsa\r\n")
     console.expect(PROMPT)
-    console.command("runtime=/opt/gizlet/runtime")
+    console.command("runtime=/data/device/runtime")
     console.enter('gizlet system reload-runtime "$runtime/1.sqfs"')
     console.expect(b"\r\nRuntime 1 activated.")
     console.expect(PROMPT)
@@ -914,20 +1057,20 @@ def check_runtime_reload(console):
 
 
 def check_runtime_after_reboot(console):
-    console.enter('runtime=/opt/gizlet/runtime; active=$(cat /home/active-runtime) '
+    console.enter('runtime=/data/device/runtime; active=$(cat /home/active-runtime) '
                   '&& mountpoint -q "$active" && test "$(ls -d "$runtime"/.runtime-1.* | wc -l)" -eq 1 '
                   '&& test "$(gizlet run dev.gizlet.test-runtime ALSA_CONFIG_DIR)" = "$active/share/alsa" '
                   '&& echo runtime-restored')
     console.expect(b"\r\nruntime-restored\r\n")
     console.expect(PROMPT)
-    console.command("gizlet uninstall dev.gizlet.test-runtime --saves && rm /home/active-runtime")
+    console.command("gizlet uninstall dev.gizlet.test-runtime && rm /home/active-runtime")
 
 
 def start_ota_fixture(console, pack_release, ota_fixture, tag):
     console.command("mkdir -p /tmp/updates && cd /tmp/updates && ssh-keygen -qt ed25519 -N '' -f test-key "
-                    "&& mkdir -p /opt/gizlet/launcher "
+                    "&& mkdir -p /data/device/launcher-releases "
                     "&& ssh-keygen -qt ed25519 -N '' -f manual-key "
-                    "&& (printf 'launcher '; cat manual-key.pub) > /opt/gizlet/launcher/allowed_signers")
+                    "&& (printf 'launcher '; cat manual-key.pub) > /data/device/settings/allowed_signers")
     send(console, pack_release.read_bytes(), "/tmp/updates/pack.sh")
     send(console, ota_fixture.read_bytes(), "/tmp/updates/ota_fixture.sh")
     console.enter("sh /tmp/updates/ota_fixture.sh && echo ota-fixture-ready")
@@ -948,7 +1091,7 @@ def stage_ota_updates(console, pack_release, ota_fixture):
         ("checksum", b"Update file checksum mismatch", "install v2.0.0"),
     ):
         console.enter(f"echo {fault} > fault; gizlet system ota {action}; "
-                      "test $? -ne 0 && test ! -L /opt/gizlet/ota/pending && echo ota-refused")
+                      "test $? -ne 0 && test ! -L /data/device/ota/pending && echo ota-refused")
         console.expect(message)
         console.expect(b"\r\nota-refused\r\n")
         console.expect(PROMPT)
@@ -969,11 +1112,11 @@ def check_ota_after_boot(console, pack_release, ota_fixture):
     console.enter("status=$(gizlet system ota status) && printf '%s\\n' \"$status\" && "
                   "runtime_tag=$(cat /run/gizlet-ota-runtime/release-tag 2>/dev/null || printf unknown) && "
                   "test \"$(printf '%s\\n' \"$status\" | sed -n 's/^Runtime release: //p')\" = \"$runtime_tag\" && "
-                  "current=$(readlink /opt/gizlet/ota/current) && echo \"${current%.*}\" && "
+                  "current=$(readlink /data/device/ota/current) && echo \"${current%.*}\" && "
                   "/run/gizlet-ota-runtime/bin/gizlet-run /run/gizlet-ota-launcher/bin/gizlet-launcher --version && "
-                  "mountpoint -q \"/opt/gizlet/ota/$current/root\" && gizlet target && "
+                  "mountpoint -q \"/data/device/ota/$current/root\" && gizlet target && "
                   "test \"$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)\" = "
-                  "\"/opt/gizlet/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
+                  "\"/data/device/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
     console.expect(b"\r\nLauncher: v2.0.0\r\n")
     console.expect(b"\r\nv2.0.0\r\ngizlet-launcher v2.0.0\r\naarch64-unknown-linux-gnu lite\r\nota-runtime-in-use\r\n")
     console.expect(PROMPT)
@@ -1003,47 +1146,47 @@ def ota_scenarios(image, kernel_name, flash, flash_card, pack_release, ota_fixtu
         }
         send(console, gzl({"manifest.json": (json.dumps(manifest).encode(), 0o644),
                           "bin/printenv": (b"replaced in the guest", 0o755)}), "/tmp/ota-app.gzl")
-        console.command("gizlet install /tmp/ota-app.gzl && cp /usr/bin/printenv /opt/gizlet/apps/dev.gizlet.ota-test/bin/printenv")
+        console.command("gizlet install /tmp/ota-app.gzl && cp /usr/bin/printenv /data/device/packages/apps/dev.gizlet.ota-test/bin/printenv")
         console.command("echo persistent-user-file > /home/check && "
-                        "mkdir -p /opt/gizlet/saves/dev.gizlet.ota-test && "
-                        "echo kept > /opt/gizlet/saves/dev.gizlet.ota-test/kept && "
+                        "mkdir -p /run/gizlet/profile/apps/dev.gizlet.ota-test && "
+                        "echo kept > /run/gizlet/profile/apps/dev.gizlet.ota-test/kept && "
                         "/usr/lib/gizlet/gizlet-switch timezone America/New_York")
         stage_ota_updates(console, pack_release, ota_fixture)
         console.stop()
     with boot(private, kernel, root) as console:
         check_ota_after_boot(console, pack_release, ota_fixture)
-        console.command("mkdir -p /opt/gizlet/bin")
+        console.command("mkdir -p /data/device/bin")
         send(console, b"""#!/bin/sh
 set -eu
 gizlet system ota status
-current=$(readlink /opt/gizlet/ota/current)
-test "$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)" = "/opt/gizlet/ota/$current/root/share/alsa"
-test ! -L /opt/gizlet/ota/attempt
+current=$(readlink /data/device/ota/current)
+test "$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)" = "/data/device/ota/$current/root/share/alsa"
+test ! -L /data/device/ota/attempt
 echo custom-entry-uses-ota
-""", "/opt/gizlet/bin/ota-check")
-        console.command("chmod 755 /opt/gizlet/bin/ota-check && "
-                        "printf '%s\\n' '[boot]' 'entry=bin/ota-check' > /opt/gizlet/boot.ini")
+""", "/data/device/bin/ota-check")
+        console.command("chmod 755 /data/device/bin/ota-check && "
+                        "printf '%s\\n' '[boot]' 'entry=bin/ota-check' > /data/device/boot.ini")
         console.stop()
     with boot(private, kernel, root) as console:
         console.expect(b"\r\nLauncher: v2.0.0\r\n")
         console.expect(b"\r\nPending restart: v2.0.1\r\ncustom-entry-uses-ota\r\n")
         console.expect(PROMPT)
-        console.command("rm /opt/gizlet/boot.ini")
+        console.command("rm /data/device/boot.ini")
         console.enter("exit")
         console.expect(b"ota-launch-failed")
         console.expect(b"update v2.0.1 rolled back")
         console.expect(b"ota-confirmed")
         console.expect(PROMPT)
-        console.enter("gizlet system ota status; current=$(readlink /opt/gizlet/ota/current); echo \"${current%.*}\"; "
-                      "cat /home/check /opt/gizlet/saves/dev.gizlet.ota-test/kept; "
+        console.enter("gizlet system ota status; current=$(readlink /data/device/ota/current); echo \"${current%.*}\"; "
+                      "cat /home/check /run/gizlet/profile/apps/dev.gizlet.ota-test/kept; "
                       "/usr/lib/gizlet/gizlet-switch timezone; "
                       "test \"$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)\" = "
-                      "\"/opt/gizlet/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
+                      "\"/data/device/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
         console.expect(b"\r\nLauncher: v2.0.0\r\n")
         console.expect(b"\r\nRolled back: v2.0.1\r\nv2.0.0\r\npersistent-user-file\r\nkept\r\n"
                        b"America/New_York\r\nota-runtime-in-use\r\n")
         console.expect(PROMPT)
-        console.command("store=/opt/gizlet/ota && set -- \"$store\"/v2.0.1.* && "
+        console.command("store=/data/device/ota && set -- \"$store\"/v2.0.1.* && "
                         "candidate=${1##*/} && test -d \"$1\" && "
                         "ln -s \"$candidate\" \"$store/pending\" && "
                         "ln -s \"$candidate\" \"$store/attempt\" && "
@@ -1073,7 +1216,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
     os.truncate(other, 2 << 30)
     with boot(other, kernel, root) as console:
         console.expect(PROMPT)
-        console.enter("cat /run/gizlet-boot.log; [ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 1500000 ] && echo data-grown")
+        console.enter("cat /run/gizlet-boot.log; [ $(df -k --output=size /data | tail -n 1) -gt 1500000 ] && echo data-grown")
         console.expect(b"data partition grown to ")
         console.expect(b"data filesystem grown to fill its partition")
         console.expect(b"\r\ndata-grown\r\n")
@@ -1112,10 +1255,10 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         console.enter("systemctl is-active bluetooth; systemctl start bluetooth; systemctl is-active bluetooth; "
                       "findmnt -n -o SOURCE /var/lib/bluetooth; timeout 10 bluetoothctl show")
         console.expect(b"\r\ninactive\r\nactive\r\n")
-        console.expect(b"[/system/bluetooth]\r\n")
+        console.expect(b"[/device/settings/bluetooth]\r\n")
         console.expect(b"No default controller available")
         console.expect(PROMPT)
-        console.enter("[ $(df -k --output=size /opt/gizlet | tail -n 1) -gt 15000000 ] && echo data-full; grep -c grown /run/gizlet-boot.log")
+        console.enter("[ $(df -k --output=size /data | tail -n 1) -gt 15000000 ] && echo data-full; grep -c grown /run/gizlet-boot.log")
         console.expect(b"\r\ndata-full\r\n0\r\n")
         console.expect(PROMPT)
         # The first boot writes little to the card: no growth, no inode tables.
@@ -1126,11 +1269,12 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         print(f"first boot wrote {written} MiB to a 16 GiB card")
         assert written < 64, f"first boot wrote {written} MiB"
         console.enter("cat /proc/mounts")
-        for mount in (b" / squashfs ro,", b" /opt/gizlet ext4 rw,", b" /home ext4 rw,", b" /opt/gizlet/runtime/1 squashfs ro,"):
+        for mount in (b" / squashfs ro,", b" /data ext4 rw,", b" /run/gizlet/profile ext4 rw,", b" /home ext4 rw,",
+                      b" /data/device/runtime/1 squashfs ro,"):
             console.expect(mount)
         console.expect(PROMPT)
         # Gizlet runtime 1 creates an ES 3 context with llvmpipe, since QEMU has no GPU.
-        console.enter("/opt/gizlet/runtime/1/bin/gizlet-run /opt/gizlet/runtime/1/bin/gizlet-gl-info")
+        console.enter("/data/device/runtime/1/bin/gizlet-run /data/device/runtime/1/bin/gizlet-gl-info")
         for line in (b"platform: surfaceless", b"renderer: llvmpipe", b"version: OpenGL ES 3.", b"render: ok"):
             console.expect(line)
         console.expect(PROMPT)
@@ -1138,9 +1282,9 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         check_store(console)
         check_services(console)
         check_runtime_reload(console)
-        console.command("mkdir /opt/gizlet/bin")
-        console.command("printf '%s\\n' '#!/bin/sh' 'echo hello-from-card' > /opt/gizlet/bin/hello && chmod 755 /opt/gizlet/bin/hello")
-        console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini")
+        console.command("mkdir /data/device/bin")
+        console.command("printf '%s\\n' '#!/bin/sh' 'echo hello-from-card' > /data/device/bin/hello && chmod 755 /data/device/bin/hello")
+        console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /data/device/boot.ini")
         console.command("echo persistent-user-file > /home/check")
         console.command("while [ ! -e /run/gizlet-late.done ]; do sleep 1; done")
         console.stop()
@@ -1161,7 +1305,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
     # flag; the first mount of the next boot checks and clears it.
     set_fat_dirty(private, parts["boot"][1], True)
     with boot(private, kernel, root) as console:
-        console.expect(b"starting /opt/gizlet/bin/hello")
+        console.expect(b"starting /data/device/bin/hello")
         console.expect(b"\r\nhello-from-card\r\n")
         console.expect(b"boot entry finished with status 0")
         console.expect(PROMPT)
@@ -1173,30 +1317,30 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         console.enter("dmesg | grep -c 'not properly unmounted'")
         console.expect(b"\r\n0\r\n")
         console.expect(PROMPT)
-        console.command("printf '%s\\n' '#!/usr/bin/bun' 'console.log(\"js-from-card\");' > /opt/gizlet/bin/hello.js "
-                        "&& chmod 755 /opt/gizlet/bin/hello.js "
-                        "&& printf '%s\\n' '[boot]' 'entry=bin/hello.js' > /opt/gizlet/boot.ini")
+        console.command("printf '%s\\n' '#!/usr/bin/bun' 'console.log(\"js-from-card\");' > /data/device/bin/hello.js "
+                        "&& chmod 755 /data/device/bin/hello.js "
+                        "&& printf '%s\\n' '[boot]' 'entry=bin/hello.js' > /data/device/boot.ini")
         console.enter("exit")
-        console.expect(b"starting /opt/gizlet/bin/hello.js")
+        console.expect(b"starting /data/device/bin/hello.js")
         console.expect(b"\r\njs-from-card\r\n")
         console.expect(b"boot entry finished with status 0")
         console.expect(PROMPT)
         # Exercise invalid configuration, a symlink and an executable rejected by the kernel.
-        console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' 'entry=again' > /opt/gizlet/boot.ini")
+        console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' 'entry=again' > /data/device/boot.ini")
         console.enter("exit")
         console.expect(b"invalid boot.ini")
         console.expect(PROMPT)
-        console.command("printf '%s\\n' '[boot]' 'entry=../bad' > /opt/gizlet/boot.ini")
+        console.command("printf '%s\\n' '[boot]' 'entry=../bad' > /data/device/boot.ini")
         console.enter("exit")
         console.expect(b"cannot open configured entry")
         console.expect(PROMPT)
-        console.command("ln -s /bin/true /opt/gizlet/bin/link")
-        console.command("printf '%s\\n' '[boot]' 'entry=bin/link' > /opt/gizlet/boot.ini")
+        console.command("ln -s /bin/true /data/device/bin/link")
+        console.command("printf '%s\\n' '[boot]' 'entry=bin/link' > /data/device/boot.ini")
         console.enter("exit")
         console.expect(b"cannot open configured entry")
         console.expect(PROMPT)
-        console.command("echo bad-format > /opt/gizlet/bin/bad && chmod 755 /opt/gizlet/bin/bad")
-        console.command("printf '%s\\n' '[boot]' 'entry=bin/bad' > /opt/gizlet/boot.ini")
+        console.command("echo bad-format > /data/device/bin/bad && chmod 755 /data/device/bin/bad")
+        console.command("printf '%s\\n' '[boot]' 'entry=bin/bad' > /data/device/boot.ini")
         console.enter("exit")
         console.expect(b"execute entry: Exec format error")
         console.expect(PROMPT)
@@ -1204,36 +1348,43 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         console.expect(b"\r\npersistent-user-file\r\n")
         console.expect(PROMPT)
         console.stop()
+    check_profiles(private, kernel, root)
     check_ssh(private, parts["boot"][1], kernel, root, work)
     with boot(private, kernel, root) as console:
         console.expect(PROMPT)
         check_services_gone(console)
         install_launcher_updates(console, pack_release)
-        console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /opt/gizlet/boot.ini")
+        console.command("printf '%s\\n' '[boot]' 'entry=bin/hello' > /data/device/boot.ini")
         console.stop()
     # The SD-card update keeps releases, settings and custom boot entries.
     subprocess.run(["bash", flash_card, "--update", flash, image, private], check=True)
     with boot(private, kernel, root) as console:
-        console.expect(b"starting /opt/gizlet/bin/hello")
+        console.expect(b"starting /data/device/bin/hello")
         console.expect(b"\r\nhello-from-card\r\n")
         console.expect(PROMPT)
         console.enter("gizlet target; cat /home/check; /usr/lib/gizlet/gizlet-switch timezone; "
-                      "test ! -e /opt/gizlet/launcher/releases/.install.interrupted && echo staging-cleaned")
+                      "test ! -e /data/device/launcher-releases/.install.interrupted && echo staging-cleaned")
         console.expect(b"\r\ncli-1.10.0\r\npersistent-user-file\r\nAmerica/New_York\r\nstaging-cleaned\r\n")
         console.expect(PROMPT)
-        # A CRLF boot.ini from older images still selects the matching Launcher.
-        console.command("printf '%s\\r\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
+        # A boot.ini written with CRLF line ends, as on Windows, still names its entry.
+        console.command("printf '%s\\r\\n' '[boot]' 'entry=bin/hello' > /data/device/boot.ini")
         console.enter("exit")
-        console.expect(b"using Launcher from /opt/gizlet/launcher/releases/1.10.0")
+        console.expect(b"starting /data/device/bin/hello")
+        console.expect(b"\r\nhello-from-card\r\n")
+        console.expect(PROMPT)
+        # Without boot.ini the selected Launcher starts: the newest release.
+        console.command("rm /data/device/boot.ini")
+        console.enter("exit")
+        console.expect(b"using Launcher from /data/device/launcher-releases/1.10.0")
         console.expect(b"\r\nGizlet launcher v1.10.0\r\n")
         console.expect(b"Gizlet launcher: no display")
         console.expect(PROMPT)
         # A boot.ini that is a FIFO is refused without blocking the session.
-        console.command("rm /opt/gizlet/boot.ini && mkfifo /opt/gizlet/boot.ini")
+        console.command("mkfifo /data/device/boot.ini")
         console.enter("exit")
         console.expect(b"invalid boot.ini")
         console.expect(PROMPT)
-        console.command("rm /opt/gizlet/boot.ini")
+        console.command("rm /data/device/boot.ini")
         console.stop()
     print("signed updates select a matching Launcher and CLI and keep custom entries and user data")
     check_tf2(private, kernel, root, work)

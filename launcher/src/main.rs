@@ -9,7 +9,8 @@
 //! - `GIZLET_FULLSCREEN=1`: a borderless full-screen window.
 //! - `GIZLET_FAKE_DEVICES=1`: simulated battery, backlight, volume, Wi-Fi and ssh;
 //!   with `GIZLET_FAKE_CHARGING=1` the battery charges.
-//! - `GIZLET_LAUNCHER_DATA`: the folder for settings.
+//! - `GIZLET_PREFIX`: the data root, with `device/` and `profiles/` (see
+//!   `gizlet_launcher::profiles`); `/data` on Gizlet OS.
 //! - `GIZLET_SCRIPT`: scripted input, see `script.rs`.
 
 mod app;
@@ -86,7 +87,7 @@ fn has_display() -> bool {
 
 /// Prints one line per device, for tests and for looking at a device over ssh.
 fn probe() {
-    let s = system::probe(settings::data_dir());
+    let s = system::probe(apps::prefix());
     let show = |name: &str, v: String| println!("{name}: {v}");
     show("battery", format!("{:?}", s.battery));
     show("brightness", format!("{:?}", s.brightness));
@@ -122,7 +123,7 @@ fn seed(app: &app::App) -> Vec<String> {
 }
 
 fn run(release: Option<String>) {
-    let mut app = app::App::new(settings::data_dir(), release);
+    let mut app = app::App::new(release);
     app.can_quit = true;
     let (w, h) = window_size();
     let mut flags = F::FLAG_VSYNC_HINT as u32;
@@ -161,7 +162,7 @@ fn run(release: Option<String>) {
     let mut drawn: Option<(f64, u64)> = None;
     let mut settling = false;
 
-    while app.installing_update() || !unsafe { ffi::WindowShouldClose() } {
+    while !app.can_leave() || !unsafe { ffi::WindowShouldClose() } {
         // Measured here rather than by raylib, which counts drawn frames only.
         let now = unsafe { ffi::GetTime() };
         let dt = ((now - last) as f32).min(0.1);
@@ -173,7 +174,7 @@ fn run(release: Option<String>) {
             app.gamepads = controls.gamepads();
             app.refresh_apps();
             // `gizlet start` asks over ssh: the start script runs the app next.
-            if KMS && !app.installing_update() && std::path::Path::new(apps::LAUNCH_REQUEST).exists() {
+            if KMS && app.can_leave() && std::path::Path::new(apps::LAUNCH_REQUEST).exists() {
                 break;
             }
         }
@@ -181,7 +182,7 @@ fn run(release: Option<String>) {
 
         let mut shot = None;
         match script.step(&mut input, &mut pad) {
-            Some(script::Step::Quit) if !app.installing_update() => break,
+            Some(script::Step::Quit) if app.can_leave() => break,
             Some(script::Step::Quit) => {}
             Some(script::Step::Shot(path)) => shot = Some(path),
             None => {}

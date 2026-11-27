@@ -25,17 +25,11 @@ fi
 export GIZLET_RUNNING_LAUNCHER
 runtime_runner() {
     readlink -e /run/gizlet-ota-runtime/bin/gizlet-run ||
-        readlink -e /opt/gizlet/runtime/1-current/bin/gizlet-run ||
-        printf '%s\n' /opt/gizlet/runtime/1/bin/gizlet-run
+        readlink -e /data/device/runtime/1-current/bin/gizlet-run ||
+        printf '%s\n' /data/device/runtime/1/bin/gizlet-run
 }
 # Options such as --probe pass straight through.
 [ $# -eq 0 ] || exec "$(runtime_runner)" "$launcher" "$@"
-# Bases with gizlet-services.service start the installed services at boot.
-# On older ones, which update the Launcher over the air, it does so once a boot.
-if [ ! -e /usr/lib/systemd/system/gizlet-services.service ] && [ ! -e /run/gizlet-services.booted ]; then
-    : > /run/gizlet-services.booted
-    "$cli" service boot || :
-fi
 printf '\033[2J\033[H\033[?25l' 2>/dev/null > /dev/tty1 || :
 while :; do
     rm -f "$request"

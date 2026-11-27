@@ -61,7 +61,7 @@ if [ -n "$ssid" ]; then
         say "Wi-Fi network $ssid saved"
     fi
     # The switch file is what `gizlet-switch wifi on` keeps; gizlet-switch boot starts iwd next.
-    mkdir -p /run/gizlet-data/system/switches && : > /run/gizlet-data/system/switches/wifi
+    mkdir -p /data/device/settings/switches && : > /data/device/settings/switches/wifi
 fi
 password=$(value ssh_password)
 if [ -n "$password" ]; then
@@ -72,8 +72,8 @@ if [ -n "$zone" ]; then
     "$switch" timezone "$zone" && say "time zone set to $zone"
 fi
 case "$(value ssh)" in
-    on) mkdir -p /run/gizlet-data/system/switches && : > /run/gizlet-data/system/switches/ssh && say 'ssh turned on' ;;
-    off) rm -f /run/gizlet-data/system/switches/ssh && say 'ssh turned off' ;;
+    on) mkdir -p /data/device/settings/switches && : > /data/device/settings/switches/ssh && say 'ssh turned on' ;;
+    off) rm -f /data/device/settings/switches/ssh && say 'ssh turned off' ;;
 esac
 sync
 exit 0

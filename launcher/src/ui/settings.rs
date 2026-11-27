@@ -43,6 +43,7 @@ fn category_icon(p: &Painter, cat: Category, cx: f32, cy: f32, s: f32, c: Color,
         Category::Language => icons::globe(p, cx, cy, s, c),
         Category::Time => icons::clock(p, cx, cy, s, c),
         Category::System => icons::chip(p, cx, cy, s, c, hole),
+        Category::Profiles => icons::person(p, cx, cy, s, c),
     }
 }
 

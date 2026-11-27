@@ -10,6 +10,7 @@ use crate::sound::Sfx;
 use crate::system::{valid_hostname, Event, Missing, PowerAction, Request, Snapshot, System, WifiNetwork};
 use crate::zones::{Zone, ZONES};
 use gizlet_launcher::ota;
+use gizlet_launcher::profiles::{self, Profile, Profiles};
 use gizlet_launcher::services::{self, Service};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
@@ -87,10 +88,11 @@ pub enum Category {
     Language,
     Time,
     System,
+    Profiles,
 }
 
 impl Category {
-    pub const ALL: [Category; 9] = [
+    pub const ALL: [Category; 10] = [
         Category::Network,
         Category::Ssh,
         Category::Display,
@@ -100,6 +102,7 @@ impl Category {
         Category::Language,
         Category::Time,
         Category::System,
+        Category::Profiles,
     ];
 
     pub fn title(self) -> T {
@@ -113,6 +116,7 @@ impl Category {
             Category::Language => T::CatLanguage,
             Category::Time => T::CatTime,
             Category::System => T::CatSystem,
+            Category::Profiles => T::CatProfiles,
         }
     }
 }
@@ -146,6 +150,9 @@ pub enum ItemId {
     ServiceRunning(String),
     /// Whether the service starts at boot.
     ServiceBoot(String),
+    /// A profile, by ID: opens what can be done with it.
+    Profile(String),
+    ProfileCreate,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -211,6 +218,13 @@ pub enum DialogAction {
     WifiDisconnect,
     WifiForget(String),
     InstallUpdate,
+    /// Asks to switch to the profile, then to [`DialogAction::ProfileSwitch`].
+    ProfileSwitchAsk(String),
+    ProfileSwitch(String),
+    ProfileRename(String),
+    /// Asks to delete the profile, then to [`DialogAction::ProfileDelete`].
+    ProfileDeleteAsk(String),
+    ProfileDelete(String),
     Close,
 }
 
@@ -357,15 +371,16 @@ pub struct ServicesUi {
     asked: f64,
     /// `GIZLET_FAKE_DEVICES=1`: services simulated in memory.
     simulated: bool,
+    prefix: PathBuf,
 }
 
 /// How often the list is read again while Services is open.
 const SERVICES_REFRESH: f64 = 4.0;
 
 impl ServicesUi {
-    fn new() -> ServicesUi {
+    fn new(prefix: PathBuf) -> ServicesUi {
         let simulated = std::env::var("GIZLET_FAKE_DEVICES").is_ok_and(|v| v == "1");
-        ServicesUi { list: None, work: None, switching: None, asked: f64::NEG_INFINITY, simulated }
+        ServicesUi { list: None, work: None, switching: None, asked: f64::NEG_INFINITY, simulated, prefix }
     }
 
     fn busy(&self) -> bool {
@@ -394,8 +409,9 @@ impl ServicesUi {
             }
             let _ = send.send(ServicesDone { failed: None, list: Ok(list) });
         } else {
+            let prefix = self.prefix.clone();
             std::thread::spawn(move || {
-                let library = Library::open();
+                let library = Library::new(prefix);
                 let failed = match &op {
                     ServiceOp::Refresh => None,
                     ServiceOp::Run(id, true) => library.start_service(id).err(),
@@ -422,6 +438,36 @@ impl ServicesUi {
     }
 }
 
+/// The profiles as the Profiles page shows them, read again after each change.
+pub struct ProfilesUi {
+    pub list: Vec<Profile>,
+    pub current: Option<String>,
+    pub next: Option<String>,
+    /// The profile being switched to while the current one's services stop.
+    switching: Option<ProfileSwitch>,
+}
+
+struct ProfileSwitch {
+    id: String,
+    work: Option<Receiver<Result<(), String>>>,
+}
+
+impl ProfilesUi {
+    fn read(prefix: &std::path::Path) -> ProfilesUi {
+        let profiles = Profiles::new(prefix.to_path_buf());
+        let current = profiles.current_id().map_err(|e| eprintln!("gizlet: {e}")).ok();
+        ProfilesUi { list: profiles.list(), current, next: profiles.next_id(), switching: None }
+    }
+
+    fn find(&self, id: &str) -> Option<&Profile> {
+        self.list.iter().find(|p| p.id == id)
+    }
+
+    pub fn switching_to(&self) -> Option<&Profile> {
+        self.switching.as_ref().and_then(|switch| self.find(&switch.id))
+    }
+}
+
 /// Two services for working on the page with `GIZLET_FAKE_DEVICES=1`.
 fn simulated_services() -> Vec<Service> {
     let service = |id: &str, name: &str, zh: &str, state, boot| {
@@ -430,7 +476,7 @@ fn simulated_services() -> Vec<Service> {
             "target": apps::device_target(), "tier": "lite", "entry": "bin/service",
         });
         let manifest = apps::Manifest::parse(&manifest.to_string()).expect("a valid manifest");
-        let package = apps::App { dir: PathBuf::from("/opt/gizlet/services").join(id), manifest, installed: std::time::SystemTime::UNIX_EPOCH };
+        let package = apps::App { dir: PathBuf::from("/data/device/packages/services").join(id), manifest, installed: std::time::SystemTime::UNIX_EPOCH };
         Service { package, boot, state, pid: None }
     };
     vec![
@@ -452,6 +498,8 @@ struct Place {
 }
 
 pub struct App {
+    /// The data root, with `device/` and `profiles/`: `/data` on Gizlet OS.
+    prefix: PathBuf,
     pub settings: Settings,
     settings_path: PathBuf,
     pub power: Power,
@@ -473,6 +521,7 @@ pub struct App {
     system: System,
     updates: Option<Updates>,
     pub services: ServicesUi,
+    pub profiles: ProfilesUi,
     pub wifi: WifiUi,
     pub ssh_switching: Option<bool>,
     /// The time zone being set, until the device reports it.
@@ -495,10 +544,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(data_dir: PathBuf, release: Option<String>) -> App {
-        let settings_path = data_dir.join("settings.ini");
+    pub fn new(release: Option<String>) -> App {
+        App::with_prefix(apps::prefix(), release)
+    }
+
+    pub fn with_prefix(prefix: PathBuf, release: Option<String>) -> App {
+        let library = Library::new(prefix.clone());
+        let settings_path = crate::settings::settings_path(library.profile());
         let settings = Settings::load(&settings_path);
-        let library = Library::open();
         let apps_stamp = library.stamp();
         let apps = library.scan();
         let home_row = if apps.iter().any(|app| settings.favorites.iter().any(|id| id == app.id())) {
@@ -507,13 +560,15 @@ impl App {
             HomeRow::Buttons
         };
         App {
+            prefix: prefix.clone(),
             settings,
             settings_path,
             power: Power::load(Power::path()),
             release,
-            system: System::start(data_dir),
+            system: System::start(prefix.clone()),
             updates: None,
-            services: ServicesUi::new(),
+            services: ServicesUi::new(prefix.clone()),
+            profiles: ProfilesUi::read(&prefix),
             pages: vec![Page::Home],
             home_row,
             home_button: HomeButton::ALL.iter().position(|button| *button == HomeButton::Settings).unwrap(),
@@ -555,6 +610,14 @@ impl App {
         self.updates.as_ref().is_some_and(|updates| matches!(updates.state, UpdateState::Installing(_)))
     }
 
+    pub fn switching_profile(&self) -> bool {
+        self.profiles.switching.is_some()
+    }
+
+    pub fn can_leave(&self) -> bool {
+        !self.installing_update() && !self.switching_profile()
+    }
+
     pub fn t(&self, t: T) -> &'static str {
         t.get(self.lang())
     }
@@ -587,6 +650,7 @@ impl App {
             || self.wifi.switching.is_some()
             || self.ssh_switching.is_some()
             || self.zone_switching.is_some()
+            || self.profiles.switching.is_some()
     }
 
     pub fn toast(&mut self, text: impl Into<String>) {
@@ -783,6 +847,7 @@ impl App {
             }
         }
         self.update_services();
+        self.update_profiles();
         if !events.is_empty() {
             let focused = self.focused_item();
             for event in events {
@@ -825,8 +890,144 @@ impl App {
         }
     }
 
+    /// Takes in a finished switch: on Gizlet OS the device is restarting;
+    /// elsewhere the launcher reads the new profile's settings and data.
+    fn update_profiles(&mut self) {
+        let Some(switch) = &mut self.profiles.switching else {
+            if !profiles::switch_restarts() {
+                let next = Profiles::new(self.prefix.clone()).next_id();
+                if next.is_some() && next != self.profiles.current {
+                    self.reload_profile();
+                    self.revision += 1;
+                }
+            }
+            return;
+        };
+        let Some(work) = &switch.work else { return };
+        let result = match work.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => Err("the switch stopped".into()),
+        };
+        let id = switch.id.clone();
+        self.revision += 1;
+        match result {
+            Ok(()) if profiles::switch_restarts() => switch.work = None,
+            Ok(()) => {
+                self.profiles.switching = None;
+                self.reload_profile();
+                let name = self.profile_label_of(&id);
+                self.toast(T::ProfileSwitched.fmt(self.lang(), &[&name]));
+            }
+            Err(e) => {
+                self.profiles.switching = None;
+                self.profiles = ProfilesUi::read(&self.prefix);
+                self.toast(T::Failed.fmt(self.lang(), &[&e]));
+            }
+        }
+    }
+
+    /// Reads everything kept in the profile again, after a switch where the device does not restart.
+    fn reload_profile(&mut self) {
+        self.library = Library::new(self.prefix.clone());
+        self.settings_path = crate::settings::settings_path(self.library.profile());
+        self.settings = Settings::load(&self.settings_path);
+        self.apps_stamp = self.library.stamp();
+        self.apps = self.library.scan();
+        self.services = ServicesUi::new(self.prefix.clone());
+        self.profiles = ProfilesUi::read(&self.prefix);
+        self.home_tile = 0;
+        self.refocus_favorites(None);
+    }
+
+    /// A profile's name as shown, the default one's in the current language.
+    pub fn profile_label(&self, profile: &Profile) -> String {
+        if profile.name.is_empty() {
+            self.t(T::ProfileDefault).into()
+        } else {
+            profile.name.clone()
+        }
+    }
+
+    fn profile_label_of(&self, id: &str) -> String {
+        self.profiles.find(id).map(|p| self.profile_label(p)).unwrap_or_else(|| id.into())
+    }
+
+    /// What can be done with a profile: switch to it, rename it or delete it.
+    fn profile_menu(&mut self, id: &str) {
+        let Some(profile) = self.profiles.find(id) else { return };
+        let title = self.profile_label(profile);
+        let current = self.profiles.current.as_deref() == Some(id);
+        let mut buttons = Vec::new();
+        if !current {
+            buttons.push((self.t(T::ProfileSwitch).into(), DialogAction::ProfileSwitchAsk(id.into())));
+        }
+        buttons.push((self.t(T::ProfileRename).into(), DialogAction::ProfileRename(id.into())));
+        if !current && self.profiles.next.as_deref() != Some(id) {
+            buttons.push((self.t(T::Delete).into(), DialogAction::ProfileDeleteAsk(id.into())));
+        }
+        buttons.push((self.t(T::Close).into(), DialogAction::Close));
+        self.dialog = Some(Dialog { title, buttons, focus: 0, opened: self.time });
+    }
+
+    /// Stops the current profile's services on a worker thread, names the
+    /// new profile for the next boot and, on Gizlet OS, restarts the device.
+    fn switch_profile(&mut self, id: String) {
+        if self.profiles.switching.is_some() {
+            return;
+        }
+        if self.installing_update() {
+            self.toast(self.t(T::OtaWait));
+            return;
+        }
+        let (send, work) = mpsc::channel();
+        let target = id.clone();
+        let prefix = self.prefix.clone();
+        std::thread::spawn(move || {
+            let result = profiles::prepare_switch(&Library::new(prefix.clone()), &Profiles::new(prefix), &target).map(drop);
+            let result = result.and_then(|()| if profiles::switch_restarts() { profiles::restart() } else { Ok(()) });
+            let _ = send.send(result);
+        });
+        self.profiles.switching = Some(ProfileSwitch { id, work: Some(work) });
+    }
+
+    fn profile_changed(&mut self, result: Result<Profile, String>, done: T) {
+        self.profiles = ProfilesUi::read(&self.prefix);
+        match result {
+            Ok(profile) => {
+                let name = self.profile_label(&profile);
+                self.toast(done.fmt(self.lang(), &[&name]));
+            }
+            Err(e) => self.toast(T::Failed.fmt(self.lang(), &[&e])),
+        }
+    }
+
+    fn profile_items(&self, items: &mut Vec<Item>) {
+        let l = self.lang();
+        let t = |k: T| k.get(l).to_string();
+        if let Some(target) = self.profiles.switching_to() {
+            let name = self.profile_label(target);
+            items.push(Item::new(ItemId::None, T::ProfileSwitching.fmt(l, &[&name]), ItemValue::Busy));
+        }
+        for profile in &self.profiles.list {
+            let state = if self.profiles.current.as_deref() == Some(profile.id.as_str()) {
+                t(T::ProfileCurrent)
+            } else if self.profiles.next.as_deref() == Some(profile.id.as_str()) {
+                t(T::ProfileNextBoot)
+            } else {
+                String::new()
+            };
+            items.push(Item::new(ItemId::Profile(profile.id.clone()), self.profile_label(profile), ItemValue::Info(state)));
+        }
+        items.push(Item::new(ItemId::ProfileCreate, t(T::ProfileCreate), ItemValue::Button));
+        items.push(Item::notice(t(T::ProfileAbout), t(T::ProfileAboutBody)));
+    }
+
     /// This frame's input on the open page, menu or keyboard. False to quit.
     fn handle_input(&mut self, input: &Input, dt: f32) -> bool {
+        if self.switching_profile() {
+            return true;
+        }
         if self.keyboard.is_some() {
             self.keyboard_input(input);
             return true;
@@ -1327,6 +1528,11 @@ impl App {
                 let current = self.snapshot.as_ref().map(|s| s.hostname.clone()).unwrap_or_default();
                 self.keyboard = Some(Keyboard::hostname(self.t(T::HostnameTitle).into(), &current));
             }
+            ItemId::Profile(id) if self.profiles.switching.is_none() => self.profile_menu(id),
+            ItemId::ProfileCreate if self.profiles.switching.is_none() => {
+                self.keyboard = Some(Keyboard::profile_name(self.t(T::ProfileNameTitle).into(), None, ""));
+            }
+            ItemId::Profile(_) | ItemId::ProfileCreate => {}
             ItemId::CheckUpdate => {
                 if let Some(updates) = &mut self.updates { updates.check(); }
             }
@@ -1455,6 +1661,30 @@ impl App {
                         DialogAction::InstallUpdate => {
                             if let Some(updates) = &mut self.updates { updates.install(); }
                         }
+                        DialogAction::ProfileSwitchAsk(id) => {
+                            let name = self.profile_label_of(&id);
+                            let (title, go) = if profiles::switch_restarts() {
+                                (T::ProfileSwitchConfirm.fmt(self.lang(), &[&name]), self.t(T::ProfileSwitchRestart))
+                            } else {
+                                (name, self.t(T::ProfileSwitch))
+                            };
+                            let buttons = vec![(self.t(T::Close).into(), DialogAction::Close), (go.into(), DialogAction::ProfileSwitch(id))];
+                            self.dialog = Some(Dialog { title, buttons, focus: 0, opened: self.time });
+                        }
+                        DialogAction::ProfileSwitch(id) => self.switch_profile(id),
+                        DialogAction::ProfileRename(id) => {
+                            let name = self.profiles.find(&id).map(|p| p.name.clone()).unwrap_or_default();
+                            self.keyboard = Some(Keyboard::profile_name(self.t(T::ProfileNameTitle).into(), Some(id), &name));
+                        }
+                        DialogAction::ProfileDeleteAsk(id) => {
+                            let title = T::ProfileDeleteConfirm.fmt(self.lang(), &[&self.profile_label_of(&id)]);
+                            let buttons = vec![(self.t(T::Close).into(), DialogAction::Close), (self.t(T::Delete).into(), DialogAction::ProfileDelete(id))];
+                            self.dialog = Some(Dialog { title, buttons, focus: 0, opened: self.time });
+                        }
+                        DialogAction::ProfileDelete(id) => {
+                            let result = Profiles::new(self.prefix.clone()).delete(&id);
+                            self.profile_changed(result, T::ProfileDeleted);
+                        }
                         DialogAction::Close => {}
                     }
                     return true;
@@ -1505,6 +1735,17 @@ impl App {
                 self.toast(self.t(T::HostnameInvalid));
                 return;
             }
+            if let keyboard::Purpose::ProfileName(id) = &purpose {
+                if profiles::name_problem(&text).is_some() {
+                    self.toast(self.t(T::ProfileNameInvalid));
+                    return;
+                }
+                let taken = self.profiles.list.iter().any(|p| Some(&p.id) != id.as_ref() && self.profile_label(p).to_lowercase() == text.to_lowercase());
+                if taken {
+                    self.toast(self.t(T::ProfileNameTaken));
+                    return;
+                }
+            }
             self.keyboard = None;
             match purpose {
                 // The same name is not stored, so a default one keeps following the adapter.
@@ -1515,6 +1756,14 @@ impl App {
                     self.toast(saved);
                 }
                 keyboard::Purpose::WifiPassphrase(ssid) => self.connect(&ssid, Some(text)),
+                keyboard::Purpose::ProfileName(None) => {
+                    let result = Profiles::new(self.prefix.clone()).create(&text);
+                    self.profile_changed(result, T::ProfileCreated);
+                }
+                keyboard::Purpose::ProfileName(Some(id)) => {
+                    let result = Profiles::new(self.prefix.clone()).rename(&id, &text);
+                    self.profile_changed(result, T::ProfileRenamed);
+                }
                 keyboard::Purpose::SshPassword if text.is_empty() => {}
                 keyboard::Purpose::SshPassword => {
                     self.system.send(Request::SshPassword(text));
@@ -1696,6 +1945,7 @@ impl App {
                     Err(m) => items.push(self.missing(m, T::TimeZone, None)),
                 }
             }
+            Category::Profiles => self.profile_items(&mut items),
             Category::System => {
                 self.update_items(&mut items);
                 items.push(Item::section(t(T::About)));
@@ -1913,6 +2163,13 @@ mod tests {
         assert_eq!(grid_step(16, 17, Action::L), 1);
     }
 
+    /// A data root of its own, so a test never touches the user's launcher folder.
+    fn test_prefix(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gizlet-app-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
     fn installed() -> ota::Installed {
         ota::Installed {
             launcher: "1.2.3".into(),
@@ -1924,8 +2181,47 @@ mod tests {
     }
 
     #[test]
+    fn profile_switch_holds_launcher_open() {
+        let prefix = test_prefix("switch-holds-launcher");
+        let mut app = App::with_prefix(prefix.clone(), None);
+        let (_send, work) = mpsc::channel();
+        app.profiles.switching = Some(ProfileSwitch { id: "0123456789abcdef".into(), work: Some(work) });
+        app.dialog = Some(Dialog {
+            title: String::new(),
+            buttons: vec![(String::new(), DialogAction::Quit)],
+            focus: 0,
+            opened: 0.0,
+        });
+        let input = Input { pressed: vec![Action::A], ..Input::default() };
+        assert!(!app.can_leave());
+        assert!(app.update(&input, 0.01));
+        assert!(app.dialog.is_some());
+        let _ = std::fs::remove_dir_all(prefix);
+    }
+
+    #[cfg(not(feature = "gizlet-os"))]
+    #[test]
+    fn launcher_reloads_profile_after_external_switch() {
+        let prefix = test_prefix("external-profile-switch");
+        let mut app = App::with_prefix(prefix.clone(), None);
+        let profiles = Profiles::new(prefix.clone());
+        let profile = profiles.create("Ann").unwrap();
+        let path = crate::settings::settings_path(&profiles.dir().join(&profile.id));
+        let settings = Settings { theme: Theme::Light, favorites: vec!["dev.example.game".into()], ..Settings::default() };
+        settings.save(&path).unwrap();
+        profiles.set_next(&profile.id).unwrap();
+
+        assert!(app.update(&Input::default(), 0.01));
+        assert_eq!(app.profiles.current.as_deref(), Some(profile.id.as_str()));
+        assert_eq!(app.settings_path, path);
+        assert_eq!(app.settings, settings);
+        let _ = std::fs::remove_dir_all(prefix);
+    }
+
+    #[test]
     fn ota_spinner_keeps_only_system_settings_animating() {
-        let mut app = App::new(std::env::temp_dir(), None);
+        let prefix = test_prefix("ota-spinner");
+        let mut app = App::with_prefix(prefix.clone(), None);
         let (send, work) = mpsc::channel();
         app.updates = Some(Updates { installed: None, work: Some(work), state: UpdateState::Idle });
         assert!(!app.animating());
@@ -1947,11 +2243,13 @@ mod tests {
         send.send(UpdateEvent::Staged(Ok("v1.2.4".into()))).unwrap();
         assert!(app.updates.as_mut().unwrap().poll());
         assert!(!app.animating());
+        let _ = std::fs::remove_dir_all(prefix);
     }
 
     #[test]
     fn system_settings_show_one_launcher_version() {
-        let mut app = App::new(std::env::temp_dir(), Some("v1.2.3".into()));
+        let prefix = test_prefix("one-version");
+        let mut app = App::with_prefix(prefix.clone(), Some("v1.2.3".into()));
         app.snapshot = Some(crate::system::probe(std::env::temp_dir()));
         let version_rows = |app: &App| {
             app.settings_items(Category::System).into_iter()
@@ -1966,5 +2264,6 @@ mod tests {
         app.updates.as_mut().unwrap().installed = Some(installed());
         assert_eq!(version_rows(&app), vec![Item::info(app.t(T::OtaLauncher), "v1.2.3")]);
         assert!(app.settings_items(Category::System).contains(&Item::info(app.t(T::OtaRuntime), "v1.2.2")));
+        let _ = std::fs::remove_dir_all(prefix);
     }
 }

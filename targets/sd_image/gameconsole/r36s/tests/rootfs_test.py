@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).parent))
 import card  # noqa: E402
@@ -104,10 +105,10 @@ def check_flash_update(flash, flash_card, image, work):
     with open(image, "rb") as source, open(card_file, "rb") as target:
         assert source.read(offset)[512:] == target.read(offset)[512:], "the update did not write the image's system"
     assert card.partitions(card_file)[0]["data"][2] == size, "the update changed the data partition's size"
-    # Another data filesystem (here its UUID changed) is refused, and nothing is written.
+    # A card with the pre-profiles data UUID is refused before writing.
     with open(card_file, "r+b") as target:
         target.seek(offset + 1024 + 0x68)
-        target.write(b"\0")
+        target.write(UUID("17605036-fda0-4633-a95b-2ed27409a90c").bytes)
     before = digest(card_file, 0, offset + size)
     refused = subprocess.run(["bash", flash_card, "--update", flash, image, card_file], capture_output=True, text=True)
     assert refused.returncode != 0 and "cannot be updated" in refused.stderr, refused.stderr
@@ -129,13 +130,14 @@ def main():
     assert output("blkid", "-p", "-s", "UUID", "-o", "value", data).strip() == config["data_uuid"], "data UUID"
     def names(directory):
         return {line.split("/")[5] for line in output("debugfs", "-R", f"ls -p {directory}", data).splitlines() if line.count("/") >= 5}
-    # A fresh card holds only Gizlet runtime 1, a SquashFS file mounted at boot.
-    expected = {"/gizlet": {"runtime"}, "/gizlet/runtime": {"1.sqfs"}, "/home": set()}
+    # A fresh card holds only Gizlet runtime 1, a SquashFS file mounted at boot,
+    # and no profile yet: the first boot creates one.
+    expected = {"/device": {"runtime"}, "/device/runtime": {"1.sqfs"}, "/profiles": set()}
     for directory, entries in expected.items():
         assert "Type: directory" in output("debugfs", "-R", f"stat {directory}", data), directory
         assert names(directory) - {".", ".."} == entries, f"{directory} holds {sorted(names(directory))}"
     runtime = work / "runtime-1.sqfs"
-    run("debugfs", "-R", f"dump /gizlet/runtime/1.sqfs {runtime}", data)
+    run("debugfs", "-R", f"dump /device/runtime/1.sqfs {runtime}", data)
     listing = output("unsquashfs", "-l", runtime)
     for path in ("lib/ld-linux-aarch64.so.1", "lib/libEGL.so.1", "lib/libGLESv2.so.2", "lib/libgbm.so.1",
                  "lib/libraylib.so.600", "lib/dri/rockchip_dri.so",
@@ -213,7 +215,7 @@ def main():
     # First boot grows the data partition and its filesystem.
     for tool in ("usr/sbin/sfdisk", "usr/bin/partx", "usr/sbin/resize2fs"):
         assert (root / tool).exists(), f"/{tool}"
-    for directory in ("opt/gizlet", "home", "media/tf2"):
+    for directory in ("data", "home", "media/tf2"):
         assert (root / directory).is_dir(), f"/{directory}"
     # The TF2 card: udev starts gizlet-tf2@.service for filesystems on MMC disks,
     # and the script finds and mounts the card with these tools.

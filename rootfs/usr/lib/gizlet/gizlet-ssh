@@ -24,7 +24,7 @@ else
     say 'no authorized_keys on the boot partition; only the password logs in'
 fi
 keys=$dir
-[ -f /run/gizlet-data.ready ] && keys=/run/gizlet-data/system/ssh
+[ -f /run/gizlet-data.ready ] && keys=/data/device/settings/ssh
 key=$keys/ssh_host_ed25519_key
 [ -f "$key" ] || ssh-keygen -q -t ed25519 -N '' -C '' -f "$key" || say 'cannot create the ssh host key'
 [ "$keys" = "$dir" ] || ln -sf "$key" "$dir/ssh_host_ed25519_key"

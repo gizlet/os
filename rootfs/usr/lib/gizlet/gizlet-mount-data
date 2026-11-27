@@ -1,9 +1,12 @@
 #!/bin/sh
-# Mounts the data partition: ext4 partition 3 of the very disk that supplied
-# the read-only base (partition 2), with the image's filesystem UUID. Its
-# gizlet/ and home/ directories become /opt/gizlet and /home; state that must
-# survive a reboot (ssh host key, WiFi networks, Bluetooth pairings) lives
-# under system/.
+# Mounts the data partition at /data: ext4 partition 3 of the very disk that
+# supplied the read-only base (partition 2), with the image's filesystem UUID.
+# device/ holds what every profile shares: the installed packages, runtimes,
+# Launcher releases and the device's settings (ssh host key, Wi-Fi networks,
+# Bluetooth pairings, switches) under settings/. profiles/<id>/ holds each
+# local profile. The profile device/boot-profile names, or else the oldest,
+# or else a new one, is mounted at /run/gizlet/profile and its home/ at
+# /home, and its ID written to /run/gizlet/profile.id.
 #
 # The image's data filesystem is small. The card writers (flash.sh, flash.ps1)
 # extend its partition to the end of the card and grow the filesystem to fill
@@ -62,7 +65,7 @@ for byte in $(od -An -v -tx1 -j 1024 -N 120 "$data_dev"); do
     esac
     i=$((i + 1))
 done
-if [ "$magic" != ef53 ] || [ "$uuid" != 17605036-fda0-4633-a95b-2ed27409a90c ]; then
+if [ "$magic" != ef53 ] || [ "$uuid" != cef58f4f-a7a3-40ac-9cb3-bd8d89aab65f ]; then
     say 'unexpected data filesystem'
     exit 1
 fi
@@ -104,8 +107,7 @@ if [ $(( a * 512 - fs_bytes )) -gt 1048576 ]; then
     fi
     step grown
 fi
-store=/run/gizlet-data
-mkdir -m 0700 "$store"
+store=/data
 # noinit_itable: the kernel would otherwise zero the inode tables of a grown
 # filesystem in the background, tens of seconds of SD card writes on the first
 # boot that stall everything else, the launcher's install among them. The
@@ -124,25 +126,72 @@ if [ "$writable" != yes ]; then
     umount "$store"
     exit 1
 fi
-for directory in gizlet home; do
+for directory in device profiles; do
     if [ ! -d "$store/$directory" ] || [ -L "$store/$directory" ]; then
         say "invalid data directory $directory"
         umount "$store"
         exit 1
     fi
 done
-mount -o bind "$store/gizlet" /opt/gizlet || { umount "$store"; exit 1; }
-mount -o bind "$store/home" /home || { umount /opt/gizlet; umount "$store"; exit 1; }
+device=$store/device
+settings=$device/settings
 # These directories exist after the first boot, so mkdir need not start then.
-[ -d "$store/system/ssh" ] && [ -d "$store/system/iwd" ] && [ -d "$store/system/bluetooth" ] ||
-    mkdir -p -m 0700 "$store/system/ssh" "$store/system/iwd" "$store/system/bluetooth"
+[ -d "$settings/ssh" ] && [ -d "$settings/iwd" ] && [ -d "$settings/bluetooth" ] ||
+    mkdir -p -m 0700 "$settings/ssh" "$settings/iwd" "$settings/bluetooth"
 [ -d /var/lib/iwd ] && [ -d /var/lib/bluetooth ] || mkdir -p /var/lib/iwd /var/lib/bluetooth
-mount -o bind "$store/system/iwd" /var/lib/iwd
-mount -o bind "$store/system/bluetooth" /var/lib/bluetooth
+mount -o bind "$settings/iwd" /var/lib/iwd
+mount -o bind "$settings/bluetooth" /var/lib/bluetooth
+
+# The profile. An ID is 16 lowercase hexadecimal digits (launcher/src/profiles.rs).
+profiles=$store/profiles
+valid_profile() {
+    case $1 in
+        '' | *[!0-9a-f]*) return 1 ;;
+        ????????????????) ;;
+        *) return 1 ;;
+    esac
+    [ -d "$profiles/$1" ] && [ ! -L "$profiles/$1" ] && [ -f "$profiles/$1/profile.ini" ]
+}
+profile=
+[ -f "$device/boot-profile" ] && read -r profile < "$device/boot-profile" || :
+if ! valid_profile "$profile"; then
+    [ -z "$profile" ] || say "the profile $profile is missing"
+    profile= oldest=
+    for dir in "$profiles"/*; do
+        valid_profile "${dir##*/}" || continue
+        created=0
+        while IFS='= ' read -r key value; do
+            [ "$key" = created ] && case $value in '' | *[!0-9]*) ;; *) created=$value ;; esac
+        done < "$dir/profile.ini"
+        if [ -z "$profile" ] || [ "$created" -lt "$oldest" ]; then
+            profile=${dir##*/} oldest=$created
+        fi
+    done
+    if [ -z "$profile" ]; then
+        IFS=- read -r a b c rest < /proc/sys/kernel/random/uuid
+        profile=$a$b$c
+        new=$profiles/.new-$profile
+        mkdir -p "$new/launcher" "$new/apps" "$new/services" "$new/home"
+        printf 'name = \ncreated = 0\n' > "$new/profile.ini"
+        mv "$new" "$profiles/$profile"
+        say "created the profile $profile"
+    fi
+    printf '%s\n' "$profile" > "$device/boot-profile.new"
+    mv -f "$device/boot-profile.new" "$device/boot-profile"
+    sync -f "$device"
+fi
+current=$profiles/$profile
+for directory in launcher apps services home; do
+    [ -d "$current/$directory" ] || mkdir "$current/$directory"
+done
+[ -d /run/gizlet/profile ] || mkdir -p /run/gizlet/profile
+mount -o bind "$current" /run/gizlet/profile || { say 'cannot mount the profile'; exit 1; }
+mount -o bind "$current/home" /home || { say 'cannot mount the home folder'; umount /run/gizlet/profile; exit 1; }
+printf '%s\n' "$profile" > /run/gizlet/profile.id
 step bound
 # Gizlet runtimes are read-only SquashFS images, each mounted beside its file:
 # runtime/1.sqfs at runtime/1. A runtime that fails to mount is left out.
-for image in /opt/gizlet/runtime/*.sqfs; do
+for image in "$device"/runtime/*.sqfs; do
     [ -f "$image" ] || continue
     [ -d "${image%.sqfs}" ] || mkdir "${image%.sqfs}"
     mount -t squashfs -o ro,nodev,nosuid "$image" "${image%.sqfs}" || say "cannot mount ${image##*/}"

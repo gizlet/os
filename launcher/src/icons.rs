@@ -200,6 +200,12 @@ pub fn clock(p: &Painter, cx: f32, cy: f32, s: f32, c: Color) {
     p.line(cx, cy, cx + r * 0.45, cy + r * 0.2, t, c);
 }
 
+/// A head and shoulders.
+pub fn person(p: &Painter, cx: f32, cy: f32, s: f32, c: Color) {
+    p.circle(cx, cy - s * 0.17, s * 0.16, c);
+    p.ring(cx, cy + s * 0.38, 0.0, s * 0.32, 180.0, 360.0, c);
+}
+
 pub fn chip(p: &Painter, cx: f32, cy: f32, s: f32, c: Color, hole: Color) {
     let w = s * 0.56;
     for i in 0..3 {

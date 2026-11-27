@@ -13,8 +13,8 @@ raylib_library(
 
 # Gizlet runtime 1: Debian trixie's glibc, Mesa and libdrm, and raylib, for
 # launchers and apps on any arm64 device, independent of the read-only base.
-# The card carries it as /opt/gizlet/runtime/1.sqfs on the data partition,
-# mounted at /opt/gizlet/runtime/1 at boot; programs start through
+# The card carries it as /data/device/runtime/1.sqfs on the data partition,
+# mounted at /data/device/runtime/1 at boot; programs start through
 # bin/gizlet-run.
 gizlet_runtime(
     name = "gizlet-runtime-1",
