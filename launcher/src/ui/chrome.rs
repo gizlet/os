@@ -1,16 +1,14 @@
 //! The background, status bar, page titles and button hints shared by every page.
 
-use crate::app::{App, Page};
+use crate::app::App;
 use crate::clock;
 use crate::fonts::Weight;
-use crate::i18n::T;
 use crate::icons;
 use crate::painter::Painter;
 use crate::settings::Language;
 use crate::theme::{alpha, mix};
 
 pub const TOP_H: f32 = 92.0;
-pub const TABS_BOTTOM: f32 = 158.0;
 pub const BOTTOM_H: f32 = 72.0;
 pub const MARGIN: f32 = 64.0;
 
@@ -94,45 +92,6 @@ pub fn brand(p: &mut Painter, app: &App) {
     p.text_mid("Gizlet", x, cy - 11.0, 23.0, Weight::Display, pal.text);
     let date = clock::now().date(app.lang() == Language::ZhCn);
     p.text_mid(&date, x, cy + 14.0, 17.0, Weight::Regular, pal.dim);
-}
-
-pub fn tabs(p: &mut Painter, app: &App) {
-    brand(p, app);
-    status(p, app);
-    let pal = p.pal;
-    let gap = 10.0;
-    let width = ((p.w - MARGIN * 2.0 - gap * 3.0) / 4.0).min(174.0);
-    let cy = (TOP_H + TABS_BOTTOM) / 2.0 - 2.0;
-    divider(p, TABS_BOTTOM);
-    for (index, page) in Page::TABS.iter().enumerate() {
-        let x = MARGIN + index as f32 * (width + gap);
-        let selected = *page == app.page();
-        let (color, hole) = if selected && app.tab_focused {
-            p.rect(x, cy - 24.0, width, 48.0, 12.0, pal.accent);
-            (pal.on_accent, pal.accent)
-        } else if selected {
-            p.rect(x + 24.0, TABS_BOTTOM - 3.0, width - 48.0, 3.0, 1.5, pal.accent);
-            (pal.accent, mix(pal.bg_top, pal.bg_bottom, 0.2))
-        } else {
-            (pal.dim, mix(pal.bg_top, pal.bg_bottom, 0.2))
-        };
-        let label = app.t(page.title());
-        let icon_x = x + (width - p.measure(label, 22.0, Weight::Bold) - 34.0) / 2.0 + 11.0;
-        match page {
-            Page::Apps => icons::grid(p, icon_x, cy, 19.0, color),
-            Page::Services => icons::chip(p, icon_x, cy, 22.0, color, hole),
-            Page::Store => icons::bag(p, icon_x, cy, 21.0, color, hole),
-            Page::Settings => icons::gear(p, icon_x, cy, 22.0, color, hole),
-            Page::ButtonTest => {}
-        }
-        p.text_mid(label, icon_x + 23.0, cy, 22.0, Weight::Bold, color);
-    }
-}
-
-pub fn tab_hints(p: &mut Painter, app: &App, items: &[(&str, &str)]) {
-    let mut controls = vec![("L/R", app.t(T::SwitchTab)), ("START", app.t(T::Power))];
-    controls.extend_from_slice(items);
-    hints(p, app, &controls);
 }
 
 /// A page title at the top left.

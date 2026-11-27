@@ -1,17 +1,15 @@
 # Gizlet launcher
 
-The launcher on a Gizlet OS card, written in Rust with raylib. Its program also carries the `gizlet` command that installs and runs apps and installs and controls background services. Its design follows [gizlet/gizlet](https://github.com/gizlet/gizlet)'s frontend.
+The launcher on a Gizlet OS card: a home screen with the installed apps, settings and a button test, written in Rust with raylib. Its program also carries the `gizlet` command that installs and runs apps and installs and controls background services. Its design follows [gizlet/gizlet](https://github.com/gizlet/gizlet)'s frontend; the Store is not connected yet.
 
 Pages are laid out in logical units: the screen is 720 units tall and at least 960 wide, so one layout fits the R36S's 640×480 panel, a 1280×720 window and a 4K monitor; wider screens get more width. [Painter](src/painter.rs)
 
 | Page | What it does |
 | --- | --- |
-| Apps | The shelf of installed apps. Press A on a tile to launch it. |
-| Services | See the state of installed `.gzl` services and control whether they run now or start at boot. |
-| Store | Placeholder for the Gizlet Store. |
-| Settings | Wi-Fi, SSH, brightness and theme, volume and interface sounds, battery and sleep, controls, language, date and time, and system information and updates. |
-
-Use L/R to switch tabs, A or Down to focus their contents, and B to go back. Start opens Power from any tab. Settings → Controls has the button test, which lights up with every button, stick and trigger. Hold Back to leave it.
+| Home | The shelf of installed apps (A starts one), with Library, Services, Store, Button Test, Settings and Power icons below |
+| Services | Installed `.gzl` background services, with status, running and start-at-boot controls |
+| Settings | Wi-Fi, SSH, display, sound, battery, controls, language, date and time, system information and updates |
+| Button test | A handheld drawn from primitives that lights up with every button, stick and trigger; hold Back to leave |
 
 On Gizlet OS it reads the handheld's controls straight from evdev (BTN_EAST is A, BTN_SOUTH is B), and the volume keys change the volume. Wi-Fi and ssh are switched and the time zone and hostname are set with `gizlet-switch`, which keeps the choice across reboots; the clock redraws in a new zone at once. Missing hardware or drivers are shown as such, as for the R36S's battery and sound today. [System](src/system/linux.rs) · [Controls](src/evdev.rs)
 
@@ -90,7 +88,7 @@ See [Activating a new build](../runtime/README.md#activating-a-new-build) for ru
 
 ## Services
 
-A service is a background program packaged with manifest schema 2 and `"kind": "service"`. Install it with `gizlet install FILE.gzl`. Systemd runs it while the launcher hands the screen to an app or restarts. The Services tab and `gizlet service` show and control installed `.gzl` services. System features such as SSH and Wi-Fi have their own pages in Settings. [Services](src/services.rs) · [Commands](src/cli.rs)
+A service is a background program packaged with manifest schema 2 and `"kind": "service"`. Install it with `gizlet install FILE.gzl`. Systemd runs it while the launcher hands the screen to an app or restarts. Open Services from the icon below the app shelf, or use `gizlet service`, to see and control installed packages. System features such as Wi-Fi and SSH have their own pages in Settings. [Services](src/services.rs) · [Commands](src/cli.rs)
 
 | Path | Holds |
 | --- | --- |
@@ -161,7 +159,7 @@ GIZLET_FAKE_DEVICES=1 cargo run --release
 
 Apps installed into the launcher's data folder (`GIZLET_PREFIX` to choose another) appear on its shelf; `GIZLET_TARGET=aarch64-unknown-linux-gnu` lets a Mac install a handheld package to see its tile.
 
-Keys include arrows, Enter or K (A), Escape or J (B), I (X), U (Y), Q/E (L/R), = (Start), and - (Select). `GIZLET_WINDOW=640x480` sets the window size, `GIZLET_FAKE_DEVICES=1` simulates the battery, backlight, volume, Wi-Fi, SSH and installed services, and `GIZLET_SCRIPT` drives it from a script (see [script.rs](src/script.rs)).
+Keys: arrows, Enter or K (A), Escape or J (B), I (X), U (Y), Q/E (L/R), = (Start), - (Select). `GIZLET_WINDOW=640x480` sets the window size, `GIZLET_FAKE_DEVICES=1` simulates the battery, backlight, volume, Wi-Fi and ssh, and `GIZLET_SCRIPT` drives it from a script (see [script.rs](src/script.rs)).
 
 ## Building for the card
 

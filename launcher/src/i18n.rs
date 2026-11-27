@@ -29,10 +29,7 @@ strings! {
     Delete => "删除", "Delete";
     Close => "关闭", "Close";
 
-    Apps => "应用", "Apps";
-    OpenApp => "启动", "Launch";
-    Services => "服务", "Services";
-    SwitchTab => "切换标签页", "Switch tab";
+    Library => "程序库", "Library";
     Store => "商店", "Store";
     ButtonTest => "按键测试", "Button Test";
     Settings => "设置", "Settings";
@@ -41,6 +38,7 @@ strings! {
     EmptyBody => "用 gizlet install 安装的程序会出现在这里。", "Apps you install with gizlet install appear here.";
     Starting => "正在启动 {}", "Starting {}";
     StoreSoon => "商店还没有开放", "The Store isn't open yet";
+    LibrarySoon => "还没有安装程序", "No apps are installed yet";
 
     PowerTitle => "电源选项", "Power Options";
     Sleep => "睡眠", "Sleep";
@@ -57,6 +55,7 @@ strings! {
     CatLanguage => "语言", "Language";
     CatTime => "日期与时间", "Date & Time";
     CatSystem => "系统", "System";
+    Services => "服务", "Services";
 
     OtaTitle => "系统更新", "System updates";
     OtaRuntime => "运行时", "Runtime";
@@ -205,8 +204,8 @@ strings! {
 
     ServicesReading => "正在读取服务", "Reading services";
     ServicesUnavailable => "无法读取服务", "Can't read services";
-    NoServices => "还没有安装服务", "No services installed";
-    NoServicesBody => "用 gizlet install 安装的后台服务会出现在这里，可以启动、停止，或设为开机启动。", "Background services you install with gizlet install appear here. Start and stop them, or choose whether they start at boot.";
+    NoServices => "还没有安装服务", "No services installed yet";
+    NoServicesBody => "用 gizlet install 安装的后台服务会出现在这里。", "Services you install with gizlet install appear here.";
     ServiceRunning => "运行", "Running";
     ServiceAtBoot => "开机启动", "Start at boot";
     ServiceStarting => "正在启动", "Starting";

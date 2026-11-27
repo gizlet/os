@@ -50,7 +50,7 @@ fn main() {
         None => {}
         // The desktop shelf starts another copy to supervise the selected app.
         Some("run") if !KMS => std::process::exit(gizlet_launcher::cli::main(&args)),
-        // Services registered from Settings run `service exec ID` with this program.
+        // Systemd runs `service exec ID` with this program.
         Some("service") => std::process::exit(gizlet_launcher::cli::main(&args)),
         Some("--version") => {
             println!("gizlet-launcher {VERSION}");
