@@ -57,8 +57,15 @@ impl Offer {
 pub struct Installed {
     pub launcher: String,
     pub runtime: Option<String>,
+    pub runtime_tag: Option<String>,
     pub pending: Option<String>,
     pub failed: Option<String>,
+}
+
+impl Installed {
+    pub fn launcher_tag(&self) -> Option<String> {
+        tag_from_version(&self.launcher)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -83,6 +90,38 @@ fn version(text: &str) -> Option<[u32; 3]> {
 
 fn valid_tag(tag: &str) -> bool {
     tag.strip_prefix('v').and_then(version).is_some()
+}
+
+fn tag_from_version(release: &str) -> Option<String> {
+    version(release).map(|_| format!("v{release}"))
+}
+
+fn launcher_bundle_version(root: &Path) -> Option<String> {
+    let manifest = fs::read_to_string(root.join("manifest")).ok()?;
+    let mut fields = manifest.split_whitespace();
+    if fields.next()? != "gizlet-launcher-1" {
+        return None;
+    }
+    let release = fields.next()?;
+    version(release).map(|_| release.to_owned())
+}
+
+pub fn launcher_release_tag() -> Option<String> {
+    let bundle_version = |exe: &Path| {
+        let exe = exe.canonicalize().ok()?;
+        launcher_bundle_version(exe.parent()?.parent()?)
+    };
+    std::env::args_os().next()
+        .and_then(|exe| bundle_version(Path::new(&exe)))
+        .or_else(|| std::env::current_exe().ok().and_then(|exe| bundle_version(&exe)))
+        .and_then(|release| tag_from_version(&release))
+        .or_else(|| factory_version().and_then(tag_from_version))
+}
+
+fn runtime_release_tag(root: &Path) -> Option<String> {
+    let tag = fs::read_to_string(root.join("release-tag")).ok()?;
+    let tag = tag.trim();
+    valid_tag(tag).then(|| tag.to_owned())
 }
 
 fn pointer(name: &str) -> Option<String> {
@@ -132,9 +171,7 @@ fn runtime_root() -> PathBuf {
 
 pub fn installed() -> Installed {
     let running = std::env::var("GIZLET_RUNNING_LAUNCHER").ok();
-    let active = fs::read_to_string("/run/gizlet-ota-launcher/manifest")
-        .ok()
-        .and_then(|manifest| manifest.split_whitespace().nth(1).map(str::to_owned));
+    let active = launcher_bundle_version(Path::new("/run/gizlet-ota-launcher"));
     let selected = fs::read_to_string("/run/gizlet-launcher-release").ok().map(|text| text.trim().to_owned());
     let launcher = running.or(active).or(selected).filter(|text| version(text).is_some())
         .or_else(|| factory_version().map(str::to_owned))
@@ -142,7 +179,14 @@ pub fn installed() -> Installed {
     let failed = fs::read_to_string(Path::new(STORE).join("failed")).ok()
         .map(|text| text.trim().to_owned()).filter(|tag| valid_tag(tag));
     let pending = pointer("pending").and_then(|generation| generation.rsplit_once('.').map(|(tag, _)| tag.to_owned()));
-    Installed { launcher, runtime: hash(&runtime_image_path()).ok(), pending, failed }
+    let root = runtime_root();
+    Installed {
+        launcher,
+        runtime: hash(&runtime_image_path(&root)).ok(),
+        runtime_tag: runtime_release_tag(&root),
+        pending,
+        failed,
+    }
 }
 
 fn run(command: &mut Command, error: &str) -> Result<(), String> {
@@ -326,7 +370,7 @@ pub fn install(offer: &Offer, mut progress: impl FnMut(Progress)) -> Result<(), 
     let image = work.0.join("image.sqfs");
     let bundle = work.0.join("launcher.gizlet");
     progress(Progress::Runtime(0));
-    if !offer.runtime_changed && fs::hard_link(runtime_image_path(), &image).is_ok() {
+    if !offer.runtime_changed && fs::hard_link(runtime_image_path(&runtime_root()), &image).is_ok() {
         verify_file(&offer.runtime, &image)?;
     } else {
         fetch_artifact(&offer.tag, &offer.runtime, &image, |percent| progress(Progress::Runtime(percent)))?;
@@ -364,8 +408,7 @@ pub fn install(offer: &Offer, mut progress: impl FnMut(Progress)) -> Result<(), 
     persist(store)
 }
 
-fn runtime_image_path() -> PathBuf {
-    let root = runtime_root();
+fn runtime_image_path(root: &Path) -> PathBuf {
     if root.ends_with("root") { root.with_file_name("image.sqfs") } else { root.with_extension("sqfs") }
 }
 
@@ -382,7 +425,11 @@ pub fn command(args: &[String]) -> Result<(), String> {
     let current = installed();
     match args {
         [action] if action == "status" => {
-            println!("Launcher: {}\nRuntime 1: {}", current.launcher, current.runtime.as_deref().unwrap_or("unknown"));
+            let launcher = current.launcher_tag();
+            println!("Launcher: {}\nRuntime 1: {}\nRuntime release: {}",
+                launcher.as_deref().unwrap_or(&current.launcher),
+                current.runtime.as_deref().unwrap_or("unknown"),
+                current.runtime_tag.as_deref().unwrap_or("unknown"));
             if let Some(tag) = current.pending { println!("Pending restart: {tag}"); }
             if let Some(tag) = current.failed { println!("Rolled back: {tag}"); }
         }
@@ -434,7 +481,20 @@ mod tests {
     }
 
     fn current() -> Installed {
-        Installed { launcher: "1.0.9".into(), runtime: Some("a".repeat(64)), pending: None, failed: None }
+        Installed { launcher: "1.0.9".into(), runtime: Some("a".repeat(64)), runtime_tag: None, pending: None, failed: None }
+    }
+
+    #[test]
+    fn reads_release_tags_from_artifact_metadata() {
+        let work = Temp::new(&std::env::temp_dir().join("gizlet-tags.XXXXXX")).unwrap();
+        let runtime_tag = work.0.join("release-tag");
+        assert_eq!(runtime_release_tag(&work.0), None);
+        fs::write(&runtime_tag, "1\n").unwrap();
+        assert_eq!(runtime_release_tag(&work.0), None);
+        fs::write(&runtime_tag, "v2.0.1\n").unwrap();
+        assert_eq!(runtime_release_tag(&work.0).as_deref(), Some("v2.0.1"));
+        fs::write(work.0.join("manifest"), "gizlet-launcher-1 2.0.2 aarch64-unknown-linux-gnu runtime-1\n").unwrap();
+        assert_eq!(launcher_bundle_version(&work.0).and_then(|release| tag_from_version(&release)).as_deref(), Some("v2.0.2"));
     }
 
     #[test]

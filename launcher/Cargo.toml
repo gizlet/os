@@ -1,7 +1,6 @@
 [package]
 name = "gizlet-launcher"
 description = "Gizlet OS's launcher: home, settings and a button test, drawn with raylib"
-version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false

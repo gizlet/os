@@ -168,6 +168,7 @@ strings! {
     TimeZone => "时区", "Time Zone";
     About => "关于本机", "About";
     Version => "Launcher 版本", "Launcher Version";
+    DevelopmentBuild => "开发构建", "Development build";
     Device => "设备", "Device";
     OperatingSystem => "操作系统", "Operating System";
     Kernel => "内核", "Kernel";
