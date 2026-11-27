@@ -62,7 +62,12 @@ def _gizlet_runtime_impl(ctx):
         inputs = inputs,
         outputs = [out],
         command = ["/bin/sh", "/in/build_runtime.sh", _package_path(ctx, out)],
-        env = {"LC_ALL": "C", "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch), "TZ": "UTC"},
+        env = {
+            "LC_ALL": "C",
+            "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch),
+            "TZ": "UTC",
+            "GIZLET_RELEASE_VERSION": ctx.var.get("gizlet_release_version", ""),
+        },
         cpus = 4,
         mem = 4096,
         mnemonic = "GizletRuntime",

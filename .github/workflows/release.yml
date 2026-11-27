@@ -67,6 +67,7 @@ jobs:
           bazel build --config=r36s --define "gizlet_release_version=${GITHUB_REF_NAME#v}" \
             "$board:gizlet-os-r36s_gz" //runtime:gizlet-runtime-1 \
             //launcher:gizlet-launcher //launcher:gizlet-cli
+          test "$(unsquashfs -cat bazel-bin/runtime/gizlet-runtime-1.sqfs release-tag)" = "$GITHUB_REF_NAME"
           mkdir -p "$RUNNER_TEMP/os-build"
           cp -L bazel-bin/targets/sd_image/gameconsole/r36s/release/gizlet-os-r36s.img.gz \
             bazel-bin/runtime/gizlet-runtime-1.sqfs \

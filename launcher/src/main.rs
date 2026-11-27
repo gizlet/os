@@ -29,11 +29,10 @@ mod theme;
 mod ui;
 mod zones;
 
-use gizlet_launcher::{apps, settings};
+use gizlet_launcher::{apps, ota, settings};
 use raylib_sys::{self as ffi, ConfigFlags as F};
 use std::ffi::CString;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Without a window system: raylib's DRM platform on the whole panel.
 const KMS: bool = cfg!(feature = "gizlet-os");
 /// Frames per second while anything moves; controls are polled as often when idle.
@@ -53,7 +52,7 @@ fn main() {
         // Systemd runs `service exec ID` with this program.
         Some("service") => std::process::exit(gizlet_launcher::cli::main(&args)),
         Some("--version") => {
-            println!("gizlet-launcher {VERSION}");
+            println!("gizlet-launcher {}", ota::launcher_release_tag().as_deref().unwrap_or("development"));
             return;
         }
         Some("--probe") => {
@@ -65,13 +64,14 @@ fn main() {
             std::process::exit(2);
         }
     }
-    println!("Gizlet launcher {VERSION}");
+    let release = ota::launcher_release_tag();
+    println!("Gizlet launcher {}", release.as_deref().unwrap_or("development"));
     if KMS && !has_display() {
         println!("Gizlet launcher: no display (/dev/dri/card0 is missing)");
         std::process::exit(1);
     }
     let pid_file = KMS.then(|| std::fs::write(apps::LAUNCHER_PID, format!("{}\n", std::process::id())).is_ok());
-    run();
+    run(release);
     if pid_file == Some(true) {
         let _ = std::fs::remove_file(apps::LAUNCHER_PID);
     }
@@ -121,8 +121,8 @@ fn seed(app: &app::App) -> Vec<String> {
     seed
 }
 
-fn run() {
-    let mut app = app::App::new(settings::data_dir(), VERSION);
+fn run(release: Option<String>) {
+    let mut app = app::App::new(settings::data_dir(), release);
     app.can_quit = true;
     let (w, h) = window_size();
     let mut flags = F::FLAG_VSYNC_HINT as u32;

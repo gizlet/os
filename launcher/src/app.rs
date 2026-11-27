@@ -436,7 +436,7 @@ pub struct App {
     pub settings: Settings,
     settings_path: PathBuf,
     pub power: Power,
-    pub version: &'static str,
+    release: Option<String>,
     pages: Vec<Page>,
     pub home_row: HomeRow,
     pub home_button: usize,
@@ -474,7 +474,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(data_dir: PathBuf, version: &'static str) -> App {
+    pub fn new(data_dir: PathBuf, release: Option<String>) -> App {
         let settings_path = data_dir.join("settings.ini");
         let library = Library::open();
         let apps_stamp = library.stamp();
@@ -483,7 +483,7 @@ impl App {
             settings: Settings::load(&settings_path),
             settings_path,
             power: Power::load(Power::path()),
-            version,
+            release,
             system: System::start(data_dir),
             updates: None,
             services: ServicesUi::new(),
@@ -1552,7 +1552,7 @@ impl App {
                 self.update_items(&mut items);
                 items.push(Item::section(t(T::About)));
                 if self.updates.is_none() {
-                    items.push(Item::info(t(T::Version), self.version));
+                    items.push(Item::info(t(T::Version), self.release.as_deref().unwrap_or_else(|| T::DevelopmentBuild.get(l))));
                 }
                 let unknown = || t(T::Unknown);
                 items.push(Item::info(t(T::Device), snap.info.model.clone().unwrap_or_else(unknown)));
@@ -1636,9 +1636,10 @@ impl App {
             items.push(Item::new(ItemId::None, t(T::OtaReading), ItemValue::Busy));
             return;
         };
-        let runtime = installed.runtime.as_ref().map(|hash| format!("1 · {}", &hash[..12]));
-        items.push(Item::info(t(T::OtaRuntime), runtime.as_deref().unwrap_or(t(T::Unknown))));
-        items.push(Item::info(t(T::OtaLauncher), &installed.launcher));
+        let launcher_tag = installed.launcher_tag();
+        let unknown = t(T::Unknown);
+        items.push(Item::info(t(T::OtaRuntime), installed.runtime_tag.as_deref().unwrap_or(unknown)));
+        items.push(Item::info(t(T::OtaLauncher), launcher_tag.as_deref().unwrap_or(unknown)));
         if let Some(tag) = &installed.pending {
             items.push(Item::notice(T::OtaStaged.fmt(lang, &[tag]), t(T::OtaRestart)));
             items.push(Item::new(ItemId::RestartUpdate, t(T::Reboot), ItemValue::Button));
@@ -1756,12 +1757,18 @@ mod tests {
     use super::*;
 
     fn installed() -> ota::Installed {
-        ota::Installed { launcher: "1.2.3".into(), runtime: None, pending: None, failed: None }
+        ota::Installed {
+            launcher: "1.2.3".into(),
+            runtime: Some("a".repeat(64)),
+            runtime_tag: Some("v1.2.2".into()),
+            pending: None,
+            failed: None,
+        }
     }
 
     #[test]
     fn ota_spinner_keeps_only_system_settings_animating() {
-        let mut app = App::new(std::env::temp_dir(), "0.1.0");
+        let mut app = App::new(std::env::temp_dir(), None);
         let (send, work) = mpsc::channel();
         app.updates = Some(Updates { installed: None, work: Some(work), state: UpdateState::Idle });
         assert!(!app.animating());
@@ -1787,19 +1794,20 @@ mod tests {
 
     #[test]
     fn system_settings_show_one_launcher_version() {
-        let mut app = App::new(std::env::temp_dir(), "0.1.0");
+        let mut app = App::new(std::env::temp_dir(), Some("v1.2.3".into()));
         app.snapshot = Some(crate::system::probe(std::env::temp_dir()));
         let version_rows = |app: &App| {
             app.settings_items(Category::System).into_iter()
                 .filter(|item| item.label == app.t(T::Version) || item.label == app.t(T::OtaLauncher))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(version_rows(&app), vec![Item::info(app.t(T::Version), "0.1.0")]);
+        assert_eq!(version_rows(&app), vec![Item::info(app.t(T::Version), "v1.2.3")]);
 
         let (_send, work) = mpsc::channel();
         app.updates = Some(Updates { installed: None, work: Some(work), state: UpdateState::Idle });
         assert!(version_rows(&app).is_empty());
         app.updates.as_mut().unwrap().installed = Some(installed());
-        assert_eq!(version_rows(&app), vec![Item::info(app.t(T::OtaLauncher), "1.2.3")]);
+        assert_eq!(version_rows(&app), vec![Item::info(app.t(T::OtaLauncher), "v1.2.3")]);
+        assert!(app.settings_items(Category::System).contains(&Item::info(app.t(T::OtaRuntime), "v1.2.2")));
     }
 }

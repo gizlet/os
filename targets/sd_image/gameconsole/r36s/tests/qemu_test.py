@@ -724,12 +724,16 @@ def stage_ota_updates(console, pack_release, ota_fixture):
 def check_ota_after_boot(console, pack_release, ota_fixture):
     console.expect(b"\r\nota-confirmed\r\n")
     console.expect(PROMPT)
-    console.enter("gizlet system ota status && current=$(readlink /opt/gizlet/ota/current) && echo \"${current%.*}\" && "
+    console.enter("status=$(gizlet system ota status) && printf '%s\\n' \"$status\" && "
+                  "runtime_tag=$(cat /run/gizlet-ota-runtime/release-tag 2>/dev/null || printf unknown) && "
+                  "test \"$(printf '%s\\n' \"$status\" | sed -n 's/^Runtime release: //p')\" = \"$runtime_tag\" && "
+                  "current=$(readlink /opt/gizlet/ota/current) && echo \"${current%.*}\" && "
+                  "/run/gizlet-ota-runtime/bin/gizlet-run /run/gizlet-ota-launcher/bin/gizlet-launcher --version && "
                   "mountpoint -q \"/opt/gizlet/ota/$current/root\" && gizlet target && "
                   "test \"$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)\" = "
                   "\"/opt/gizlet/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
-    console.expect(b"\r\nLauncher: 2.0.0\r\n")
-    console.expect(b"\r\nv2.0.0\r\naarch64-unknown-linux-gnu lite\r\nota-runtime-in-use\r\n")
+    console.expect(b"\r\nLauncher: v2.0.0\r\n")
+    console.expect(b"\r\nv2.0.0\r\ngizlet-launcher v2.0.0\r\naarch64-unknown-linux-gnu lite\r\nota-runtime-in-use\r\n")
     console.expect(PROMPT)
     start_ota_fixture(console, pack_release, ota_fixture, "v2.0.1")
     console.enter("gizlet system ota install v2.0.1")
@@ -779,7 +783,7 @@ echo custom-entry-uses-ota
                         "printf '%s\\n' '[boot]' 'entry=bin/ota-check' > /opt/gizlet/boot.ini")
         console.stop()
     with boot(private, kernel, root) as console:
-        console.expect(b"\r\nLauncher: 2.0.0\r\n")
+        console.expect(b"\r\nLauncher: v2.0.0\r\n")
         console.expect(b"\r\nPending restart: v2.0.1\r\ncustom-entry-uses-ota\r\n")
         console.expect(PROMPT)
         console.command("rm /opt/gizlet/boot.ini")
@@ -793,7 +797,7 @@ echo custom-entry-uses-ota
                       "/usr/lib/gizlet/gizlet-switch timezone; "
                       "test \"$(gizlet run dev.gizlet.ota-test ALSA_CONFIG_DIR)\" = "
                       "\"/opt/gizlet/ota/$current/root/share/alsa\" && echo ota-runtime-in-use")
-        console.expect(b"\r\nLauncher: 2.0.0\r\n")
+        console.expect(b"\r\nLauncher: v2.0.0\r\n")
         console.expect(b"\r\nRolled back: v2.0.1\r\nv2.0.0\r\npersistent-user-file\r\nkept\r\n"
                        b"America/New_York\r\nota-runtime-in-use\r\n")
         console.expect(PROMPT)
@@ -843,7 +847,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         # A fresh card starts the factory launcher. QEMU's machine has no
         # display, so it says so and the recovery shell opens.
         console.expect(b"starting the selected launcher")
-        console.expect(b"Gizlet launcher 0.")
+        console.expect(b"Gizlet launcher ")
         console.expect(b"Gizlet launcher: no display")
         console.expect(b"boot entry finished with status 1")
         console.expect(PROMPT)
@@ -978,6 +982,7 @@ def scenarios(image, kernel_name, flash, flash_card, pack_release, work):
         console.command("printf '%s\\r\\n' '[boot]' 'entry=launcher/gizlet-launcher' > /opt/gizlet/boot.ini")
         console.enter("exit")
         console.expect(b"using Launcher from /opt/gizlet/launcher/releases/1.10.0")
+        console.expect(b"\r\nGizlet launcher v1.10.0\r\n")
         console.expect(b"Gizlet launcher: no display")
         console.expect(PROMPT)
         # A boot.ini that is a FIFO is refused without blocking the session.

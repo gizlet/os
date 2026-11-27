@@ -60,6 +60,10 @@ absolute=$(find "$runtime" -type l -lname '/*')
 install -m 0755 /in/gizlet-run "$runtime/bin/gizlet-run"
 gcc -O2 -Wall -Wextra -Werror -ffile-prefix-map=/in/= -s -o "$runtime/bin/gizlet-gl-info" /in/gl-info.c
 
+if [ -n "${GIZLET_RELEASE_VERSION:-}" ]; then
+    printf 'v%s\n' "$GIZLET_RELEASE_VERSION" > "$runtime/release-tag"
+fi
+
 epoch=$SOURCE_DATE_EPOCH
 find "$runtime" -exec touch -h -d "@$epoch" {} +
 # mksquashfs refuses SOURCE_DATE_EPOCH together with explicit times.

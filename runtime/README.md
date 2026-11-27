@@ -16,6 +16,7 @@ A card carries it as `/opt/gizlet/runtime/1.sqfs` on the data partition, a read-
 | `share/doc/PACKAGE/copyright` | Each package's copyright and license |
 | `bin/gizlet-run` | Runs a program with the runtime's loader, libraries and drivers |
 | `bin/gizlet-gl-info` | Prints the OpenGL ES renderer and checks an off-screen render |
+| `release-tag` | The Git release tag, present in published Runtime images |
 
 Fresh cards include the runtime built with the image. The card writer's `--update` mode preserves the existing runtime on the data partition. Existing cards use the ES 3.0 raylib build once their `1.sqfs` has also been updated.
 
