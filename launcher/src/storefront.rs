@@ -169,6 +169,8 @@ pub struct Storefront {
     /// The lists shown are the ones saved last time, as the Store cannot be reached.
     pub saved: bool,
     home_asked: f64,
+    /// The lists are being read: one request at a time writes the saved copy.
+    home_pending: bool,
     pub updates: Vec<UpdateStatus>,
     pub origins: BTreeMap<String, Origin>,
     pub rows: Vec<Row>,
@@ -204,6 +206,7 @@ impl Storefront {
             home: Load::Loading,
             saved: false,
             home_asked: f64::NEG_INFINITY,
+            home_pending: false,
             updates: Vec::new(),
             origins: BTreeMap::new(),
             rows: Vec::new(),
@@ -243,6 +246,10 @@ impl Storefront {
 
     /// Reads the lists again; the saved ones show meanwhile, as when offline.
     pub fn reload(&mut self, now: f64) {
+        if self.home_pending {
+            return;
+        }
+        self.home_pending = true;
         self.home_asked = now;
         if self.rows.is_empty() {
             if let Some(saved) = self.store.featured_saved() {
@@ -278,11 +285,13 @@ impl Storefront {
             changed = true;
             match done {
                 Done::Home(Ok(featured)) => {
+                    self.home_pending = false;
                     self.home = Load::Ready(featured);
                     self.saved = false;
                     self.rebuild();
                 }
                 Done::Home(Err(error)) => {
+                    self.home_pending = false;
                     // The saved lists stay; without them, the page says why.
                     if !matches!(self.home, Load::Ready(_)) {
                         self.home = Load::Failed(error);
@@ -767,6 +776,20 @@ mod tests {
         let (notes, _) = s.poll();
         assert!(matches!(notes.as_slice(), [Note::Open(repo)] if repo == "github.com/o/b"));
         assert_eq!(s.resolving, None);
+    }
+
+    #[test]
+    fn the_lists_are_read_once_at_a_time() {
+        let mut s = front();
+        s.reload(1.0);
+        s.reload(2.0);
+        assert_eq!(s.home_asked, 1.0, "a second read waits for the first");
+        while s.home_pending {
+            s.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        s.reload(3.0);
+        assert_eq!(s.home_asked, 3.0);
     }
 
     #[test]
