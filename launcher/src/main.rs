@@ -162,7 +162,7 @@ fn run(release: Option<String>) {
     let mut drawn: Option<(f64, u64)> = None;
     let mut settling = false;
 
-    while app.installing_update() || !unsafe { ffi::WindowShouldClose() } {
+    while !app.can_leave() || !unsafe { ffi::WindowShouldClose() } {
         // Measured here rather than by raylib, which counts drawn frames only.
         let now = unsafe { ffi::GetTime() };
         let dt = ((now - last) as f32).min(0.1);
@@ -174,7 +174,7 @@ fn run(release: Option<String>) {
             app.gamepads = controls.gamepads();
             app.refresh_apps();
             // `gizlet start` asks over ssh: the start script runs the app next.
-            if KMS && !app.installing_update() && std::path::Path::new(apps::LAUNCH_REQUEST).exists() {
+            if KMS && app.can_leave() && std::path::Path::new(apps::LAUNCH_REQUEST).exists() {
                 break;
             }
         }
@@ -182,7 +182,7 @@ fn run(release: Option<String>) {
 
         let mut shot = None;
         match script.step(&mut input, &mut pad) {
-            Some(script::Step::Quit) if !app.installing_update() => break,
+            Some(script::Step::Quit) if app.can_leave() => break,
             Some(script::Step::Quit) => {}
             Some(script::Step::Shot(path)) => shot = Some(path),
             None => {}

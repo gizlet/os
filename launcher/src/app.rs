@@ -444,7 +444,12 @@ pub struct ProfilesUi {
     pub current: Option<String>,
     pub next: Option<String>,
     /// The profile being switched to while the current one's services stop.
-    switching: Option<(String, Receiver<Result<(), String>>)>,
+    switching: Option<ProfileSwitch>,
+}
+
+struct ProfileSwitch {
+    id: String,
+    work: Option<Receiver<Result<(), String>>>,
 }
 
 impl ProfilesUi {
@@ -459,7 +464,7 @@ impl ProfilesUi {
     }
 
     pub fn switching_to(&self) -> Option<&Profile> {
-        self.switching.as_ref().and_then(|(id, _)| self.find(id))
+        self.switching.as_ref().and_then(|switch| self.find(&switch.id))
     }
 }
 
@@ -603,6 +608,14 @@ impl App {
 
     pub fn installing_update(&self) -> bool {
         self.updates.as_ref().is_some_and(|updates| matches!(updates.state, UpdateState::Installing(_)))
+    }
+
+    pub fn switching_profile(&self) -> bool {
+        self.profiles.switching.is_some()
+    }
+
+    pub fn can_leave(&self) -> bool {
+        !self.installing_update() && !self.switching_profile()
     }
 
     pub fn t(&self, t: T) -> &'static str {
@@ -880,16 +893,26 @@ impl App {
     /// Takes in a finished switch: on Gizlet OS the device is restarting;
     /// elsewhere the launcher reads the new profile's settings and data.
     fn update_profiles(&mut self) {
-        let Some((id, work)) = &self.profiles.switching else { return };
+        let Some(switch) = &mut self.profiles.switching else {
+            if !profiles::switch_restarts() {
+                let next = Profiles::new(self.prefix.clone()).next_id();
+                if next.is_some() && next != self.profiles.current {
+                    self.reload_profile();
+                    self.revision += 1;
+                }
+            }
+            return;
+        };
+        let Some(work) = &switch.work else { return };
         let result = match work.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => Err("the switch stopped".into()),
         };
-        let id = id.clone();
+        let id = switch.id.clone();
         self.revision += 1;
         match result {
-            Ok(()) if profiles::switch_restarts() => return,
+            Ok(()) if profiles::switch_restarts() => switch.work = None,
             Ok(()) => {
                 self.profiles.switching = None;
                 self.reload_profile();
@@ -911,8 +934,7 @@ impl App {
         self.settings = Settings::load(&self.settings_path);
         self.apps_stamp = self.library.stamp();
         self.apps = self.library.scan();
-        self.services.asked = f64::NEG_INFINITY;
-        self.services.list = None;
+        self.services = ServicesUi::new(self.prefix.clone());
         self.profiles = ProfilesUi::read(&self.prefix);
         self.home_tile = 0;
         self.refocus_favorites(None);
@@ -966,7 +988,7 @@ impl App {
             let result = result.and_then(|()| if profiles::switch_restarts() { profiles::restart() } else { Ok(()) });
             let _ = send.send(result);
         });
-        self.profiles.switching = Some((id, work));
+        self.profiles.switching = Some(ProfileSwitch { id, work: Some(work) });
     }
 
     fn profile_changed(&mut self, result: Result<Profile, String>, done: T) {
@@ -1003,6 +1025,9 @@ impl App {
 
     /// This frame's input on the open page, menu or keyboard. False to quit.
     fn handle_input(&mut self, input: &Input, dt: f32) -> bool {
+        if self.switching_profile() {
+            return true;
+        }
         if self.keyboard.is_some() {
             self.keyboard_input(input);
             return true;
@@ -2153,6 +2178,44 @@ mod tests {
             pending: None,
             failed: None,
         }
+    }
+
+    #[test]
+    fn profile_switch_holds_launcher_open() {
+        let prefix = test_prefix("switch-holds-launcher");
+        let mut app = App::with_prefix(prefix.clone(), None);
+        let (_send, work) = mpsc::channel();
+        app.profiles.switching = Some(ProfileSwitch { id: "0123456789abcdef".into(), work: Some(work) });
+        app.dialog = Some(Dialog {
+            title: String::new(),
+            buttons: vec![(String::new(), DialogAction::Quit)],
+            focus: 0,
+            opened: 0.0,
+        });
+        let input = Input { pressed: vec![Action::A], ..Input::default() };
+        assert!(!app.can_leave());
+        assert!(app.update(&input, 0.01));
+        assert!(app.dialog.is_some());
+        let _ = std::fs::remove_dir_all(prefix);
+    }
+
+    #[cfg(not(feature = "gizlet-os"))]
+    #[test]
+    fn launcher_reloads_profile_after_external_switch() {
+        let prefix = test_prefix("external-profile-switch");
+        let mut app = App::with_prefix(prefix.clone(), None);
+        let profiles = Profiles::new(prefix.clone());
+        let profile = profiles.create("Ann").unwrap();
+        let path = crate::settings::settings_path(&profiles.dir().join(&profile.id));
+        let settings = Settings { theme: Theme::Light, favorites: vec!["dev.example.game".into()], ..Settings::default() };
+        settings.save(&path).unwrap();
+        profiles.set_next(&profile.id).unwrap();
+
+        assert!(app.update(&Input::default(), 0.01));
+        assert_eq!(app.profiles.current.as_deref(), Some(profile.id.as_str()));
+        assert_eq!(app.settings_path, path);
+        assert_eq!(app.settings, settings);
+        let _ = std::fs::remove_dir_all(prefix);
     }
 
     #[test]
