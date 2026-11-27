@@ -88,7 +88,7 @@ strings! {
     StoreApp => "应用", "App";
     StoreServiceConfirm => "{} 是后台服务：它会以 root 身份运行，现在启动，并在开机时自动启动。", "{} is a background service: it runs as root, starts now and at every boot.";
     StoreUninstallConfirm => "卸载 {}？它的存档会保留。", "Uninstall {}? Its saves are kept.";
-    StoreUninstallServiceConfirm => "卸载服务 {}？它的状态和设置会一并删除。", "Uninstall the service {}? Its state and settings are deleted with it.";
+    StoreUninstallServiceConfirm => "卸载服务 {}？它会停止运行，状态和设置会保留。", "Uninstall the service {}? It stops; its state and settings are kept.";
     StoreNoPackage => "没有适合这台掌机的版本", "No version for this handheld";
     StoreOtherSource => "这台掌机上的版本不是从这里安装的，所以不会从这里更新。", "The copy on this handheld wasn't installed from here, so it isn't updated from here.";
     StoreVersion => "版本", "Version";

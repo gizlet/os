@@ -1003,6 +1003,11 @@ impl App {
         if self.profiles.switching.is_some() {
             return;
         }
+        // Switching restarts the launcher, which would end the Store's downloads.
+        if self.store.busy() {
+            self.toast(self.t(T::StoreWait));
+            return;
+        }
         if self.installing_update() {
             self.toast(self.t(T::OtaWait));
             return;
