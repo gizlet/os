@@ -9,6 +9,11 @@ packages. Recommends are not followed. For alternatives and virtual packages
 the first resolvable choice in Debian's order wins unless `prefer` names one.
 `"required": false` leaves out the Priority: required packages, for a set of
 libraries that is not a bootable system.
+
+`standalone` packages are locked without their dependencies and marked as
+such: a build takes chosen files from them, and must provide whatever those
+files need itself. GStreamer's plugin packages are the example: each depends
+on the libraries of every plugin it carries.
 """
 
 import json
@@ -94,6 +99,13 @@ def main():
             for alternatives in relations(fields.get(key, "")):
                 queue.append(choose(alternatives, selected))
 
+    standalone = set(spec.get("standalone", []))
+    for name in sorted(standalone):
+        if name in selected:
+            raise SystemExit(f"{name} is both standalone and a dependency")
+        if name not in packages:
+            raise SystemExit(f"Unknown standalone package: {name}")
+
     lock = {
         "snapshot": spec["snapshot"],
         "suite": spec["suite"],
@@ -105,8 +117,8 @@ def main():
                 "path": packages[name]["Filename"],
                 "sha256": packages[name]["SHA256"],
                 "size": int(packages[name]["Size"]),
-            }
-            for name in sorted(selected)
+            } | ({"standalone": True} if name in standalone else {})
+            for name in sorted(selected | standalone)
         ],
     }
     out = spec_path.with_name("packages.lock.json")

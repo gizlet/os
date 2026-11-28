@@ -1,4 +1,4 @@
-load(":defs.bzl", "gizlet_runtime", "raylib_library")
+load(":defs.bzl", "ffmpeg_libraries", "gizlet_runtime", "raylib_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -11,8 +11,19 @@ raylib_library(
     out = "libraylib.so",
 )
 
-# Gizlet runtime 1: Debian trixie's glibc, Mesa and libdrm, and raylib, for
-# launchers and apps on any arm64 device, independent of the read-only base.
+# FFmpeg's libraries for GStreamer's libav plugin: decoders and encoders that
+# need no other library.
+ffmpeg_libraries(name = "ffmpeg")
+
+filegroup(
+    name = "ffmpeg-copyright",
+    srcs = [":ffmpeg"],
+    output_group = "copyright",
+)
+
+# Gizlet runtime 1: Debian trixie's glibc, Mesa and libdrm, raylib, and
+# GStreamer with FFmpeg, for launchers and apps on any arm64 device,
+# independent of the read-only base.
 # The card carries it as /data/device/runtime/1.sqfs on the data partition,
 # mounted at /data/device/runtime/1 at boot; programs start through
 # bin/gizlet-run.
@@ -20,5 +31,10 @@ gizlet_runtime(
     name = "gizlet-runtime-1",
     out = "gizlet-runtime-1.sqfs",
     debs = "@debian_trixie_arm64_runtime//:debs",
-    libraries = [":raylib"],
+    libraries = [
+        ":ffmpeg",
+        ":raylib",
+    ],
+    notices = {":ffmpeg-copyright": "ffmpeg"},
+    standalone_debs = "@debian_trixie_arm64_runtime//:standalone_debs",
 )

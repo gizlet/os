@@ -6,9 +6,13 @@ def _debian_packages_impl(ctx):
     lock = json.decode(ctx.read(ctx.attr.lock))
     downloads = []
     names = []
+    standalone = []
     for package in lock["packages"]:
         output = "debs/%s.deb" % package["name"]
-        names.append(output)
+        if package.get("standalone", False):
+            standalone.append(output)
+        else:
+            names.append(output)
         downloads.append(ctx.download(
             url = _SNAPSHOT.format(snapshot = lock["snapshot"], path = package["path"]),
             output = output,
@@ -26,7 +30,13 @@ filegroup(
     name = "debs",
     srcs = {debs},
 )
-""".format(debs = repr(names)))
+
+# Locked without their dependencies; builds take chosen files from them.
+filegroup(
+    name = "standalone_debs",
+    srcs = {standalone},
+)
+""".format(debs = repr(names), standalone = repr(standalone)))
         return
 
     # The bootstrap root holds only the static BusyBox. It unpacks the other

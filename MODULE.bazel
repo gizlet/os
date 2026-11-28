@@ -49,3 +49,6 @@ use_repo(linux_firmware, "linux_firmware")
 
 bun = use_extension("//third_party/bun:repositories.bzl", "bun")
 use_repo(bun, "bun")
+
+ffmpeg = use_extension("//third_party/ffmpeg:repositories.bzl", "ffmpeg")
+use_repo(ffmpeg, "ffmpeg")

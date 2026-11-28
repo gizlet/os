@@ -240,6 +240,8 @@ def main():
     assert "libraylib.so.600" in needed, needed
     for library in needed:
         assert f"squashfs-root/lib/{library}\n" in listing, f"runtime 1 lacks {library} for the launcher"
+    for path in ("gstreamer-1.0/libgstv4l2codecs.so", "libgstcodecs-1.0.so.0", "libgudev-1.0.so.0"):
+        assert f"squashfs-root/lib/{path}\n" in listing, f"runtime 1 lacks {path} for hardware decoding"
     run("sha256sum", image, root / "usr/lib/gizlet/gizlet-booter")
     print("Root and data filesystems match the Gizlet OS layout")
 

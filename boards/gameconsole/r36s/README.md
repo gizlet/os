@@ -36,6 +36,12 @@ To add a panel, include its device-tree profile from `gizlet-r36s.dts`. Add a ch
 
 The legacy U-Boot picks a dtb name from a board-revision ADC reading before it runs `boot.scr`. Each card therefore carries its tree as `r36s.dtb` and under every name U-Boot can choose. [Card facts](card.bzl)
 
+## Video playback
+
+The R36S kernel includes the Rockchip Hantro VPU driver. Gizlet runtime 1 ships GStreamer's `v4l2codecs` plugin, which registers `v4l2slh264dec` when it can access the stateless H.264 decoder. The runtime also includes software decoders for pipelines that use other formats or run without a compatible VPU.
+
+On an existing card, use the card writer's update mode to install the kernel, then update Gizlet runtime 1 through the OS updater.
+
 ## TF1 storage
 
 The 464 MiB MBR image has disk signature `36335030`. Sector sizes are 512 bytes. The boot stages, kernel load address, device tree, UART2 and OTG VBUS configuration follow the reviewed R36S boot chain. The kernel includes its ext4 driver for the data partition. The CPU scales from 600 MHz at 0.95 V to 1.296 GHz with schedutil and the GPU from 200 to 560 MHz with devfreq, along the steps of the upstream `px30.dtsi` that ROCKNIX drops, and idle cores and the cluster power down through PSCI on a tickless kernel. The R36S image limits schedutil to one clock change every 10 ms, as each change sets `vdd_arm` over the PMIC's I2C bus. [Rate limit](config/gizlet-cpufreq.conf) [Layout](sdcard.cfg) · [Linux configuration](kernel/kernel.config) · [U-Boot commands](boot/boot.cmd)
