@@ -45,6 +45,40 @@ raylib_library = rule(
     },
 )
 
+_FFMPEG_LIBRARIES = ["libavcodec.so.61", "libavformat.so.61", "libavfilter.so.10", "libavutil.so.59"]
+
+def _ffmpeg_libraries_impl(ctx):
+    libraries = [ctx.actions.declare_file(ctx.attr.name + "/" + name) for name in _FFMPEG_LIBRARIES]
+    copyright = ctx.actions.declare_file(ctx.attr.name + "/ffmpeg.copyright")
+    archive = ctx.file._archive
+    krun_action(
+        ctx,
+        root_disk = ctx.file._rootfs,
+        inputs = {ctx.file._script: "build_ffmpeg.sh", archive: archive.basename},
+        outputs = libraries + [copyright],
+        command = ["/bin/sh", "/in/build_ffmpeg.sh", _package_path(ctx, copyright).rpartition("/")[0]],
+        env = {"LC_ALL": "C", "SOURCE_DATE_EPOCH": str(ctx.attr.source_date_epoch), "TZ": "UTC"},
+        cpus = 4,
+        mem = 4096,
+        mnemonic = "FFmpeg",
+        progress_message = "Building FFmpeg's libraries in the build VM",
+    )
+    return [
+        DefaultInfo(files = depset(libraries)),
+        OutputGroupInfo(copyright = depset([copyright])),
+    ]
+
+ffmpeg_libraries = rule(
+    implementation = _ffmpeg_libraries_impl,
+    doc = "Builds FFmpeg's shared libraries with its LGPL decoders and encoders and no external libraries. The copyright output group holds the notice.",
+    attrs = KRUN_ATTRS | {
+        "source_date_epoch": attr.int(default = 1704067200),
+        "_archive": attr.label(default = Label("@ffmpeg//:ffmpeg-7.1.5.tar.xz"), allow_single_file = True),
+        "_rootfs": attr.label(default = Label("//devops/bazel/debian:rootfs"), allow_single_file = True, cfg = "exec"),
+        "_script": attr.label(default = Label(":build_ffmpeg.sh"), allow_single_file = True),
+    },
+)
+
 def _gizlet_runtime_impl(ctx):
     out = ctx.outputs.out
     inputs = {
@@ -54,8 +88,15 @@ def _gizlet_runtime_impl(ctx):
     }
     for deb in ctx.files.debs:
         inputs[deb] = "debs/" + deb.basename
+    for deb in ctx.files.standalone_debs:
+        inputs[deb] = "standalone/" + deb.basename
     for library in ctx.files.libraries:
         inputs[library] = "libraries/" + library.basename
+    for target, package in ctx.attr.notices.items():
+        files = target.files.to_list()
+        if len(files) != 1 or "/" in package or package in ("", ".", ".."):
+            fail("Invalid notice for %s: %s" % (package, files))
+        inputs[files[0]] = "notices/" + package
     krun_action(
         ctx,
         root_disk = ctx.file._rootfs,
@@ -80,7 +121,9 @@ gizlet_runtime = rule(
     doc = "Lays out locked Debian libraries and built shared libraries as a Gizlet runtime and writes it as a read-only SquashFS image.",
     attrs = KRUN_ATTRS | {
         "debs": attr.label(mandatory = True, allow_files = [".deb"], doc = "The runtime's Debian libraries."),
+        "standalone_debs": attr.label(allow_files = [".deb"], doc = "Debian packages locked without their dependencies; the build takes chosen files from them."),
         "libraries": attr.label_list(allow_files = True, doc = "Shared libraries built here, installed in lib/ under their SONAMEs."),
+        "notices": attr.label_keyed_string_dict(allow_files = True, doc = "Copyright notices of the built libraries -> name of their share/doc directory."),
         "out": attr.output(mandatory = True),
         "source_date_epoch": attr.int(default = 1704067200),
         "_gl_info": attr.label(default = Label(":gl-info.c"), allow_single_file = True),

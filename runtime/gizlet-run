@@ -14,5 +14,11 @@ export GBM_BACKENDS_PATH="$runtime/lib/gbm"
 # configuration from the runtime rather than the base.
 export ALSA_CONFIG_DIR="$runtime/share/alsa"
 export ALSA_CONFIG_PATH="$runtime/share/alsa/alsa.conf"
+# Media: GStreamer finds the runtime's plugins and loads them in the program's
+# own process, since its plugin scanner would start without the runtime. GIO
+# loads the runtime's TLS module, which trusts the base's CA certificates.
+export GST_PLUGIN_SYSTEM_PATH_1_0="$runtime/lib/gstreamer-1.0"
+export GST_REGISTRY_FORK=no
+export GIO_MODULE_DIR="$runtime/lib/gio/modules"
 [ $# -ge 1 ] || { echo 'usage: gizlet-run PROGRAM [ARGUMENTS]' >&2; exit 2; }
 exec "$runtime/lib/ld-linux-aarch64.so.1" --library-path "$runtime/lib" "$@"
